@@ -2,6 +2,11 @@
 IEX Tick Data viewer and order book visualizer 
 
 
+# Install
+please run ```cp example.config.py config.py``` for secrets
+
+
+
 # Structure
 This is split into 3 sections:
 
