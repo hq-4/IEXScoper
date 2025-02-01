@@ -1,4 +1,5 @@
 import os
+import config
 from IEXTools import Parser, messages
 
 '''
