@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
     pcap_file_name = get_pcap_filepath("20241231_IEXTP1_TOPS1.6.pcap.gz")
     print(pcap_file_name)
-    p = Parser(r'20241231_IEXTP1_TOPS1.6.pcap.gz')
+    p = Parser(pcap_file_name)
 
     for trade in iter_trade_reports(p):
         print(trade)
