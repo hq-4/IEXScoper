@@ -173,3 +173,67 @@ cython_debug/
 
 pcaps/*
 config.py
+
+
+
+# 🔒 Airflow Security Files (Sensitive Credentials)
+.env
+secrets.env
+config/airflow.cfg
+config/webserver_config.py
+
+# 📂 Airflow Metadata & Database (Prevents Leaking State)
+airflow.db
+airflow.db-journal
+logs/
+scheduler/
+dags/__pycache__/
+dags/*.pyc
+dags/*.pyo
+dags/*.swp
+dags/*.bak
+
+# 🔄 Airflow Worker and Temp Files
+airflow_worker.log
+airflow-webserver.log
+*.pid
+*.log
+tmp/
+airflow/tmp/
+airflow/unittests.cfg
+unittests.cfg
+
+# 🛠️ Virtual Environment (If Using Local Python venv)
+.venv/
+env/
+venv/
+__pycache__/
+
+# 🐳 Docker & Kubernetes Artifacts
+docker-compose.override.yml
+docker-compose.yml
+volumes/
+logs/
+config/*.local
+
+# 🔍 IDE / Editor & OS Specific Files (Avoid Accidental Commits)
+.vscode/
+.idea/
+*.DS_Store
+*.swp
+*.swo
+*.bak
+
+# 🔗 Airflow Plugins & Dependencies (Avoid Large Commits)
+plugins/
+airflow/plugins/
+airflow/dependencies/
+
+
+
+
+
+
+
+
+
