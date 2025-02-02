@@ -1,30 +1,41 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
+import time
+import random
+import logging
 
-def process_historical_data(execution_date, **kwargs):
-    print(f"Processing historical data for {execution_date}")
+# Function to simulate work with random sleep intervals
+def task_function(task_id, **kwargs):
+    sleep_time = random.randint(7, 13)  # Random sleep between 7 and 13 seconds
+    logging.info(f"Starting task {task_id}. Sleeping for {sleep_time} seconds.")
+    time.sleep(sleep_time)
+    if task_id == "task_2":  # Simulate a failure in one task
+        raise ValueError(f"Task {task_id} failed!")
+    logging.info(f"Finished task {task_id}")
 
-# Default arguments for backfilling DAG
+# Default arguments for the DAG
 default_args = {
     'owner': 'airflow',
-    'start_date': datetime(2020, 1, 1),  # Start from an earlier date for backfilling
-    'retries': 1,
-    'depends_on_past': False
+    'start_date': datetime(2023, 1, 1),  # Start date for backfilling
+    'retries': 1,  # Retry failed tasks once
+    'retry_delay': timedelta(minutes=1),  # Wait 1 minute before retrying
 }
 
-# Define the DAG with catchup enabled for backfilling
+# Define the DAG with backfilling enabled
 with DAG(
-    dag_id='backfill_historical_data_dag',
+    dag_id='concurrent_tasks_with_backfill',
     default_args=default_args,
-    schedule_interval='@daily',  # Runs for each historical day
-    catchup=True  # Allows execution for past dates
+    schedule_interval='@daily',  # Run daily
+    catchup=True,  # Enable backfilling
+    max_active_tasks=10,  # Allow up to 10 tasks to run concurrently
+    concurrency=10,  # Allow up to 10 tasks per DAG run
 ) as dag:
-    
-    task_1 = PythonOperator(
-        task_id='process_historical_data',
-        python_callable=process_historical_data,
-        op_kwargs={'execution_date': '{{ ds }}'},
-    )
 
-    task_1
+    # Create multiple independent tasks
+    for i in range(10):
+        task = PythonOperator(
+            task_id=f'task_{i}',
+            python_callable=task_function,
+            op_kwargs={'task_id': f'task_{i}'},
+        )
