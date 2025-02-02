@@ -1,17 +1,21 @@
 import os
+import sqlite3
 import config
 from IEXTools import Parser, messages
 
 '''
-takes raw TOPS files and dumps to csv in the same folder
+takes raw TOPS files and dumps to sqlite database in chunks of 1000 inserts at a time
 '''
 
 def get_pcap_filepath(filename: str) -> str:
     """Returns the full path of a PCAP file by appending the filename to PCAP_FOLDER."""
     return os.path.abspath(os.path.join(config.PCAP_FOLDER, filename))
 
+def get_db_filepath() -> str:
+    """Returns the full path of the SQLite database file in the same folder as PCAP files."""
+    return os.path.abspath(os.path.join(config.PCAP_FOLDER, "data.db"))
 
-### iterate over every message when IEX Parser is instantiated
+### iterate over every message when IEX Parser is instantiated and lazily loads this with a generator
 def iter_trade_reports(parser):
     allowed = [messages.TradeReport]
     while True:
@@ -20,13 +24,50 @@ def iter_trade_reports(parser):
             break
         yield msg
 
-
-
 if __name__ == "__main__":
-
     pcap_file_name = get_pcap_filepath("20241231_IEXTP1_TOPS1.6.pcap.gz")
-    print(pcap_file_name)
+    db_file_name = get_db_filepath()
+    print(f"Using database: {db_file_name}")
+    print(f"Processing PCAP file: {pcap_file_name}")
+    
     p = Parser(pcap_file_name)
-
+    
+    # Set up SQLite database
+    conn = sqlite3.connect(db_file_name)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tradereport (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            flags INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL,
+            symbol TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            price_int INTEGER NOT NULL,
+            trade_id INTEGER NOT NULL UNIQUE
+        )
+    """)
+    conn.commit()
+    
+    batch = []
+    batch_size = 1000
+    
     for trade in iter_trade_reports(p):
-        print(trade)
+        batch.append((trade.flags, trade.timestamp, trade.symbol, trade.size, trade.price_int, trade.trade_id))
+        
+        if len(batch) >= batch_size:
+            cursor.executemany("""
+                INSERT INTO tradereport (flags, timestamp, symbol, size, price_int, trade_id) 
+                VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(trade_id) DO NOTHING
+            """, batch)
+            conn.commit()
+            batch.clear()
+    
+    # Insert any remaining records
+    if batch:
+        cursor.executemany("""
+            INSERT INTO tradereport (flags, timestamp, symbol, size, price_int, trade_id) 
+            VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(trade_id) DO NOTHING
+        """, batch)
+        conn.commit()
+    
+    conn.close()
