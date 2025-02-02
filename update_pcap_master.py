@@ -15,7 +15,8 @@ def setup_database(db_path="iex_data.db"):
             version TEXT NOT NULL,
             protocol TEXT NOT NULL,
             size INTEGER NOT NULL,
-            UNIQUE(date, feed) ON CONFLICT REPLACE
+            UNIQUE(date, feed) ON CONFLICT(date, feed) DO UPDATE SET
+                link=excluded.link
         )
     ''')
     conn.commit()
@@ -44,10 +45,7 @@ def upsert_data(data, db_path="iex_data.db"):
                 INSERT INTO iex_feeds (date, feed, link, version, protocol, size)
                 VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(date, feed) DO UPDATE SET
-                    link=excluded.link,
-                    version=excluded.version,
-                    protocol=excluded.protocol,
-                    size=excluded.size
+                    link=excluded.link
             ''', (feed_entry["date"], feed_entry["feed"], feed_entry["link"], 
                   feed_entry["version"], feed_entry["protocol"], int(feed_entry["size"])))
     
