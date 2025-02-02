@@ -16,8 +16,6 @@ def get_pcap_filepath(filename: str) -> str:
 
 if __name__ == "__main__":
 
-    fn = get_pcap_filepath("20241231_IEXTP1_TOPS1.6.pcap.gz")
-    print(fn)
-
-
-	# p = Parser(r'20241231_IEXTP1_TOPS1.6.pcap.gz')
+    pcap_file_name = get_pcap_filepath("20241231_IEXTP1_TOPS1.6.pcap.gz")
+    print(pcap_file_name)
+	p = Parser(r'20241231_IEXTP1_TOPS1.6.pcap.gz')
