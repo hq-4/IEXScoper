@@ -47,9 +47,11 @@ if __name__ == "__main__":
         )
     """)
     conn.commit()
+    print("Database setup completed.")
     
     batch = []
     batch_size = 1000
+    record_count = 0
     
     for trade in iter_trade_reports(p):
         batch.append((trade.flags, trade.timestamp, trade.symbol, trade.size, trade.price_int, trade.trade_id))
@@ -60,6 +62,8 @@ if __name__ == "__main__":
                 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(trade_id) DO NOTHING
             """, batch)
             conn.commit()
+            record_count += len(batch)
+            print(f"Inserted {record_count} records so far...")
             batch.clear()
     
     # Insert any remaining records
@@ -69,5 +73,8 @@ if __name__ == "__main__":
             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(trade_id) DO NOTHING
         """, batch)
         conn.commit()
+        record_count += len(batch)
+        print(f"Final batch inserted. Total records inserted: {record_count}")
     
+    print("Data processing complete. Closing database connection.")
     conn.close()
