@@ -11,6 +11,14 @@ def get_pcap_filepath(filename: str) -> str:
     return os.path.abspath(os.path.join(config.PCAP_FOLDER, filename))
 
 
+### iterate over every message when IEX Parser is instantiated
+def iter_trade_reports(parser):
+    allowed = [messages.TradeReport]
+    while True:
+        msg = parser.get_next_message(allowed)
+        if msg is None:
+            break
+        yield msg
 
 
 
@@ -19,3 +27,6 @@ if __name__ == "__main__":
     pcap_file_name = get_pcap_filepath("20241231_IEXTP1_TOPS1.6.pcap.gz")
     print(pcap_file_name)
 	p = Parser(r'20241231_IEXTP1_TOPS1.6.pcap.gz')
+
+    for trade in iter_trade_reports(p):
+        print(trade)
