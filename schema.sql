@@ -1,0 +1,9 @@
+CREATE TABLE tradereport (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    flags INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    price_int INTEGER NOT NULL,
+    trade_id INTEGER NOT NULL UNIQUE
+);
