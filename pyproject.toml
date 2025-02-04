@@ -1,0 +1,12 @@
+# Create pyproject.toml
+echo '[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "IEXScoper"
+version = "0.1.0"
+' > pyproject.toml
+
+# Install in editable mode
+pip install -e .
