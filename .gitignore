@@ -174,7 +174,7 @@ cython_debug/
 pcaps/*
 config.py
 iex/
-
+pq/
 
 
 # 🔒 Airflow Security Files (Sensitive Credentials)
