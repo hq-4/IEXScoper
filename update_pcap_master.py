@@ -8,8 +8,7 @@ def setup_database(db_path="iex_data.db"):
     cursor = conn.cursor()
     
     # Create the iex_feeds table with the new date_protocol column
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS iex_feeds (
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS iex_feeds (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
             feed TEXT NOT NULL,
@@ -20,9 +19,7 @@ def setup_database(db_path="iex_data.db"):
             size INTEGER NOT NULL,
             UNIQUE(date, feed) ON CONFLICT(date, feed) DO UPDATE SET
                 link = excluded.link,
-                date_protocol = excluded.date_protocol
-        )
-    ''')
+                date_protocol = excluded.date_protocol)""")
     
     # Create a new table for mapping date_protocol to filepaths
     cursor.execute('''
