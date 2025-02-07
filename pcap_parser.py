@@ -99,6 +99,8 @@ class PCAPProcessor:
         processing into Parquet files.
         """
         self.delete_after_processing = delete_after_processing
+        # Set default status to True (expecting well-formed PCAPs)
+        self.status = True  
         if source.startswith("http://") or source.startswith("https://"):
             self.pcap_filepath = self.download_from_url(source)
         else:
@@ -213,6 +215,9 @@ class PCAPProcessor:
         of the respective Parquet files, and returns a tuple of these filepaths.
 
         If the delete_after_processing toggle is enabled, the PCAP file is deleted after processing.
+
+        If a serious error occurs during parsing (indicating a malformed PCAP), self.status is
+        set to False.
         """
         base_filename = os.path.basename(self.pcap_filepath)
         if base_filename.endswith('.pcap.gz'):
@@ -249,78 +254,91 @@ class PCAPProcessor:
 
         parser = Parser(self.pcap_filepath)
 
-        while True:
-            try:
-                msg = parser.get_next_message()
-            except EOFError as e:
-                print(f"EOFError encountered: {e}")
-                break
-            if msg is None:
-                break
+        try:
+            # Main processing loop.
+            while True:
+                try:
+                    msg = parser.get_next_message()
+                except EOFError as e:
+                    print(f"EOF reached: {e}")
+                    break
+                if msg is None:
+                    break
 
-            # Convert the message to a dictionary and add its type.
-            msg_dict = asdict(msg)
-            msg_type = msg.__class__.__name__
-            msg_dict["type"] = msg_type
+                # Convert the message to a dictionary and add its type.
+                msg_dict = asdict(msg)
+                msg_type = msg.__class__.__name__
+                msg_dict["type"] = msg_type
 
-            if msg_type == "QuoteUpdate":
-                # Normalize row to the QuoteUpdate schema.
-                row = {col: msg_dict.get(col, None) for col in self.QUOTE_SCHEMA_COLUMNS}
-                quote_buffer.append(row)
-                if len(quote_buffer) >= quote_chunk_size:
-                    writer_quote, n_rows = self._flush_buffer(
-                        quote_buffer, writer_quote, quote_filepath,
-                        self.QUOTE_SCHEMA_COLUMNS, self.QUOTE_DTYPE_MAPPING, "QuoteUpdate"
-                    )
-                    total_quote_rows += n_rows
-                    print(f"Cumulative QuoteUpdate rows written: {total_quote_rows}")
-            else:
-                # Normalize row to the Other Messages schema.
-                row = {col: msg_dict.get(col, None) for col in self.OTHER_SCHEMA_COLUMNS}
-                other_buffer.append(row)
-                if len(other_buffer) >= other_chunk_size:
-                    writer_other, n_rows = self._flush_buffer(
-                        other_buffer, writer_other, other_filepath,
-                        self.OTHER_SCHEMA_COLUMNS, self.OTHER_DTYPE_MAPPING, "Other Messages"
-                    )
-                    total_other_rows += n_rows
-                    print(f"Cumulative Other Message rows written: {total_other_rows}")
+                if msg_type == "QuoteUpdate":
+                    # Normalize row to the QuoteUpdate schema.
+                    row = {col: msg_dict.get(col, None) for col in self.QUOTE_SCHEMA_COLUMNS}
+                    quote_buffer.append(row)
+                    if len(quote_buffer) >= quote_chunk_size:
+                        writer_quote, n_rows = self._flush_buffer(
+                            quote_buffer, writer_quote, quote_filepath,
+                            self.QUOTE_SCHEMA_COLUMNS, self.QUOTE_DTYPE_MAPPING, "QuoteUpdate"
+                        )
+                        total_quote_rows += n_rows
+                        print(f"Cumulative QuoteUpdate rows written: {total_quote_rows}")
+                else:
+                    # Normalize row to the Other Messages schema.
+                    row = {col: msg_dict.get(col, None) for col in self.OTHER_SCHEMA_COLUMNS}
+                    other_buffer.append(row)
+                    if len(other_buffer) >= other_chunk_size:
+                        writer_other, n_rows = self._flush_buffer(
+                            other_buffer, writer_other, other_filepath,
+                            self.OTHER_SCHEMA_COLUMNS, self.OTHER_DTYPE_MAPPING, "Other Messages"
+                        )
+                        total_other_rows += n_rows
+                        print(f"Cumulative Other Message rows written: {total_other_rows}")
 
-        # Flush any remaining rows.
-        writer_quote, n_rows = self._flush_buffer(
-            quote_buffer, writer_quote, quote_filepath,
-            self.QUOTE_SCHEMA_COLUMNS, self.QUOTE_DTYPE_MAPPING, "final QuoteUpdate"
-        )
-        total_quote_rows += n_rows
-        print(f"Cumulative QuoteUpdate rows written: {total_quote_rows}")
-
-        writer_other, n_rows = self._flush_buffer(
-            other_buffer, writer_other, other_filepath,
-            self.OTHER_SCHEMA_COLUMNS, self.OTHER_DTYPE_MAPPING, "final Other Messages"
-        )
-        total_other_rows += n_rows
-        print(f"Cumulative Other Message rows written: {total_other_rows}")
-
-        # Finalize the files by closing the writers.
-        if writer_quote is not None:
-            writer_quote.close()
-            print(f"Finalized file: {quote_filepath}")
+        except Exception as e:
+            self.status = False
+            print("Serious error occurred during processing:", e)
         else:
-            print("No QuoteUpdate messages were written.")
-
-        if writer_other is not None:
-            writer_other.close()
-            print(f"Finalized file: {other_filepath}")
-        else:
-            print("No other messages were written.")
-
-        # Delete the PCAP file after processing if the toggle is enabled.
-        if self.delete_after_processing:
+            self.status = True
+        finally:
+            # Flush any remaining rows.
             try:
-                os.remove(self.pcap_filepath)
-                print(f"Deleted source PCAP file: {self.pcap_filepath}")
+                writer_quote, n_rows = self._flush_buffer(
+                    quote_buffer, writer_quote, quote_filepath,
+                    self.QUOTE_SCHEMA_COLUMNS, self.QUOTE_DTYPE_MAPPING, "final QuoteUpdate"
+                )
+                total_quote_rows += n_rows
+                print(f"Cumulative QuoteUpdate rows written: {total_quote_rows}")
             except Exception as e:
-                print(f"Error deleting PCAP file: {e}")
+                print("Error flushing quote buffer:", e)
+            try:
+                writer_other, n_rows = self._flush_buffer(
+                    other_buffer, writer_other, other_filepath,
+                    self.OTHER_SCHEMA_COLUMNS, self.OTHER_DTYPE_MAPPING, "final Other Messages"
+                )
+                total_other_rows += n_rows
+                print(f"Cumulative Other Message rows written: {total_other_rows}")
+            except Exception as e:
+                print("Error flushing other buffer:", e)
+
+            # Finalize the Parquet writers.
+            if writer_quote is not None:
+                writer_quote.close()
+                print(f"Finalized file: {quote_filepath}")
+            else:
+                print("No QuoteUpdate messages were written.")
+
+            if writer_other is not None:
+                writer_other.close()
+                print(f"Finalized file: {other_filepath}")
+            else:
+                print("No other messages were written.")
+
+            # Delete the PCAP file after processing if the toggle is enabled.
+            if self.delete_after_processing:
+                try:
+                    os.remove(self.pcap_filepath)
+                    print(f"Deleted source PCAP file: {self.pcap_filepath}")
+                except Exception as e:
+                    print("Error deleting PCAP file:", e)
 
         return quote_filepath, other_filepath
 
@@ -346,10 +364,11 @@ if __name__ == "__main__":
 
     # Example usage:
     # Pass a URL or local filename as the first argument.
-    # Optionally, you can set the delete_after_processing toggle (here, True).
+    # Optionally, set the delete_after_processing toggle (here, True).
     processor = PCAPProcessor(sys.argv[1], delete_after_processing=True)
     print(f"Processing PCAP file: {processor.pcap_filepath}")
     quote_path, other_path = processor.process_file()
     print("Processing complete.")
     print("QuoteUpdate file:", quote_path)
     print("Other Messages file:", other_path)
+    print("Processing status:", processor.status)
