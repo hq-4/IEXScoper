@@ -372,3 +372,5 @@ if __name__ == "__main__":
     print("QuoteUpdate file:", quote_path)
     print("Other Messages file:", other_path)
     print("Processing status:", processor.status)
+
+
