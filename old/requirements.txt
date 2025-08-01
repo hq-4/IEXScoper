@@ -1,0 +1,4 @@
+git+https://github.com/caraoz/IEXTools.git
+fastapi
+uvicorn
+pyarrow
