@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iexscoper"
+version = "0.1.0"
+description = "IEXScoper: ingestion and analytics for IEX data (aggregator per-second per-symbol)."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+  {name = "IEXScoper"}
+]
+dependencies = [
+  "polars>=1.7.0",
+  "pyarrow>=15.0.0",
+  "rich>=13.7.0",
+  "python-dotenv>=1.0.1",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-q"
+
+[tool.bandit]
+skips = ["B101"]
