@@ -65,6 +65,14 @@ To compact staging output into a yearly master Parquet file:
 uv run iexscoper compact-master --year 2025
 ```
 
+To validate TOPS ingestion before a broad backfill:
+
+```bash
+uv run iexscoper tops-spec-audit --report-root reports
+uv run iexscoper validate-tops-ingest --dry-run
+uv run iexscoper validate-tops-ingest --all-available --start-day 20250101
+```
+
 ### Windows Examples
 
 For Windows users, here are some example commands:
@@ -99,6 +107,12 @@ Compact staging Parquet files into the yearly master file:
 
 ```bash
 uv run iexscoper compact-master --year 2025
+```
+
+Validate TOPS discovery, download, PCAP parsing, raw Parquet conversion, and per-second aggregation:
+
+```bash
+uv run iexscoper validate-tops-ingest [--days 20250102,20250407] [--dry-run] [--all-available]
 ```
 
 ### Expected CSV Format

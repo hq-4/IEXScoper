@@ -8,18 +8,35 @@ import polars as pl
 SALE_CONDITION_EXCLUDES: tuple[str, ...] = ("CANCEL", "CORRECTION", "CORR")
 
 
-def resolve_trade_csv_path(csv_root: str, yyyymmdd: str) -> Path:
+def resolve_trade_csv_path(csv_root: str, yyyymmdd: str, feed: str = "TOPS") -> Path:
     root = Path(csv_root)
-    path = root / yyyymmdd[:4] / yyyymmdd[4:6] / (
-        f"data_feeds_{yyyymmdd}_{yyyymmdd}_IEXTP1_DEEP1.0_trd.csv"
-    )
-    if not path.exists():
-        raise FileNotFoundError(f"Trade CSV not found for {yyyymmdd}: {path}")
-    return path
+    day_dir = root / yyyymmdd[:4] / yyyymmdd[4:6]
+    feed_upper = feed.upper()
+    candidates = [
+        day_dir / f"{yyyymmdd}_IEXTP1_{feed_upper}1.6_trd.csv",
+        day_dir / f"{yyyymmdd}_IEXTP1_{feed_upper}1.6.pcap_trd.csv",
+        day_dir / f"data_feeds_{yyyymmdd}_{yyyymmdd}_IEXTP1_{feed_upper}1.6_trd.csv",
+    ]
+    if feed_upper == "DEEP":
+        candidates.append(
+            day_dir / f"data_feeds_{yyyymmdd}_{yyyymmdd}_IEXTP1_DEEP1.0_trd.csv"
+        )
+    for path in candidates:
+        if path.exists():
+            return path
+
+    globbed = sorted(day_dir.glob(f"*{yyyymmdd}*IEXTP1*{feed_upper}*_trd.csv"))
+    if globbed:
+        return globbed[0]
+
+    checked = ", ".join(str(path) for path in candidates)
+    raise FileNotFoundError(f"Trade CSV not found for {yyyymmdd}; checked: {checked}")
 
 
 def _session_expression(ts_col: str) -> pl.Expr:
-    minutes = (pl.col(ts_col).dt.hour() * 60) + pl.col(ts_col).dt.minute()
+    minutes = (pl.col(ts_col).dt.hour().cast(pl.Int16) * 60) + pl.col(ts_col).dt.minute().cast(
+        pl.Int16
+    )
     pre_start = 4 * 60
     regular_start = 9 * 60 + 30
     after_start = 16 * 60
@@ -42,8 +59,9 @@ def scan_trades_csv_for_day(
     yyyymmdd: str,
     symbols: Iterable[str] | None,
     display_tz: str,
+    feed: str = "TOPS",
 ) -> pl.DataFrame | None:
-    path = resolve_trade_csv_path(csv_root, yyyymmdd)
+    path = resolve_trade_csv_path(csv_root, yyyymmdd, feed=feed)
     lf = pl.scan_csv(path, infer_schema_length=2000)
     rename_map = {
         "Exchange Timestamp": "exchange_timestamp_ns",
@@ -53,7 +71,8 @@ def scan_trades_csv_for_day(
         "Trade ID": "trade_id",
         "Sale Condition": "sale_condition",
     }
-    missing = [src for src in rename_map if src not in lf.columns]
+    columns = lf.collect_schema().names()
+    missing = [src for src in rename_map if src not in columns]
     if missing:
         raise ValueError(f"Missing columns in {path}: {missing}")
     lf = lf.rename(rename_map)
@@ -87,14 +106,14 @@ def scan_trades_csv_for_day(
     )
     lf = lf.with_columns(_session_expression("ts_second_ny").alias("session"))
     agg = (
-        lf.groupby(["symbol", "ts_second_ny"])
+        lf.group_by(["symbol", "ts_second_ny"])
         .agg(
             pl.col("ts_second_utc").first().alias("ts_second_utc"),
             pl.col("session").first().alias("session"),
             pl.col("day").first().alias("day"),
             pl.col("year").first().alias("year"),
             pl.col("size").sum().alias("share_volume"),
-            pl.count().alias("trade_count"),
+            pl.len().alias("trade_count"),
             (pl.col("price") * pl.col("size")).sum().alias("dollar_volume"),
             pl.col("price").mean().alias("mean_price"),
         )
@@ -107,5 +126,5 @@ def scan_trades_csv_for_day(
         .drop("dollar_volume")
         .sort(["symbol", "ts_second_ny"])
     )
-    df = agg.collect(streaming=True)
+    df = agg.collect()
     return df if df.height > 0 else None
