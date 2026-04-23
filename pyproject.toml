@@ -18,6 +18,21 @@ dependencies = [
   "python-dotenv>=1.0.1",
 ]
 
+[project.scripts]
+iexscoper = "src.framework.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=7.0",
+  "requests>=2.25.1",
+  "ruff>=0.6.0",
+  "bandit>=1.7.0",
+  "tqdm>=4.62.3",
+]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
 [tool.ruff]
 line-length = 100
 

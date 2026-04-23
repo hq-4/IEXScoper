@@ -1,23 +1,22 @@
-# IEX Tick Data Visualization and Pairs Analysis Tool
+# IEXScoper
 
-A Python project for loading, visualizing, and analyzing tick-level stock data from IEX using Polars, datashader, and modern visualization libraries. The tool also provides pairs trading analysis capabilities with cointegration testing and statistical analysis.
+IEXScoper is a Python project for ingestion and analytics on IEX tick data. The current active package builds per-second, per-symbol trade aggregates from parsed IEX trade CSV files and writes derived Parquet outputs.
 
 ## Features
 
-- **High-performance data loading** with Polars
-- **Scalable visualization** using datashader for large datasets
-- **Multiple chart types**: time series, volume bars, OHLC candlesticks
-- **Interactive dashboards** with hvplot and bokeh
-- **Sample data generation** for testing
-- **Flexible CSV input** support
-- **Pairs trading analysis** with cointegration testing and statistical analysis
-- **Multiple aggregation frequencies** for pairs analysis (1s, 5s, 1min, 1hr)
+- **High-performance CSV scanning and aggregation** with Polars
+- **Per-second trade aggregates** by symbol
+- **VWAP, mean price, share volume, and trade count** outputs
+- **Session labels** for pre-market, regular, and after-hours trading
+- **Staging Parquet parts** partitioned by symbol
+- **Yearly master Parquet compaction**
+- **uv-managed dependencies** through `pyproject.toml` and `uv.lock`
 
 ## Setup
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.12+
 - [uv](https://github.com/astral-sh/uv) package manager
 
 ### Windows Compatibility
@@ -46,57 +45,61 @@ For best results on Windows:
 
 2. Install dependencies using [uv](https://github.com/astral-sh/uv):
    ```bash
-   uv pip install -r requirements.txt
+   uv sync
    ```
 
-3. Run the visualization tool:
+3. Configure input/output roots:
    ```bash
-   python main.py --file data/your_ticks.csv --output-dir plots
+   cp .env.example .env
+   # edit .env with IEX_CSV_ROOT and IEX_PARQUET_ROOT
    ```
 
-For sample data:
+4. Run the CLI:
    ```bash
-   python main.py --sample --output-dir plots
+   uv run iexscoper aggregate-per-second --year 2025 --limit-days 1 --dry-run
    ```
+
+To compact staging output into a yearly master Parquet file:
+
+```bash
+uv run iexscoper compact-master --year 2025
+```
 
 ### Windows Examples
 
 For Windows users, here are some example commands:
 
-1. **Visualization**:
+1. **Install dependencies**:
    ```cmd
-   python main.py --file data\ticks.csv --output-dir plots
+   uv sync
    ```
 
-2. **Pairs Analysis**:
+2. **Aggregate one dry-run day**:
    ```cmd
-   python main.py --pairs-analysis --file1 data\stock1.csv --file2 data\stock2.csv --freq 1min
+   uv run iexscoper aggregate-per-second --year 2025 --limit-days 1 --dry-run
    ```
 
 3. **Using PowerShell** (note the backtick for line continuation):
    ```powershell
-   python main.py --pairs-analysis `
-                 --file1 data\stock1.csv `
-                 --file2 data\stock2.csv `
-                 --freq 1min
+   uv run iexscoper aggregate-per-second `
+                 --year 2025 `
+                 --symbols AAPL,MSFT `
+                 --limit-days 10
    ```
 
 ### Command Line Options
 
-- `--file, -f`: Path to CSV file containing tick data
-- `--symbol, -s`: Stock symbol for sample data (default: AAPL)
-- `--sample`: Use generated sample data instead of CSV
-- `--points, -p`: Number of sample data points (default: 100,000)
-- `--output-dir, -o`: Output directory for generated plots (default: output)
-- `--filter-symbol`: Filter CSV data to only show specified symbol
-- `--top-symbols`: Show only top N symbols by volume (0 = all symbols)
+Aggregate parsed trade CSVs into per-second staging Parquet files:
 
-### Pairs Analysis Options
+```bash
+uv run iexscoper aggregate-per-second --year 2025 [--symbols AAPL,MSFT] [--rebuild] [--dry-run] [--limit-days 10]
+```
 
-- `--pairs-analysis`: Run pairs analysis instead of visualization
-- `--file1`: Path to first CSV file for pairs analysis
-- `--file2`: Path to second CSV file for pairs analysis
-- `--freq`: Aggregation frequency for pairs analysis (1s, 5s, 1min, 1hr)
+Compact staging Parquet files into the yearly master file:
+
+```bash
+uv run iexscoper compact-master --year 2025
+```
 
 ### Expected CSV Format
 
@@ -123,13 +126,12 @@ The tool specifically supports the IEX TP1 DEEP1.0 format with columns:
 
 ```
 IEXScoper/
-├── main.py              # Main application script
-├── pairs_analysis.py     # Pairs trading analysis module
-├── requirements.txt     # Python dependencies
+├── pyproject.toml       # Package metadata and dependencies
+├── uv.lock              # Locked uv dependency graph
 ├── README.md           # This file
 ├── .gitignore          # Git ignore patterns
-├── data/               # Directory for CSV files
-├── output/             # Generated visualizations
+├── src/                # Active application package
+├── iex-parser/         # Bundled IEX PCAP-to-CSV parser
 └── old/                # Legacy files
 ```
 
@@ -143,32 +145,18 @@ IEXScoper/
 ### IEX Data Parser
 - **iex-parser**: IEX data parsing library (from GitHub: https://github.com/hq-4/iex-parser.git)
 
-### Visualization Libraries
-- **datashader**: Large dataset visualization
-- **holoviews**: Declarative data visualization
-- **hvplot**: High-level plotting interface
-- **bokeh**: Interactive web-based plotting
-- **plotly**: Interactive plotting library
-- **panel**: Dashboard creation
-
-### Statistical Libraries
-- **scipy**: Scientific computing and statistical tests
-- **statsmodels**: Statistical models and tests (cointegration)
-- **pandas**: Data manipulation (for compatibility)
-
 ## Performance Notes
 
-- **Polars** is used for fast data loading and processing
-- **Datashader** enables visualization of millions of data points
-- **Memory usage** is optimized for large tick datasets
-- **Interactive plots** are saved as HTML files for easy sharing
+- **Polars** is used for fast data loading and aggregation
+- **PyArrow** is used for Parquet writing
+- **Zstandard** compression is used for derived Parquet outputs
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Import errors**: Ensure all dependencies are installed with `uv pip install -r requirements.txt`
-2. **Memory issues**: Reduce the number of data points or use datashader for large datasets
+1. **Import errors**: Ensure all dependencies are installed with `uv sync`
+2. **Memory issues**: Use `--symbols` or `--limit-days` for smaller runs while validating configuration
 3. **Date parsing errors**: Check your CSV timestamp format
 
 ### Getting Help
