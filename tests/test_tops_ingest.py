@@ -11,6 +11,7 @@ from src.usecases.tops_ingest import (
     CHECKPOINT_DIRNAME,
     discover_hist_files,
     run_tops_ingest_validation,
+    write_tops_profile_report,
     write_tops_spec_audit,
     _convert_csv_to_parquet,
     _is_gzip_url,
@@ -317,3 +318,56 @@ def test_validation_resumes_completed_download_and_parse(tmp_path, monkeypatch):
 
     assert code == 0
     assert (parquet_root / "raw" / "tops" / "2025" / "01" / "20250102_IEXTP1_TOPS1.6_trd.parquet").exists()
+
+
+def test_profile_report_writes_stage_throughput_summary(tmp_path):
+    report_root = tmp_path / "reports"
+    checkpoint_dir = report_root / CHECKPOINT_DIRNAME
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "day": "20250102",
+        "stages": {
+            "download": {
+                "stage": "download",
+                "status": "succeeded",
+                "elapsed_seconds": 200.0,
+                "size_bytes": 40 * 1024 * 1024,
+                "detail": {"downloaded_size_bytes": 10 * 1024 * 1024, "attempt": 2},
+            },
+            "parse_pcap_to_csv": {
+                "stage": "parse_pcap_to_csv",
+                "status": "succeeded",
+                "elapsed_seconds": 100.0,
+                "size_bytes": 5 * 1024 * 1024,
+                "row_count": 2500,
+                "detail": {},
+            },
+            "convert_csv_to_parquet": {
+                "stage": "convert_csv_to_parquet",
+                "status": "succeeded",
+                "elapsed_seconds": 25.0,
+                "size_bytes": 1024 * 1024,
+                "row_count": 2500,
+                "detail": {},
+            },
+            "aggregate_per_second": {
+                "stage": "aggregate_per_second",
+                "status": "succeeded",
+                "elapsed_seconds": 2.0,
+                "row_count": 1200,
+                "detail": {"symbols": 25, "sessions": {"regular": 1200}},
+            },
+        },
+    }
+    (checkpoint_dir / "20250102.json").write_text(json.dumps(state), encoding="utf-8")
+
+    result = write_tops_profile_report(report_root, ["20250102"])
+
+    assert result["rows"] == 1
+    payload = json.loads((report_root / "tops_ingest_profile.json").read_text(encoding="utf-8"))
+    row = payload["days"][0]
+    assert row["day"] == "20250102"
+    assert row["download_attempt"] == 2
+    assert row["download_input_mbps"] == 0.05
+    assert row["parse_rows_per_second"] == 25.0
+    assert row["parquet_output_mbps"] == 0.04

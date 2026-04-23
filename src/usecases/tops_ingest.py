@@ -31,6 +31,7 @@ SAMPLE_DAYS = (
 )
 DOWNLOAD_MAX_ATTEMPTS = 3
 CHECKPOINT_DIRNAME = "tops_ingest_state"
+PROFILE_REPORT_BASENAME = "tops_ingest_profile"
 
 SPEC_AUDIT_ROWS: tuple[dict[str, str], ...] = (
     {
@@ -160,6 +161,9 @@ class StateTracker:
             return entry
         return None
 
+    def available_days(self) -> list[str]:
+        return sorted(path.stem for path in self.state_root.glob("*.json"))
+
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
@@ -230,6 +234,76 @@ def write_tops_spec_audit(report_root: Path) -> dict[str, str | int]:
     return {"json": str(json_path), "csv": str(csv_path), "rows": len(SPEC_AUDIT_ROWS)}
 
 
+def write_tops_profile_report(report_root: Path, days: list[str] | None = None) -> dict[str, str | int]:
+    tracker = StateTracker(report_root)
+    selected_days = days or tracker.available_days()
+    rows: list[dict[str, Any]] = []
+
+    for day in selected_days:
+        state = tracker.load(day)
+        stages = state.get("stages", {})
+        if not stages:
+            continue
+
+        download = stages.get("download")
+        parse = stages.get("parse_pcap_to_csv")
+        parquet = stages.get("convert_csv_to_parquet")
+        aggregate = stages.get("aggregate_per_second")
+
+        row: dict[str, Any] = {
+            "day": day,
+            "download_status": (download or {}).get("status"),
+            "download_attempt": ((download or {}).get("detail") or {}).get("attempt"),
+            "download_elapsed_seconds": (download or {}).get("elapsed_seconds"),
+            "downloaded_size_bytes": ((download or {}).get("detail") or {}).get("downloaded_size_bytes"),
+            "download_output_size_bytes": (download or {}).get("size_bytes"),
+            "download_input_mbps": _mbps(
+                ((download or {}).get("detail") or {}).get("downloaded_size_bytes"),
+                (download or {}).get("elapsed_seconds"),
+            ),
+            "download_output_mbps": _mbps((download or {}).get("size_bytes"), (download or {}).get("elapsed_seconds")),
+            "parse_status": (parse or {}).get("status"),
+            "parse_elapsed_seconds": (parse or {}).get("elapsed_seconds"),
+            "parse_row_count": (parse or {}).get("row_count"),
+            "parse_csv_size_bytes": (parse or {}).get("size_bytes"),
+            "parse_rows_per_second": _rate((parse or {}).get("row_count"), (parse or {}).get("elapsed_seconds")),
+            "parse_input_mbps": _mbps((download or {}).get("size_bytes"), (parse or {}).get("elapsed_seconds")),
+            "parse_output_mbps": _mbps((parse or {}).get("size_bytes"), (parse or {}).get("elapsed_seconds")),
+            "parquet_status": (parquet or {}).get("status"),
+            "parquet_elapsed_seconds": (parquet or {}).get("elapsed_seconds"),
+            "parquet_size_bytes": (parquet or {}).get("size_bytes"),
+            "parquet_input_mbps": _mbps((parse or {}).get("size_bytes"), (parquet or {}).get("elapsed_seconds")),
+            "parquet_output_mbps": _mbps((parquet or {}).get("size_bytes"), (parquet or {}).get("elapsed_seconds")),
+            "aggregate_status": (aggregate or {}).get("status"),
+            "aggregate_elapsed_seconds": (aggregate or {}).get("elapsed_seconds"),
+            "aggregate_row_count": (aggregate or {}).get("row_count"),
+            "aggregate_rows_per_second": _rate(
+                (aggregate or {}).get("row_count"),
+                (aggregate or {}).get("elapsed_seconds"),
+            ),
+            "symbols": ((aggregate or {}).get("detail") or {}).get("symbols"),
+            "sessions": json.dumps(((aggregate or {}).get("detail") or {}).get("sessions") or {}, sort_keys=True),
+        }
+        rows.append(row)
+
+    report_root.mkdir(parents=True, exist_ok=True)
+    json_path = report_root / f"{PROFILE_REPORT_BASENAME}.json"
+    csv_path = report_root / f"{PROFILE_REPORT_BASENAME}.csv"
+    payload = {"generated_at": _utc_now(), "days": rows}
+    json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    if rows:
+        fieldnames = list(rows[0].keys())
+        with csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+    else:
+        csv_path.write_text("", encoding="utf-8")
+
+    return {"json": str(json_path), "csv": str(csv_path), "rows": len(rows)}
+
+
 def discover_hist_files(session: requests.Session | None = None) -> dict[str, dict[str, Any]]:
     client = session or requests.Session()
     response = client.get(HIST_URL, timeout=60)
@@ -289,6 +363,19 @@ def _coerce_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _rate(numerator: int | float | None, seconds: float | None) -> float | None:
+    if numerator is None or seconds is None or seconds <= 0:
+        return None
+    return round(float(numerator) / float(seconds), 3)
+
+
+def _mbps(size_bytes: int | None, seconds: float | None) -> float | None:
+    rate = _rate(size_bytes, seconds)
+    if rate is None:
+        return None
+    return round(rate / (1024 * 1024), 3)
 
 
 def _download(url: str, target: Path) -> int:

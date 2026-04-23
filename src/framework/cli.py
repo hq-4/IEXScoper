@@ -4,7 +4,12 @@ from pathlib import Path
 from src.framework.config import get_settings
 from src.framework.logging import setup_logging, get_logger
 from src.usecases.aggregate_per_second import run_aggregate_per_second, run_compact_master
-from src.usecases.tops_ingest import SAMPLE_DAYS, run_tops_ingest_validation, write_tops_spec_audit
+from src.usecases.tops_ingest import (
+    SAMPLE_DAYS,
+    run_tops_ingest_validation,
+    write_tops_profile_report,
+    write_tops_spec_audit,
+)
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="iexscoper")
@@ -32,10 +37,15 @@ def main() -> None:
     p4.add_argument("--end-day")
     p4.add_argument("--dry-run", action="store_true")
     p4.add_argument("--keep-raw", action="store_true")
+    p4.add_argument("--write-profile-report", action="store_true")
     p4.add_argument(
         "--parser-bin",
         default="iex-parser/iex_cppparser/bin/iex_parser.out",
     )
+
+    p5 = sub.add_parser("tops-profile-report")
+    p5.add_argument("--report-root")
+    p5.add_argument("--days", default="")
 
     args = p.parse_args()
     settings = get_settings()
@@ -76,8 +86,17 @@ def main() -> None:
             keep_raw=args.keep_raw,
             parser_bin=args.parser_bin,
         )
+        if args.write_profile_report:
+            detail = write_tops_profile_report(Path(args.report_root or settings.iex_report_root), days or None)
+            logger.info("tops-profile-report exit", extra={"event": "tops_profile_report", "detail": detail})
         logger.info("validate-tops-ingest exit", extra={"event": "validate_tops_ingest"})
         raise SystemExit(code)
+    if args.cmd == "tops-profile-report":
+        days = [day.strip() for day in args.days.split(",") if day.strip()]
+        result = write_tops_profile_report(Path(args.report_root or settings.iex_report_root), days or None)
+        logger.info("tops-profile-report exit", extra={"event": "tops_profile_report", "detail": result})
+        print(result)
+        raise SystemExit(0)
 
 if __name__ == "__main__":
     main()

@@ -71,6 +71,7 @@ To validate TOPS ingestion before a broad backfill:
 uv run iexscoper tops-spec-audit --report-root reports
 uv run iexscoper validate-tops-ingest --dry-run
 uv run iexscoper validate-tops-ingest --all-available --start-day 20250101
+uv run iexscoper tops-profile-report --report-root reports
 ```
 
 `IEX_WORK_ROOT` controls PCAP scratch space and fallback CSV/Parquet locations. `IEX_REPORT_ROOT`
@@ -116,7 +117,13 @@ uv run iexscoper compact-master --year 2025
 Validate TOPS discovery, download, PCAP parsing, raw Parquet conversion, and per-second aggregation:
 
 ```bash
-uv run iexscoper validate-tops-ingest [--days 20250102,20250407] [--dry-run] [--all-available]
+uv run iexscoper validate-tops-ingest [--days 20250102,20250407] [--dry-run] [--all-available] [--write-profile-report]
+```
+
+Write a compact throughput/profile summary from checkpoint state files:
+
+```bash
+uv run iexscoper tops-profile-report [--days 20250102,20250407]
 ```
 
 ### Expected CSV Format
