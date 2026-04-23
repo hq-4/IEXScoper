@@ -10,6 +10,7 @@ from src.usecases.tops_ingest import (
     write_tops_spec_audit,
     _convert_csv_to_parquet,
     _is_gzip_url,
+    _is_pcapng,
 )
 from src.framework.config import Settings
 
@@ -71,6 +72,13 @@ def test_is_gzip_url_handles_signed_google_storage_url():
     )
 
     assert _is_gzip_url(url)
+
+
+def test_is_pcapng_detects_magic(tmp_path):
+    pcapng = tmp_path / "sample.pcap"
+    pcapng.write_bytes(b"\x0a\x0d\x0d\x0a" + b"extra")
+
+    assert _is_pcapng(pcapng)
 
 
 def test_convert_csv_to_daily_parquet(tmp_path):

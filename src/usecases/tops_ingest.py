@@ -265,6 +265,34 @@ def _gunzip_if_needed(path: Path) -> Path:
     return target
 
 
+def _is_pcapng(path: Path) -> bool:
+    with path.open("rb") as handle:
+        return handle.read(4) == b"\x0a\x0d\x0d\x0a"
+
+
+def _ensure_classic_pcap(path: Path) -> tuple[Path, dict[str, Any]]:
+    if not _is_pcapng(path):
+        return path, {"pcap_format": "pcap"}
+
+    tcpdump = shutil.which("tcpdump")
+    if tcpdump is None:
+        raise RuntimeError("Downloaded file is pcapng, but tcpdump is not available for conversion")
+
+    converted = path.with_name(path.stem + ".classic.pcap")
+    converted.unlink(missing_ok=True)
+    result = subprocess.run(
+        [tcpdump, "-r", str(path), "-w", str(converted)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=None,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+    path.unlink(missing_ok=True)
+    return converted, {"pcap_format": "pcapng_converted", "converter": tcpdump}
+
+
 def _is_gzip_url(url: str) -> bool:
     path = unquote(urlparse(url).path)
     return path.endswith(".gz")
@@ -399,10 +427,11 @@ def run_tops_ingest_validation(
             if expected is not None and downloaded_size != expected:
                 raise ValueError(f"downloaded {downloaded_size} bytes, expected {expected}")
             actual = _gunzip_if_needed(target)
+            actual, format_detail = _ensure_classic_pcap(actual)
             return {
                 "path": str(actual),
                 "size_bytes": actual.stat().st_size,
-                "detail": {"downloaded_size_bytes": downloaded_size},
+                "detail": {"downloaded_size_bytes": downloaded_size, **format_detail},
             }
 
         metric = _timed_metric(day, "download", download_stage)
