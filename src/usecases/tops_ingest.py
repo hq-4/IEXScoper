@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin, urlparse
 
 import polars as pl
 import requests
@@ -265,6 +265,11 @@ def _gunzip_if_needed(path: Path) -> Path:
     return target
 
 
+def _is_gzip_url(url: str) -> bool:
+    path = unquote(urlparse(url).path)
+    return path.endswith(".gz")
+
+
 def _csv_stats(path: Path) -> dict[str, Any]:
     df = pl.read_csv(path, infer_schema_length=2000)
     stats: dict[str, Any] = {"row_count": df.height}
@@ -388,7 +393,7 @@ def run_tops_ingest_validation(
             continue
 
         def download_stage() -> dict[str, Any]:
-            target = pcap_path.with_suffix(pcap_path.suffix + ".gz") if str(url).endswith(".gz") else pcap_path
+            target = pcap_path.with_suffix(pcap_path.suffix + ".gz") if _is_gzip_url(str(url)) else pcap_path
             downloaded_size = _download(str(url), target)
             expected = info.get("size_bytes")
             if expected is not None and downloaded_size != expected:

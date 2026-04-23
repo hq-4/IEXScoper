@@ -9,6 +9,7 @@ from src.usecases.tops_ingest import (
     run_tops_ingest_validation,
     write_tops_spec_audit,
     _convert_csv_to_parquet,
+    _is_gzip_url,
 )
 from src.framework.config import Settings
 
@@ -60,6 +61,16 @@ def test_discover_hist_files_filters_tops_entries():
 
     assert list(discovered) == ["20250102"]
     assert discovered["20250102"]["size_bytes"] == 123
+
+
+def test_is_gzip_url_handles_signed_google_storage_url():
+    url = (
+        "https://www.googleapis.com/download/storage/v1/b/iex/o/"
+        "data%2Ffeeds%2F20250102%2F20250102_IEXTP1_TOPS1.6.pcap.gz"
+        "?generation=1735874992388600&alt=media"
+    )
+
+    assert _is_gzip_url(url)
 
 
 def test_convert_csv_to_daily_parquet(tmp_path):
