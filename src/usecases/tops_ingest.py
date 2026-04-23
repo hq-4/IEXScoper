@@ -389,12 +389,16 @@ def run_tops_ingest_validation(
 
         def download_stage() -> dict[str, Any]:
             target = pcap_path.with_suffix(pcap_path.suffix + ".gz") if str(url).endswith(".gz") else pcap_path
-            size = _download(str(url), target)
-            actual = _gunzip_if_needed(target)
+            downloaded_size = _download(str(url), target)
             expected = info.get("size_bytes")
-            if expected is not None and size != expected and target == actual:
-                raise ValueError(f"downloaded {size} bytes, expected {expected}")
-            return {"path": str(actual), "size_bytes": actual.stat().st_size}
+            if expected is not None and downloaded_size != expected:
+                raise ValueError(f"downloaded {downloaded_size} bytes, expected {expected}")
+            actual = _gunzip_if_needed(target)
+            return {
+                "path": str(actual),
+                "size_bytes": actual.stat().st_size,
+                "detail": {"downloaded_size_bytes": downloaded_size},
+            }
 
         metric = _timed_metric(day, "download", download_stage)
         metrics.write(metric)

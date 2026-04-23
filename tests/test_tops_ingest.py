@@ -6,9 +6,11 @@ import polars as pl
 
 from src.usecases.tops_ingest import (
     discover_hist_files,
+    run_tops_ingest_validation,
     write_tops_spec_audit,
     _convert_csv_to_parquet,
 )
+from src.framework.config import Settings
 
 
 class _Response:
@@ -87,3 +89,40 @@ def test_convert_csv_to_daily_parquet(tmp_path):
     assert result["path"] == str(parquet_path)
     assert result["row_count"] == 1
     assert pl.read_parquet(parquet_path).height == 1
+
+
+def test_dry_run_validation_writes_discovery_metrics(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.usecases.tops_ingest.discover_hist_files",
+        lambda: {
+            "20250102": {
+                "day": "20250102",
+                "name": "20250102_IEXTP1_TOPS1.6.pcap.gz",
+                "url": "https://example.test/file.pcap.gz",
+                "size_bytes": 123,
+            }
+        },
+    )
+    settings = Settings(
+        iex_csv_root=str(tmp_path / "csv"),
+        iex_parquet_root=str(tmp_path / "parquet"),
+        display_tz="America/New_York",
+        log_jsonl_path=str(tmp_path / "app.jsonl"),
+        database_url=None,
+    )
+
+    code = run_tops_ingest_validation(
+        settings=settings,
+        work_root=str(tmp_path / "work"),
+        report_root=str(tmp_path / "reports"),
+        days=["20250102"],
+        all_available=False,
+        start_day="20250101",
+        end_day=None,
+        dry_run=True,
+        keep_raw=False,
+        parser_bin="unused",
+    )
+
+    assert code == 0
+    assert "20250102" in (tmp_path / "reports" / "tops_ingest_metrics.jsonl").read_text()
