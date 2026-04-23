@@ -63,15 +63,16 @@ def scan_trades_csv_for_day(
 ) -> pl.DataFrame | None:
     path = resolve_trade_csv_path(csv_root, yyyymmdd, feed=feed)
     lf = pl.scan_csv(path, infer_schema_length=2000)
+    columns = lf.collect_schema().names()
+    timestamp_column = "Exchange Timestamp" if "Exchange Timestamp" in columns else "Raw Timestamp"
     rename_map = {
-        "Exchange Timestamp": "exchange_timestamp_ns",
+        timestamp_column: "exchange_timestamp_ns",
         "Symbol": "symbol",
         "Size": "size",
         "Price": "price",
         "Trade ID": "trade_id",
         "Sale Condition": "sale_condition",
     }
-    columns = lf.collect_schema().names()
     missing = [src for src in rename_map if src not in columns]
     if missing:
         raise ValueError(f"Missing columns in {path}: {missing}")
