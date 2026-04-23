@@ -51,7 +51,7 @@ For best results on Windows:
 3. Configure input/output roots:
    ```bash
    cp .env.example .env
-   # edit .env with IEX_CSV_ROOT and IEX_PARQUET_ROOT
+   # edit .env with IEX_CSV_ROOT, IEX_PARQUET_ROOT, IEX_WORK_ROOT, and IEX_REPORT_ROOT
    ```
 
 4. Run the CLI:
@@ -72,6 +72,10 @@ uv run iexscoper tops-spec-audit --report-root reports
 uv run iexscoper validate-tops-ingest --dry-run
 uv run iexscoper validate-tops-ingest --all-available --start-day 20250101
 ```
+
+`IEX_WORK_ROOT` controls PCAP scratch space and fallback CSV/Parquet locations. `IEX_REPORT_ROOT`
+controls validation metrics and audit reports. Explicit `--work-root` and `--report-root` CLI
+arguments override the `.env` values.
 
 ### Windows Examples
 

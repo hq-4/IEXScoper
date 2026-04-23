@@ -125,6 +125,8 @@ def test_dry_run_validation_writes_discovery_metrics(tmp_path, monkeypatch):
     settings = Settings(
         iex_csv_root=str(tmp_path / "csv"),
         iex_parquet_root=str(tmp_path / "parquet"),
+        iex_work_root=str(tmp_path / "work"),
+        iex_report_root=str(tmp_path / "reports"),
         display_tz="America/New_York",
         log_jsonl_path=str(tmp_path / "app.jsonl"),
         database_url=None,

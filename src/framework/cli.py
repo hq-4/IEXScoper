@@ -21,11 +21,11 @@ def main() -> None:
     p2.add_argument("--year", type=int, required=True)
 
     p3 = sub.add_parser("tops-spec-audit")
-    p3.add_argument("--report-root", default="reports")
+    p3.add_argument("--report-root")
 
     p4 = sub.add_parser("validate-tops-ingest")
-    p4.add_argument("--work-root", default="data/iex")
-    p4.add_argument("--report-root", default="reports")
+    p4.add_argument("--work-root")
+    p4.add_argument("--report-root")
     p4.add_argument("--days", default=",".join(SAMPLE_DAYS))
     p4.add_argument("--all-available", action="store_true")
     p4.add_argument("--start-day", default="20250101")
@@ -58,7 +58,7 @@ def main() -> None:
         logger.info("compact-master exit", extra={"event": "compact_master", "year": args.year})
         raise SystemExit(code)
     if args.cmd == "tops-spec-audit":
-        result = write_tops_spec_audit(Path(args.report_root))
+        result = write_tops_spec_audit(Path(args.report_root or settings.iex_report_root))
         logger.info("tops-spec-audit exit", extra={"event": "tops_spec_audit", "detail": result})
         print(result)
         raise SystemExit(0)
@@ -66,8 +66,8 @@ def main() -> None:
         days = [day.strip() for day in args.days.split(",") if day.strip()]
         code = run_tops_ingest_validation(
             settings=settings,
-            work_root=args.work_root,
-            report_root=args.report_root,
+            work_root=args.work_root or settings.iex_work_root,
+            report_root=args.report_root or settings.iex_report_root,
             days=days,
             all_available=args.all_available,
             start_day=args.start_day,
