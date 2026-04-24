@@ -9,6 +9,7 @@ import polars as pl
 from src.usecases.tops_ingest import (
     DOWNLOAD_MAX_ATTEMPTS,
     CHECKPOINT_DIRNAME,
+    StageMetric,
     discover_hist_files,
     run_tops_ingest_validation,
     write_tops_profile_report,
@@ -174,6 +175,12 @@ def test_dry_run_validation_writes_discovery_metrics(tmp_path, monkeypatch):
         dry_run=True,
         keep_raw=False,
         parser_bin="unused",
+        max_workers=1,
+        worker_scratch_budget_gb=180,
+        scratch_reserve_gb=200,
+        scratch_hard_floor_gb=150,
+        limit_days=None,
+        fail_threshold=5,
     )
 
     assert code == 0
@@ -228,6 +235,12 @@ def test_validation_retries_crc_failures_and_records_state(tmp_path, monkeypatch
         dry_run=False,
         keep_raw=True,
         parser_bin="unused",
+        max_workers=1,
+        worker_scratch_budget_gb=180,
+        scratch_reserve_gb=200,
+        scratch_hard_floor_gb=150,
+        limit_days=None,
+        fail_threshold=5,
     )
 
     assert code == 1
@@ -314,6 +327,12 @@ def test_validation_resumes_completed_download_and_parse(tmp_path, monkeypatch):
         dry_run=False,
         keep_raw=True,
         parser_bin="unused",
+        max_workers=1,
+        worker_scratch_budget_gb=180,
+        scratch_reserve_gb=200,
+        scratch_hard_floor_gb=150,
+        limit_days=None,
+        fail_threshold=5,
     )
 
     assert code == 0
@@ -371,3 +390,241 @@ def test_profile_report_writes_stage_throughput_summary(tmp_path):
     assert row["download_input_mbps"] == 0.05
     assert row["parse_rows_per_second"] == 25.0
     assert row["parquet_output_mbps"] == 0.04
+
+
+def test_validation_limit_days_and_summary(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.usecases.tops_ingest.discover_hist_files",
+        lambda: {
+            "20250102": {"day": "20250102", "name": "a", "url": "https://example.test/a", "size_bytes": 1},
+            "20250103": {"day": "20250103", "name": "b", "url": "https://example.test/b", "size_bytes": 1},
+            "20250104": {"day": "20250104", "name": "c", "url": "https://example.test/c", "size_bytes": 1},
+        },
+    )
+    called: list[str] = []
+
+    def fake_run_day(day, info, settings, work, metrics, state, dry_run, keep_raw, parser_bin):
+        called.append(day)
+        state.record(
+            day,
+            StageMetric(
+                day=day,
+                stage="aggregate_per_second",
+                status="succeeded",
+                started_at="now",
+                finished_at="now",
+                elapsed_seconds=0.1,
+                row_count=1,
+            ),
+        )
+        return 0
+
+    monkeypatch.setattr("src.usecases.tops_ingest._run_day_pipeline", fake_run_day)
+    monkeypatch.setattr("src.usecases.tops_ingest._free_space_gb", lambda path: 1000.0)
+    settings = Settings(
+        iex_csv_root=str(tmp_path / "csv"),
+        iex_parquet_root=str(tmp_path / "parquet"),
+        iex_work_root=str(tmp_path / "work"),
+        iex_report_root=str(tmp_path / "reports"),
+        display_tz="America/New_York",
+        log_jsonl_path=str(tmp_path / "app.jsonl"),
+        database_url=None,
+    )
+
+    code = run_tops_ingest_validation(
+        settings=settings,
+        work_root=str(tmp_path / "work"),
+        report_root=str(tmp_path / "reports"),
+        days=None,
+        all_available=True,
+        start_day="20250101",
+        end_day=None,
+        dry_run=False,
+        keep_raw=False,
+        parser_bin="unused",
+        max_workers=1,
+        worker_scratch_budget_gb=180,
+        scratch_reserve_gb=200,
+        scratch_hard_floor_gb=150,
+        limit_days=2,
+        fail_threshold=5,
+    )
+
+    assert code == 0
+    assert called == ["20250102", "20250103"]
+    summary = json.loads((tmp_path / "reports" / "tops_backfill_run_summary.json").read_text(encoding="utf-8"))
+    assert summary["selected_day_count"] == 2
+    assert summary["attempted_day_count"] == 2
+    assert summary["succeeded_day_count"] == 2
+
+
+def test_validation_skips_completed_days(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.usecases.tops_ingest.discover_hist_files",
+        lambda: {
+            "20250102": {"day": "20250102", "name": "a", "url": "https://example.test/a", "size_bytes": 1},
+            "20250103": {"day": "20250103", "name": "b", "url": "https://example.test/b", "size_bytes": 1},
+        },
+    )
+    reports = tmp_path / "reports"
+    checkpoint_dir = reports / CHECKPOINT_DIRNAME
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = {
+        "day": "20250102",
+        "stages": {"aggregate_per_second": {"stage": "aggregate_per_second", "status": "succeeded"}},
+    }
+    (checkpoint_dir / "20250102.json").write_text(json.dumps(checkpoint), encoding="utf-8")
+    called: list[str] = []
+
+    def fake_run_day(day, info, settings, work, metrics, state, dry_run, keep_raw, parser_bin):
+        called.append(day)
+        state.record(
+            day,
+            StageMetric(
+                day=day,
+                stage="aggregate_per_second",
+                status="succeeded",
+                started_at="now",
+                finished_at="now",
+                elapsed_seconds=0.1,
+                row_count=1,
+            ),
+        )
+        return 0
+
+    monkeypatch.setattr("src.usecases.tops_ingest._run_day_pipeline", fake_run_day)
+    monkeypatch.setattr("src.usecases.tops_ingest._free_space_gb", lambda path: 1000.0)
+    settings = Settings(
+        iex_csv_root=str(tmp_path / "csv"),
+        iex_parquet_root=str(tmp_path / "parquet"),
+        iex_work_root=str(tmp_path / "work"),
+        iex_report_root=str(reports),
+        display_tz="America/New_York",
+        log_jsonl_path=str(tmp_path / "app.jsonl"),
+        database_url=None,
+    )
+
+    code = run_tops_ingest_validation(
+        settings=settings,
+        work_root=str(tmp_path / "work"),
+        report_root=str(reports),
+        days=["20250102", "20250103"],
+        all_available=False,
+        start_day="20250101",
+        end_day=None,
+        dry_run=False,
+        keep_raw=False,
+        parser_bin="unused",
+        max_workers=1,
+        worker_scratch_budget_gb=180,
+        scratch_reserve_gb=200,
+        scratch_hard_floor_gb=150,
+        limit_days=None,
+        fail_threshold=5,
+    )
+
+    assert code == 0
+    assert called == ["20250103"]
+    summary = json.loads((reports / "tops_backfill_run_summary.json").read_text(encoding="utf-8"))
+    assert summary["skipped_day_count"] == 1
+    assert summary["attempted_day_count"] == 1
+
+
+def test_validation_blocks_on_scratch_floor(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.usecases.tops_ingest.discover_hist_files",
+        lambda: {
+            "20250102": {"day": "20250102", "name": "a", "url": "https://example.test/a", "size_bytes": 1},
+        },
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("worker should not launch when scratch floor is breached")
+
+    monkeypatch.setattr("src.usecases.tops_ingest._run_day_pipeline", forbidden)
+    monkeypatch.setattr("src.usecases.tops_ingest._free_space_gb", lambda path: 100.0)
+    settings = Settings(
+        iex_csv_root=str(tmp_path / "csv"),
+        iex_parquet_root=str(tmp_path / "parquet"),
+        iex_work_root=str(tmp_path / "work"),
+        iex_report_root=str(tmp_path / "reports"),
+        display_tz="America/New_York",
+        log_jsonl_path=str(tmp_path / "app.jsonl"),
+        database_url=None,
+    )
+
+    code = run_tops_ingest_validation(
+        settings=settings,
+        work_root=str(tmp_path / "work"),
+        report_root=str(tmp_path / "reports"),
+        days=["20250102"],
+        all_available=False,
+        start_day="20250101",
+        end_day=None,
+        dry_run=False,
+        keep_raw=False,
+        parser_bin="unused",
+        max_workers=1,
+        worker_scratch_budget_gb=180,
+        scratch_reserve_gb=200,
+        scratch_hard_floor_gb=150,
+        limit_days=None,
+        fail_threshold=5,
+    )
+
+    assert code == 1
+    summary = json.loads((tmp_path / "reports" / "tops_backfill_run_summary.json").read_text(encoding="utf-8"))
+    assert summary["stop_reason"] == "blocked_on_scratch"
+    assert summary["attempted_day_count"] == 0
+
+
+def test_validation_stops_launching_on_fail_threshold(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.usecases.tops_ingest.discover_hist_files",
+        lambda: {
+            "20250102": {"day": "20250102", "name": "a", "url": "https://example.test/a", "size_bytes": 1},
+            "20250103": {"day": "20250103", "name": "b", "url": "https://example.test/b", "size_bytes": 1},
+        },
+    )
+    called: list[str] = []
+
+    def fake_run_day(day, info, settings, work, metrics, state, dry_run, keep_raw, parser_bin):
+        called.append(day)
+        return 1
+
+    monkeypatch.setattr("src.usecases.tops_ingest._run_day_pipeline", fake_run_day)
+    monkeypatch.setattr("src.usecases.tops_ingest._free_space_gb", lambda path: 1000.0)
+    settings = Settings(
+        iex_csv_root=str(tmp_path / "csv"),
+        iex_parquet_root=str(tmp_path / "parquet"),
+        iex_work_root=str(tmp_path / "work"),
+        iex_report_root=str(tmp_path / "reports"),
+        display_tz="America/New_York",
+        log_jsonl_path=str(tmp_path / "app.jsonl"),
+        database_url=None,
+    )
+
+    code = run_tops_ingest_validation(
+        settings=settings,
+        work_root=str(tmp_path / "work"),
+        report_root=str(tmp_path / "reports"),
+        days=["20250102", "20250103"],
+        all_available=False,
+        start_day="20250101",
+        end_day=None,
+        dry_run=False,
+        keep_raw=False,
+        parser_bin="unused",
+        max_workers=1,
+        worker_scratch_budget_gb=180,
+        scratch_reserve_gb=200,
+        scratch_hard_floor_gb=150,
+        limit_days=None,
+        fail_threshold=1,
+    )
+
+    assert code == 1
+    assert called == ["20250102"]
+    summary = json.loads((tmp_path / "reports" / "tops_backfill_run_summary.json").read_text(encoding="utf-8"))
+    assert summary["stop_reason"] == "fail_threshold_reached"
+    assert summary["attempted_day_count"] == 1

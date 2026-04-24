@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import csv
+import concurrent.futures
 import gzip
 import json
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -32,6 +34,7 @@ SAMPLE_DAYS = (
 DOWNLOAD_MAX_ATTEMPTS = 3
 CHECKPOINT_DIRNAME = "tops_ingest_state"
 PROFILE_REPORT_BASENAME = "tops_ingest_profile"
+RUN_SUMMARY_BASENAME = "tops_backfill_run_summary"
 
 SPEC_AUDIT_ROWS: tuple[dict[str, str], ...] = (
     {
@@ -111,30 +114,34 @@ class MetricsWriter:
         self.jsonl_path = self.report_root / "tops_ingest_metrics.jsonl"
         self.csv_path = self.report_root / "tops_ingest_metrics.csv"
         self.rows: list[dict[str, Any]] = []
+        self._lock = threading.Lock()
 
     def write(self, metric: StageMetric) -> None:
         row = asdict(metric)
-        self.rows.append(row)
-        with self.jsonl_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, default=str, sort_keys=True) + "\n")
+        with self._lock:
+            self.rows.append(row)
+            with self.jsonl_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, default=str, sort_keys=True) + "\n")
 
     def flush_csv(self) -> None:
-        if not self.rows:
-            return
-        fieldnames = list(self.rows[0].keys())
+        with self._lock:
+            if not self.rows:
+                return
+            fieldnames = list(self.rows[0].keys())
+            rows = [dict(row) for row in self.rows]
         with self.csv_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
-            for row in self.rows:
-                flat = dict(row)
-                flat["detail"] = json.dumps(flat["detail"], sort_keys=True)
-                writer.writerow(flat)
+            for row in rows:
+                row["detail"] = json.dumps(row["detail"], sort_keys=True)
+                writer.writerow(row)
 
 
 class StateTracker:
     def __init__(self, report_root: Path) -> None:
         self.state_root = report_root / CHECKPOINT_DIRNAME
         self.state_root.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
 
     def path_for(self, day: str) -> Path:
         return self.state_root / f"{day}.json"
@@ -146,13 +153,14 @@ class StateTracker:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def record(self, day: str, metric: StageMetric) -> None:
-        state = self.load(day)
-        state["day"] = day
-        state.setdefault("stages", {})
-        row = asdict(metric)
-        row["detail"] = dict(metric.detail)
-        state["stages"][metric.stage] = row
-        self.path_for(day).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        with self._lock:
+            state = self.load(day)
+            state["day"] = day
+            state.setdefault("stages", {})
+            row = asdict(metric)
+            row["detail"] = dict(metric.detail)
+            state["stages"][metric.stage] = row
+            self.path_for(day).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def succeeded(self, day: str, stage: str) -> dict[str, Any] | None:
         state = self.load(day)
@@ -304,6 +312,13 @@ def write_tops_profile_report(report_root: Path, days: list[str] | None = None) 
     return {"json": str(json_path), "csv": str(csv_path), "rows": len(rows)}
 
 
+def write_tops_backfill_run_summary(report_root: Path, summary: dict[str, Any]) -> dict[str, str]:
+    report_root.mkdir(parents=True, exist_ok=True)
+    path = report_root / f"{RUN_SUMMARY_BASENAME}.json"
+    path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {"json": str(path)}
+
+
 def discover_hist_files(session: requests.Session | None = None) -> dict[str, dict[str, Any]]:
     client = session or requests.Session()
     response = client.get(HIST_URL, timeout=60)
@@ -376,6 +391,10 @@ def _mbps(size_bytes: int | None, seconds: float | None) -> float | None:
     if rate is None:
         return None
     return round(rate / (1024 * 1024), 3)
+
+
+def _free_space_gb(path: Path) -> float:
+    return round(shutil.disk_usage(path).free / (1024**3), 3)
 
 
 def _download(url: str, target: Path) -> int:
@@ -509,8 +528,15 @@ def run_tops_ingest_validation(
     dry_run: bool,
     keep_raw: bool,
     parser_bin: str,
+    max_workers: int,
+    worker_scratch_budget_gb: int,
+    scratch_reserve_gb: int,
+    scratch_hard_floor_gb: int,
+    limit_days: int | None,
+    fail_threshold: int,
 ) -> int:
     work = Path(work_root)
+    work.mkdir(parents=True, exist_ok=True)
     reports = Path(report_root)
     metrics = MetricsWriter(reports)
     state = StateTracker(reports)
@@ -523,148 +549,254 @@ def run_tops_ingest_validation(
         ]
     else:
         selected_days = days or list(SAMPLE_DAYS)
-    exit_code = 0
+    if limit_days is not None:
+        selected_days = selected_days[:limit_days]
+
+    run_started_at = _utc_now()
+    skip_count = 0
+    terminal_failure_count = 0
+    stop_reason: str | None = None
+    observed_max_workers = 0
+    pending_days: list[str] = []
     for day in selected_days:
-        info = hist.get(day)
-        if not info:
-            metric = _failed_metric(day, "discover", "TOPS file not found in HIST index")
-            metrics.write(metric)
-            state.record(day, metric)
-            exit_code = 1
+        if state.succeeded(day, "aggregate_per_second"):
+            skip_count += 1
             continue
+        pending_days.append(day)
 
-        discover_metric = StageMetric(
-            day=day,
-            stage="discover",
-            status="succeeded",
-            started_at=_utc_now(),
-            finished_at=_utc_now(),
-            elapsed_seconds=0,
-            path=info.get("url") or info.get("name"),
-            size_bytes=info.get("size_bytes"),
-        )
-        metrics.write(discover_metric)
-        state.record(day, discover_metric)
-        if dry_run:
-            continue
+    def launchable(active_count: int) -> tuple[bool, str | None]:
+        free_gb = _free_space_gb(work)
+        if free_gb < scratch_hard_floor_gb:
+            return False, "blocked_on_scratch"
+        needed = scratch_reserve_gb + worker_scratch_budget_gb * (active_count + 1)
+        if free_gb < needed:
+            return False, "waiting_for_scratch"
+        return True, None
 
-        csv_dir = Path(settings.iex_csv_root or work / "csv") / day[:4] / day[4:6]
-        pcap_path = work / "pcap" / f"{day}_IEXTP1_TOPS1.6.pcap"
-        url = info.get("url")
-        if not url:
-            metric = _failed_metric(day, "download", "HIST entry has no download URL")
-            metrics.write(metric)
-            state.record(day, metric)
-            exit_code = 1
-            continue
-
-        def download_stage() -> dict[str, Any]:
-            target = pcap_path.with_suffix(pcap_path.suffix + ".gz") if _is_gzip_url(str(url)) else pcap_path
-            downloaded_size = _download(str(url), target)
-            expected = info.get("size_bytes")
-            if expected is not None and downloaded_size != expected:
-                raise ValueError(f"downloaded {downloaded_size} bytes, expected {expected}")
-            actual = _gunzip_if_needed(target)
-            actual, format_detail = _ensure_classic_pcap(actual)
-            return {
-                "path": str(actual),
-                "size_bytes": actual.stat().st_size,
-                "detail": {"downloaded_size_bytes": downloaded_size, **format_detail},
-            }
-
-        download_checkpoint = state.succeeded(day, "download")
-        if download_checkpoint and download_checkpoint.get("path") and Path(download_checkpoint["path"]).exists():
-            pcap_path = Path(download_checkpoint["path"])
-        else:
-            target = pcap_path.with_suffix(pcap_path.suffix + ".gz") if _is_gzip_url(str(url)) else pcap_path
-            metric = None
-            for attempt in range(1, DOWNLOAD_MAX_ATTEMPTS + 1):
-                _cleanup_paths(target, pcap_path, pcap_path.with_name(pcap_path.stem + ".classic.pcap"))
-                metric = _timed_metric(day, "download", download_stage)
-                metric.detail = {**metric.detail, "attempt": attempt, "max_attempts": DOWNLOAD_MAX_ATTEMPTS}
-                metrics.write(metric)
-                state.record(day, metric)
-                if metric.status == "succeeded":
+    exit_code = 0
+    launched_count = 0
+    future_to_day: dict[concurrent.futures.Future[int], str] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
+        pending_index = 0
+        while pending_index < len(pending_days) or future_to_day:
+            while pending_index < len(pending_days) and len(future_to_day) < max(1, max_workers):
+                if terminal_failure_count >= fail_threshold:
+                    stop_reason = "fail_threshold_reached"
                     break
-                if attempt == DOWNLOAD_MAX_ATTEMPTS:
+                can_launch, reason = launchable(len(future_to_day))
+                if not can_launch:
+                    if reason == "blocked_on_scratch":
+                        stop_reason = reason
+                        break
+                    if future_to_day:
+                        break
+                    stop_reason = reason
                     break
-            assert metric is not None
-            if metric.status != "succeeded":
-                exit_code = 1
+                day = pending_days[pending_index]
+                info = hist.get(day)
+                future = executor.submit(
+                    _run_day_pipeline,
+                    day,
+                    info,
+                    settings,
+                    work,
+                    metrics,
+                    state,
+                    dry_run,
+                    keep_raw,
+                    parser_bin,
+                )
+                future_to_day[future] = day
+                pending_index += 1
+                launched_count += 1
+                observed_max_workers = max(observed_max_workers, len(future_to_day))
+            if not future_to_day:
+                if stop_reason is not None:
+                    break
                 continue
-            pcap_path = Path(metric.path or pcap_path)
-
-        def parse_stage() -> dict[str, Any]:
-            csv_dir.mkdir(parents=True, exist_ok=True)
-            output_prefix = csv_dir / f"{day}_IEXTP1_TOPS1.6"
-            result = subprocess.run(
-                [parser_bin, str(pcap_path), str(output_prefix), "ALL"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=None,
+            done, _ = concurrent.futures.wait(
+                tuple(future_to_day),
+                return_when=concurrent.futures.FIRST_COMPLETED,
             )
-            if result.returncode != 0:
-                raise RuntimeError(result.stderr.strip() or result.stdout.strip())
-            csv_path = output_prefix.with_name(output_prefix.name + "_trd.csv")
-            if not csv_path.exists():
-                raise FileNotFoundError(csv_path)
-            try:
-                stats = _csv_stats(csv_path)
-            except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(f"parser_generated_invalid_csv: {exc}") from exc
-            return {
-                "path": str(csv_path),
-                "size_bytes": csv_path.stat().st_size,
-                "exit_code": result.returncode,
-                **stats,
-            }
-
-        parse_checkpoint = state.succeeded(day, "parse_pcap_to_csv")
-        if parse_checkpoint and parse_checkpoint.get("path") and Path(parse_checkpoint["path"]).exists():
-            csv_path = Path(parse_checkpoint["path"])
-        else:
-            stale_csv = csv_dir / f"{day}_IEXTP1_TOPS1.6_trd.csv"
-            _cleanup_paths(stale_csv)
-            parse_metric = _timed_metric(day, "parse_pcap_to_csv", parse_stage)
-            metrics.write(parse_metric)
-            state.record(day, parse_metric)
-            if parse_metric.status != "succeeded":
-                exit_code = 1
+            for future in done:
+                day = future_to_day.pop(future)
+                result = future.result()
+                if result != 0:
+                    exit_code = 1
+                    terminal_failure_count += 1
+            if stop_reason == "fail_threshold_reached":
                 continue
-            csv_path = Path(parse_metric.path or "")
+        if terminal_failure_count >= fail_threshold and stop_reason is None:
+            stop_reason = "fail_threshold_reached"
 
-        parquet_root = Path(settings.iex_parquet_root or work / "parquet")
-        parquet_checkpoint = state.succeeded(day, "convert_csv_to_parquet")
-        parquet_path = parquet_root / "raw" / "tops" / day[:4] / day[4:6] / f"{day}_IEXTP1_TOPS1.6_trd.parquet"
-        if not (parquet_checkpoint and parquet_checkpoint.get("path") and Path(parquet_checkpoint["path"]).exists()):
-            _cleanup_paths(parquet_path)
-            parquet_metric = _timed_metric(
-                day,
-                "convert_csv_to_parquet",
-                lambda: _convert_csv_to_parquet(csv_path, parquet_root, day),
-            )
-            metrics.write(parquet_metric)
-            state.record(day, parquet_metric)
-            if parquet_metric.status != "succeeded":
-                exit_code = 1
-                continue
-
-        agg_checkpoint = state.succeeded(day, "aggregate_per_second")
-        if not agg_checkpoint:
-            agg_metric = _timed_metric(
-                day,
-                "aggregate_per_second",
-                lambda: _aggregation_stats(Path(settings.iex_csv_root or work / "csv"), day, settings),
-            )
-            metrics.write(agg_metric)
-            state.record(day, agg_metric)
-            if agg_metric.status != "succeeded":
-                exit_code = 1
-                continue
-
-        if not keep_raw:
-            pcap_path.unlink(missing_ok=True)
-
+    run_finished_at = _utc_now()
+    if stop_reason in {"blocked_on_scratch", "waiting_for_scratch", "fail_threshold_reached"}:
+        exit_code = 1
+    succeeded_count = sum(1 for day in selected_days if state.succeeded(day, "aggregate_per_second"))
+    summary = {
+        "generated_at": run_finished_at,
+        "run_started_at": run_started_at,
+        "run_finished_at": run_finished_at,
+        "selected_day_count": len(selected_days),
+        "skipped_day_count": skip_count,
+        "attempted_day_count": launched_count,
+        "succeeded_day_count": succeeded_count,
+        "terminal_failed_day_count": terminal_failure_count,
+        "configured_max_workers": max(1, max_workers),
+        "observed_max_workers": observed_max_workers,
+        "worker_scratch_budget_gb": worker_scratch_budget_gb,
+        "scratch_reserve_gb": scratch_reserve_gb,
+        "scratch_hard_floor_gb": scratch_hard_floor_gb,
+        "free_scratch_gb_at_end": _free_space_gb(work),
+        "fail_threshold": fail_threshold,
+        "stop_reason": stop_reason,
+    }
+    write_tops_backfill_run_summary(reports, summary)
     metrics.flush_csv()
     return exit_code
+
+
+def _run_day_pipeline(
+    day: str,
+    info: dict[str, Any] | None,
+    settings: Settings,
+    work: Path,
+    metrics: MetricsWriter,
+    state: StateTracker,
+    dry_run: bool,
+    keep_raw: bool,
+    parser_bin: str,
+) -> int:
+    if not info:
+        metric = _failed_metric(day, "discover", "TOPS file not found in HIST index")
+        metrics.write(metric)
+        state.record(day, metric)
+        return 1
+
+    discover_metric = StageMetric(
+        day=day,
+        stage="discover",
+        status="succeeded",
+        started_at=_utc_now(),
+        finished_at=_utc_now(),
+        elapsed_seconds=0,
+        path=info.get("url") or info.get("name"),
+        size_bytes=info.get("size_bytes"),
+    )
+    metrics.write(discover_metric)
+    state.record(day, discover_metric)
+    if dry_run:
+        return 0
+
+    csv_dir = Path(settings.iex_csv_root or work / "csv") / day[:4] / day[4:6]
+    pcap_path = work / "pcap" / f"{day}_IEXTP1_TOPS1.6.pcap"
+    url = info.get("url")
+    if not url:
+        metric = _failed_metric(day, "download", "HIST entry has no download URL")
+        metrics.write(metric)
+        state.record(day, metric)
+        return 1
+
+    def download_stage() -> dict[str, Any]:
+        target = pcap_path.with_suffix(pcap_path.suffix + ".gz") if _is_gzip_url(str(url)) else pcap_path
+        downloaded_size = _download(str(url), target)
+        expected = info.get("size_bytes")
+        if expected is not None and downloaded_size != expected:
+            raise ValueError(f"downloaded {downloaded_size} bytes, expected {expected}")
+        actual = _gunzip_if_needed(target)
+        actual, format_detail = _ensure_classic_pcap(actual)
+        return {
+            "path": str(actual),
+            "size_bytes": actual.stat().st_size,
+            "detail": {"downloaded_size_bytes": downloaded_size, **format_detail},
+        }
+
+    download_checkpoint = state.succeeded(day, "download")
+    if download_checkpoint and download_checkpoint.get("path") and Path(download_checkpoint["path"]).exists():
+        pcap_path = Path(download_checkpoint["path"])
+    else:
+        target = pcap_path.with_suffix(pcap_path.suffix + ".gz") if _is_gzip_url(str(url)) else pcap_path
+        metric = None
+        for attempt in range(1, DOWNLOAD_MAX_ATTEMPTS + 1):
+            _cleanup_paths(target, pcap_path, pcap_path.with_name(pcap_path.stem + ".classic.pcap"))
+            metric = _timed_metric(day, "download", download_stage)
+            metric.detail = {**metric.detail, "attempt": attempt, "max_attempts": DOWNLOAD_MAX_ATTEMPTS}
+            metrics.write(metric)
+            state.record(day, metric)
+            if metric.status == "succeeded":
+                break
+        assert metric is not None
+        if metric.status != "succeeded":
+            return 1
+        pcap_path = Path(metric.path or pcap_path)
+
+    def parse_stage() -> dict[str, Any]:
+        csv_dir.mkdir(parents=True, exist_ok=True)
+        output_prefix = csv_dir / f"{day}_IEXTP1_TOPS1.6"
+        result = subprocess.run(
+            [parser_bin, str(pcap_path), str(output_prefix), "ALL"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=None,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+        csv_path = output_prefix.with_name(output_prefix.name + "_trd.csv")
+        if not csv_path.exists():
+            raise FileNotFoundError(csv_path)
+        try:
+            stats = _csv_stats(csv_path)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"parser_generated_invalid_csv: {exc}") from exc
+        return {
+            "path": str(csv_path),
+            "size_bytes": csv_path.stat().st_size,
+            "exit_code": result.returncode,
+            **stats,
+        }
+
+    parse_checkpoint = state.succeeded(day, "parse_pcap_to_csv")
+    if parse_checkpoint and parse_checkpoint.get("path") and Path(parse_checkpoint["path"]).exists():
+        csv_path = Path(parse_checkpoint["path"])
+    else:
+        stale_csv = csv_dir / f"{day}_IEXTP1_TOPS1.6_trd.csv"
+        _cleanup_paths(stale_csv)
+        parse_metric = _timed_metric(day, "parse_pcap_to_csv", parse_stage)
+        metrics.write(parse_metric)
+        state.record(day, parse_metric)
+        if parse_metric.status != "succeeded":
+            return 1
+        csv_path = Path(parse_metric.path or "")
+
+    parquet_root = Path(settings.iex_parquet_root or work / "parquet")
+    parquet_checkpoint = state.succeeded(day, "convert_csv_to_parquet")
+    parquet_path = parquet_root / "raw" / "tops" / day[:4] / day[4:6] / f"{day}_IEXTP1_TOPS1.6_trd.parquet"
+    if not (parquet_checkpoint and parquet_checkpoint.get("path") and Path(parquet_checkpoint["path"]).exists()):
+        _cleanup_paths(parquet_path)
+        parquet_metric = _timed_metric(
+            day,
+            "convert_csv_to_parquet",
+            lambda: _convert_csv_to_parquet(csv_path, parquet_root, day),
+        )
+        metrics.write(parquet_metric)
+        state.record(day, parquet_metric)
+        if parquet_metric.status != "succeeded":
+            return 1
+
+    agg_checkpoint = state.succeeded(day, "aggregate_per_second")
+    if not agg_checkpoint:
+        agg_metric = _timed_metric(
+            day,
+            "aggregate_per_second",
+            lambda: _aggregation_stats(Path(settings.iex_csv_root or work / "csv"), day, settings),
+        )
+        metrics.write(agg_metric)
+        state.record(day, agg_metric)
+        if agg_metric.status != "succeeded":
+            return 1
+
+    if not keep_raw:
+        pcap_path.unlink(missing_ok=True)
+
+    return 0

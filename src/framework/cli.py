@@ -31,13 +31,19 @@ def main() -> None:
     p4 = sub.add_parser("validate-tops-ingest")
     p4.add_argument("--work-root")
     p4.add_argument("--report-root")
-    p4.add_argument("--days", default=",".join(SAMPLE_DAYS))
+    p4.add_argument("--days", default="")
     p4.add_argument("--all-available", action="store_true")
     p4.add_argument("--start-day", default="20250101")
     p4.add_argument("--end-day")
+    p4.add_argument("--limit-days", type=int)
     p4.add_argument("--dry-run", action="store_true")
     p4.add_argument("--keep-raw", action="store_true")
     p4.add_argument("--write-profile-report", action="store_true")
+    p4.add_argument("--max-workers", type=int, default=1)
+    p4.add_argument("--worker-scratch-budget-gb", type=int, default=180)
+    p4.add_argument("--scratch-reserve-gb", type=int, default=200)
+    p4.add_argument("--scratch-hard-floor-gb", type=int, default=150)
+    p4.add_argument("--fail-threshold", type=int, default=5)
     p4.add_argument(
         "--parser-bin",
         default="iex-parser/iex_cppparser/bin/iex_parser.out",
@@ -85,6 +91,12 @@ def main() -> None:
             dry_run=args.dry_run,
             keep_raw=args.keep_raw,
             parser_bin=args.parser_bin,
+            max_workers=args.max_workers,
+            worker_scratch_budget_gb=args.worker_scratch_budget_gb,
+            scratch_reserve_gb=args.scratch_reserve_gb,
+            scratch_hard_floor_gb=args.scratch_hard_floor_gb,
+            limit_days=args.limit_days,
+            fail_threshold=args.fail_threshold,
         )
         if args.write_profile_report:
             detail = write_tops_profile_report(Path(args.report_root or settings.iex_report_root), days or None)
