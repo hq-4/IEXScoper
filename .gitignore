@@ -49,6 +49,10 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# Runtime logs and generated backfill reports
+logs/
+reports/
+
 # Translations
 *.mo
 *.pot

@@ -1,0 +1,29 @@
+# Logging
+
+- The benchmark harness writes its primary machine-readable output to `utils/benchmark_results/iex_parser_benchmark_results.json`.
+- Per-run `/usr/bin/time -v` stderr is preserved beside temp artifacts under the selected output root.
+- The benchmark does not mutate the immutable reference Parquet files.
+- The backfill driver writes a parent JSONL log to `reports/iextools-backfill/iextools_backfill.jsonl`.
+- Each runner writes a child JSONL log to `reports/iextools-backfill/runner-logs/YYYYMMDD_hq-4_runner.jsonl`.
+- Day-level success/failure rows are appended to `reports/iextools-backfill/iextools_backfill_results.jsonl`.
+- Per-attempt retry decisions are logged in the parent JSONL with the `iextools_backfill_day_attempt_failed` event, including the attempt number, retryability decision, and condensed error.
+- Runner failures now serialize `error_class`, `error_message`, and traceback text into the runner result JSON when the child exits normally through its top-level guard.
+- If a child runner exits without a result JSON, the parent records the subprocess return code plus bounded stdout/stderr tails instead of embedding the full child output stream.
+- Each runner also writes a quarantine artifact beside its result JSON:
+  - `..._unknown_messages.jsonl`
+- Summary/report artifacts can now be regenerated from the results log:
+  - `reports/iextools-backfill/iextools_backfill_summary.json`
+  - `reports/iextools-backfill/iextools_backfill_summary.md`
+  - `reports/iextools-backfill/retry_failed_days.txt`
+  - `reports/iextools-backfill/remaining_missing_days.txt`
+  - `reports/iextools-backfill/unattempted_missing_days.txt`
+- Unknown-type failures can be located by searching the parent or child logs for `ProtocolException: Unknown message type`.
+- Unknown-type quarantines can be located by searching for the `iex_benchmark_unknown_message` event.
+- Current RCA guidance:
+  - a single recurring unknown code could indicate spec growth
+  - many varying unknown codes on different days more likely indicate framing loss or parser desynchronization
+- Corruption-style runner failures are now classified separately in reporting:
+  - `gzip_crc_failed`
+  - `gzip_decompress_failed`
+  - `parser_negative_message_length`
+  - `parser_short_buffer`
