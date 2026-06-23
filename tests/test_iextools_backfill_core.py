@@ -60,3 +60,18 @@ def test_choose_tops_record() -> None:
     )
     assert record.feed == "TOPS"
     assert record.link == "b"
+
+
+def test_choose_tops_record_prefers_full_size_when_hist_has_placeholder() -> None:
+    record = choose_tops_record(
+        {
+            "20171101": [
+                HistFileRecord("20171101", "TOPS", "IEXTP1", "1.5", 247, "placeholder"),
+                HistFileRecord("20171101", "TOPS", "IEXTP1", "1.6", 619_412_948, "full"),
+            ]
+        },
+        "20171101",
+    )
+
+    assert record.version == "1.6"
+    assert record.link == "full"

@@ -26,7 +26,9 @@ def download_hist_index(url: str, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with urlopen(url) as response:  # noqa: S310
         payload = response.read()
-    output_path.write_bytes(payload)
+    tmp_path = output_path.with_name(f"{output_path.name}.tmp")
+    tmp_path.write_bytes(payload)
+    tmp_path.replace(output_path)
     return output_path
 
 

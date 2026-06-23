@@ -23,6 +23,7 @@ from utils.iex_runner_unknowns import (
     unknown_message_detail,
 )
 from utils.iex_runner_outputs import StreamWriters, artifact
+from utils.iex_transport_payloads import prepare_parser_input_for_repo
 
 DEFAULT_PROGRESS_MESSAGES = 1_000_000
 DEFAULT_PROGRESS_SECONDS = 30.0
@@ -41,6 +42,7 @@ def main() -> int:
     parser.add_argument("--compression", required=True)
     parser.add_argument("--result-path", required=True)
     parser.add_argument("--log-jsonl", required=True)
+    parser.add_argument("--tops-version", default="1.6", choices=("1.5", "1.6"))
     parser.add_argument("--progress-every-messages", type=int, default=DEFAULT_PROGRESS_MESSAGES)
     parser.add_argument("--progress-every-seconds", type=float, default=DEFAULT_PROGRESS_SECONDS)
     parser.add_argument(
@@ -63,6 +65,7 @@ def main() -> int:
         "status": "succeeded",
         "repo_key": args.repo,
         "input_path": args.input_path,
+        "tops_version": args.tops_version,
         "compression": args.compression,
         "parse_seconds": 0.0,
         "normalize_seconds": 0.0,
@@ -79,6 +82,10 @@ def main() -> int:
         f"{Path(args.result_path).stem}_unknown_messages.jsonl"
     )
     result["unknown_message_quarantine_path"] = str(quarantine_path)
+    effective_input_path, preprocessing = prepare_parser_input_for_repo(
+        args.repo, Path(args.input_path), args.result_path, logger, args.tops_version
+    )
+    result["preprocessing"] = preprocessing
     writers = StreamWriters(
         Path(args.main_output), Path(args.quote_output), args.compression, logger
     )
@@ -102,12 +109,15 @@ def main() -> int:
                 "main_output": args.main_output,
                 "quote_output": args.quote_output,
                 "compression": args.compression,
+                "tops_version": args.tops_version,
             },
         },
     )
     try:
         with ExitStack() as stack:
-            iterator = _open_iterator(args.repo, args.input_path, stack)
+            iterator = _open_iterator(
+                args.repo, str(effective_input_path), stack, args.tops_version
+            )
             while True:
                 parse_start = time.perf_counter()
                 try:
@@ -164,6 +174,10 @@ def main() -> int:
                     )
                     last_progress_messages = processed_messages
                     last_progress_time = now
+            if processed_messages == 0:
+                raise RuntimeError(
+                    "no IEX messages parsed from input after transport preprocessing"
+                )
     except Exception as exc:  # noqa: BLE001
         result["status"] = "failed"
         result["error_class"] = exc.__class__.__name__
@@ -222,14 +236,37 @@ def main() -> int:
     return 0 if result["status"] == "succeeded" else 1
 
 
-def _open_iterator(repo: str, input_path: str, stack: ExitStack):
+def _open_iterator(repo: str, input_path: str, stack: ExitStack, tops_version: str = "1.6"):
     if repo == "rob-blackbourn":
+        if tops_version != "1.6":
+            raise ValueError("rob-blackbourn adapter only supports TOPS 1.6 inputs")
         from iex_parser import Parser, TOPS_1_6
 
         return iter(stack.enter_context(Parser(input_path, TOPS_1_6)))
+    _patch_hq4_tops15_trade_break(tops_version)
     from IEXTools import Parser
 
-    return iter(stack.enter_context(Parser(input_path)))
+    return iter(stack.enter_context(Parser(input_path, tops_version=float(tops_version))))
+
+
+def _patch_hq4_tops15_trade_break(tops_version: str) -> None:
+    if tops_version != "1.5":
+        return
+    from IEXTools import messages
+
+    if getattr(messages.MessageDecoder, "_iexscoper_tops15_trade_break_patch", False):
+        return
+    original_init = messages.MessageDecoder.__init__
+
+    def patched_init(self, version: float = 1.6) -> None:
+        original_init(self, version)
+        if version != 1.5:
+            return
+        self.message_types[1.5][b"\x42"]["fmt"] = "<Bq8sLqqxxxx"
+        self.DECODE_FMT[0x42] = "<Bq8sLqqxxxx"
+
+    messages.MessageDecoder.__init__ = patched_init
+    messages.MessageDecoder._iexscoper_tops15_trade_break_patch = True
 
 
 def _normalize(repo: str, message: Any) -> tuple[str, dict[str, Any]]:

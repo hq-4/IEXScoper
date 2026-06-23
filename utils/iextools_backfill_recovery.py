@@ -13,6 +13,10 @@ RETRYABLE_RUNNER_ERROR_SNIPPETS = (
     "read length must be non-negative or -1",
     "Compressed file ended before the end-of-stream marker was reached",
     "unpack requires a buffer",
+    "runner exited with code 139",
+    "Segmentation fault",
+    "Fatal Python error",
+    "faulthandler",
 )
 
 MAX_FAILURE_TEXT_CHARS = 12_000

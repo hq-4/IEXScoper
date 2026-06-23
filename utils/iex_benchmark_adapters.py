@@ -76,7 +76,7 @@ def normalize_rob_message(message: dict[str, Any]) -> tuple[str, dict[str, Any]]
 
 
 def normalize_hq4_message(message: Any) -> tuple[str, dict[str, Any]]:
-    payload = asdict(message) if is_dataclass(message) else dict(vars(message))
+    payload = _hq4_payload(message)
     msg_type = message.__class__.__name__
     target = "quote" if msg_type == "QuoteUpdate" else "main"
     row = _blank_quote_row() if target == "quote" else _blank_main_row()
@@ -131,7 +131,7 @@ def normalize_hq4_message(message: Any) -> tuple[str, dict[str, Any]]:
         row["price_int"] = payload.get("price_int")
         row["trade_id"] = payload.get("trade_id")
         row["price"] = payload.get("price")
-        row["sale_flags"] = payload.get("sale_flags")
+        row["sale_flags"] = decode_sale_flags(payload.get("sale_flags"))
     elif msg_type == "AuctionInformation":
         row["price"] = payload.get("reference_price")
     return target, row
@@ -143,6 +143,14 @@ def _blank_main_row() -> dict[str, Any]:
 
 def _blank_quote_row() -> dict[str, Any]:
     return dict.fromkeys(QUOTE_COLUMNS)
+
+
+def _hq4_payload(message: Any) -> dict[str, Any]:
+    payload = asdict(message) if is_dataclass(message) else dict(vars(message))
+    for attr in getattr(message, "__slots__", ()):
+        if hasattr(message, attr):
+            payload[attr] = getattr(message, attr)
+    return payload
 
 
 def _decode_string(value: Any) -> str | None:

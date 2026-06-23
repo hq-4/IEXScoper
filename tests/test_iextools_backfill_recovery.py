@@ -11,13 +11,18 @@ from utils.iextools_backfill_reporting import classify_failure
 
 def test_retryable_runner_failure_detects_crc_and_negative_length() -> None:
     assert is_retryable_runner_failure("BadGzipFile: CRC check failed 0x1 != 0x2")
-    assert is_retryable_runner_failure(
-        "ValueError: read length must be non-negative or -1"
-    )
+    assert is_retryable_runner_failure("ValueError: read length must be non-negative or -1")
     assert is_retryable_runner_failure(
         "error: Error -3 while decompressing data: invalid code lengths set"
     )
     assert is_retryable_runner_failure("error: unpack requires a buffer of 41 bytes")
+
+
+def test_retryable_runner_failure_detects_native_crashes() -> None:
+    assert is_retryable_runner_failure("runner exited with code 139")
+    assert is_retryable_runner_failure("Segmentation fault (core dumped)")
+    assert is_retryable_runner_failure("Fatal Python error: Segmentation fault")
+    assert is_retryable_runner_failure("faulthandler traceback follows")
 
 
 def test_retryable_runner_failure_ignores_unknown_message_thresholds() -> None:

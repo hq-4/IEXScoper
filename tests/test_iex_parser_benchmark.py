@@ -84,6 +84,74 @@ class QuoteUpdate:
     ask_price: float
 
 
+@dataclass
+class Hq4SlotQuoteUpdate:
+    __slots__ = (
+        "flags",
+        "timestamp",
+        "symbol",
+        "bid_size",
+        "bid_price_int",
+        "ask_price_int",
+        "ask_size",
+        "bid_price",
+        "ask_price",
+    )
+
+    flags: int
+    timestamp: int
+    symbol: str
+    bid_size: int
+    bid_price_int: int
+    ask_price_int: int
+    ask_size: int
+
+    def __post_init__(self) -> None:
+        self.bid_price = self.bid_price_int / 10_000
+        self.ask_price = self.ask_price_int / 10_000
+
+
+@dataclass
+class Hq4SlotTradeReport:
+    __slots__ = ("flags", "timestamp", "symbol", "size", "price_int", "trade_id", "price")
+
+    flags: int
+    timestamp: int
+    symbol: str
+    size: int
+    price_int: int
+    trade_id: int
+
+    def __post_init__(self) -> None:
+        self.price = self.price_int / 10_000
+
+
+@dataclass
+class Hq4SlotTradeBreak:
+    __slots__ = ("sale_flags", "timestamp", "symbol", "size", "price_int", "trade_id", "price")
+
+    sale_flags: int
+    timestamp: int
+    symbol: str
+    size: int
+    price_int: int
+    trade_id: int
+
+    def __post_init__(self) -> None:
+        self.price = self.price_int / 10_000
+
+
+@dataclass
+class Hq4BytesTradeBreak:
+    sale_flags: bytes
+    timestamp: int
+    symbol: str
+    size: int
+    price_int: int
+    price: float
+    trade_id: int
+
+
 def test_normalize_hq4_quote_routes_to_quote_file() -> None:
     target, row = normalize_hq4_message(
         QuoteUpdate(
@@ -100,6 +168,83 @@ def test_normalize_hq4_quote_routes_to_quote_file() -> None:
     )
     assert target == "quote"
     assert row["ask_price_int"] == 1003000
+
+
+def test_normalize_hq4_slot_quote_preserves_computed_prices() -> None:
+    Hq4SlotQuoteUpdate.__name__ = "QuoteUpdate"
+
+    target, row = normalize_hq4_message(
+        Hq4SlotQuoteUpdate(
+            flags=1,
+            timestamp=1704457239512544830,
+            symbol="AAPL",
+            bid_size=10,
+            bid_price_int=1002500,
+            ask_price_int=1003000,
+            ask_size=11,
+        )
+    )
+
+    assert target == "quote"
+    assert row["bid_price"] == 100.25
+    assert row["ask_price"] == 100.30
+
+
+def test_normalize_hq4_slot_trade_preserves_computed_price() -> None:
+    Hq4SlotTradeReport.__name__ = "TradeReport"
+
+    target, row = normalize_hq4_message(
+        Hq4SlotTradeReport(
+            flags=0x60,
+            timestamp=1704457239512544830,
+            symbol="MSFT",
+            size=100,
+            price_int=1234500,
+            trade_id=42,
+        )
+    )
+
+    assert target == "main"
+    assert row["price_int"] == 1234500
+    assert row["price"] == 123.45
+
+
+def test_normalize_hq4_trade_break_decodes_integer_sale_flags() -> None:
+    Hq4SlotTradeBreak.__name__ = "TradeBreak"
+
+    target, row = normalize_hq4_message(
+        Hq4SlotTradeBreak(
+            sale_flags=0x60,
+            timestamp=1704457239512544830,
+            symbol="MSFT",
+            size=100,
+            price_int=1234500,
+            trade_id=42,
+        )
+    )
+
+    assert target == "main"
+    assert row["type"] == "TradeBreak"
+    assert row["sale_flags"] == "extended_hours|odd_lot"
+
+
+def test_normalize_hq4_trade_break_decodes_byte_sale_flags() -> None:
+    Hq4BytesTradeBreak.__name__ = "TradeBreak"
+
+    target, row = normalize_hq4_message(
+        Hq4BytesTradeBreak(
+            sale_flags=b"\x60",
+            timestamp=1704457239512544830,
+            symbol="MSFT",
+            size=100,
+            price_int=1234500,
+            price=123.45,
+            trade_id=42,
+        )
+    )
+
+    assert target == "main"
+    assert row["sale_flags"] == "extended_hours|odd_lot"
 
 
 def test_benchmark_output_paths_are_flat(tmp_path: Path) -> None:

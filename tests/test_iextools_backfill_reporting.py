@@ -39,6 +39,10 @@ def test_classify_failure_variants() -> None:
         classify_failure({"error": "error: unpack requires a buffer of 41 bytes"})
         == "parser_short_buffer"
     )
+    assert (
+        classify_failure({"error": "RuntimeError: IndexError: index out of range"})
+        == "parser_header_not_found"
+    )
 
 
 def test_load_results_and_effective_deduplicates_latest(tmp_path: Path) -> None:

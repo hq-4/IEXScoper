@@ -36,6 +36,8 @@ def classify_failure(payload: dict[str, Any]) -> str:
         return "parser_negative_message_length"
     if "unpack requires a buffer" in error:
         return "parser_short_buffer"
+    if "IndexError: index out of range" in error:
+        return "parser_header_not_found"
     if "unknown message count threshold exceeded" in error:
         return "unknown_message_threshold_count_exceeded"
     if "unknown message consecutive threshold exceeded" in error:

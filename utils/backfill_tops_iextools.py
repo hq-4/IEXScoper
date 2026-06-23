@@ -35,6 +35,10 @@ from utils.iextools_backfill_recovery import (
 from utils.iextools_backfill_reporting import classify_failure
 from utils.parse_iex_hist_index import DEFAULT_HIST_URL, download_hist_index, load_hist_index
 
+DEFAULT_UNKNOWN_MESSAGE_THRESHOLD = 10_000
+DEFAULT_UNKNOWN_MESSAGE_CONSECUTIVE_THRESHOLD = 10_000
+_HIST_REFRESH_LOCK = threading.Lock()
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -50,9 +54,18 @@ def main() -> int:
     parser.add_argument("--max-workers", type=int, default=2)
     parser.add_argument("--max-day-attempts", type=int, default=3)
     parser.add_argument("--compression", default="snappy")
-    parser.add_argument("--unknown-message-threshold-count", type=int, default=100)
-    parser.add_argument("--unknown-message-threshold-consecutive", type=int, default=10)
+    parser.add_argument(
+        "--unknown-message-threshold-count",
+        type=int,
+        default=DEFAULT_UNKNOWN_MESSAGE_THRESHOLD,
+    )
+    parser.add_argument(
+        "--unknown-message-threshold-consecutive",
+        type=int,
+        default=DEFAULT_UNKNOWN_MESSAGE_CONSECUTIVE_THRESHOLD,
+    )
     parser.add_argument("--keep-local-parquet", action="store_true")
+    parser.add_argument("--keep-failed-gz", action="store_true")
     parser.add_argument("--download-index", action="store_true")
     args = parser.parse_args()
 
@@ -132,6 +145,7 @@ def main() -> int:
                     unknown_message_threshold_count=args.unknown_message_threshold_count,
                     unknown_message_threshold_consecutive=args.unknown_message_threshold_consecutive,
                     keep_local_parquet=args.keep_local_parquet,
+                    keep_failed_gz=args.keep_failed_gz,
                     hist_url=args.hist_url,
                     hist_index_path=hist_index_path,
                     logger=logger,
@@ -191,20 +205,21 @@ def _process_day(
     unknown_message_threshold_count: int,
     unknown_message_threshold_consecutive: int,
     keep_local_parquet: bool,
+    keep_failed_gz: bool,
     hist_url: str,
     hist_index_path: Path,
     logger,
 ) -> dict[str, object]:
-    local_gz = worker_root / f"{day}_IEXTP1_TOPS1.6.pcap.gz"
     local_main = worker_root / f"{day}_IEXTP1_TOPS1.6.parquet"
     local_quote = worker_root / f"{day}_IEXTP1_TOPS1.6_QuoteUpdate.parquet"
     runner_result = worker_root / f"{day}_hq-4_result.json"
     runner_log = report_root / "runner-logs" / f"{day}_hq-4_runner.jsonl"
     attempts = max(1, max_day_attempts)
     for attempt in range(1, attempts + 1):
-        _cleanup(worker_root)
+        _cleanup(worker_root, logger=logger, day=day, attempt=attempt, reason="attempt_start")
         latest_records = _refresh_hist_records(hist_url, hist_index_path)
         fresh_record = choose_tops_record(latest_records, day)
+        local_gz = _local_tops_input_path(worker_root, day, fresh_record.version)
         _download_with_refresh(
             fresh_record,
             local_gz,
@@ -223,6 +238,7 @@ def _process_day(
                     "main_output": str(local_main),
                     "quote_output": str(local_quote),
                     "runner_log": str(runner_log),
+                    "tops_version": fresh_record.version,
                 },
             },
         )
@@ -247,6 +263,8 @@ def _process_day(
             str(runner_result),
             "--log-jsonl",
             str(runner_log),
+            "--tops-version",
+            fresh_record.version,
             "--unknown-message-threshold-count",
             str(unknown_message_threshold_count),
             "--unknown-message-threshold-consecutive",
@@ -304,12 +322,44 @@ def _process_day(
                 },
             )
             if retryable:
+                _cleanup(
+                    worker_root,
+                    logger=logger,
+                    day=day,
+                    attempt=attempt,
+                    reason="retryable_failure",
+                )
                 continue
+            _cleanup_terminal_failure(
+                local_gz=local_gz,
+                local_main=local_main,
+                local_quote=local_quote,
+                keep_failed_gz=keep_failed_gz,
+                logger=logger,
+                day=day,
+                attempt=attempt,
+                reason="terminal_runner_failure",
+                error=error_text,
+            )
             raise RuntimeError(error_text)
         if runner_payload is None:
+            _cleanup_terminal_failure(
+                local_gz=local_gz,
+                local_main=local_main,
+                local_quote=local_quote,
+                keep_failed_gz=keep_failed_gz,
+                logger=logger,
+                day=day,
+                attempt=attempt,
+                reason="missing_runner_result",
+                error="runner result payload missing after successful exit",
+            )
             raise RuntimeError("runner result payload missing after successful exit")
         publish = publish_parquet_pair(
             local_main, local_quote, parquet_root, day, publish_token=f"worker-{worker_root.name}"
+        )
+        download_size_bytes = (
+            local_gz.stat().st_size if local_gz.exists() else fresh_record.size_bytes
         )
         local_gz.unlink(missing_ok=True)
         if not keep_local_parquet:
@@ -319,9 +369,8 @@ def _process_day(
         return {
             "status": "succeeded",
             "attempt_count": attempt,
-            "download_size_bytes": (
-                local_gz.stat().st_size if local_gz.exists() else fresh_record.size_bytes
-            ),
+            "download_size_bytes": download_size_bytes,
+            "tops_version": fresh_record.version,
             "message_counts": runner_payload.get("message_counts"),
             "processed_messages": runner_payload.get("processed_messages"),
             "parse_seconds": runner_payload.get("parse_seconds"),
@@ -342,12 +391,145 @@ def _download(url: str, target: Path) -> None:
                     handle.write(chunk)
 
 
-def _cleanup(worker_root: Path) -> None:
+def _local_tops_input_path(worker_root: Path, day: str, tops_version: str) -> Path:
+    return worker_root / f"{day}_IEXTP1_TOPS{tops_version}.pcap.gz"
+
+
+def _cleanup(
+    worker_root: Path,
+    *,
+    logger=None,
+    day: str | None = None,
+    attempt: int | None = None,
+    reason: str,
+) -> list[str]:
+    deleted: list[str] = []
+    if not worker_root.exists():
+        return deleted
     for path in worker_root.iterdir():
         if path.is_file():
             path.unlink(missing_ok=True)
+            deleted.append(str(path))
         elif path.is_dir():
             shutil.rmtree(path, ignore_errors=True)
+            deleted.append(str(path))
+    if logger is not None and deleted:
+        _log_scratch_cleanup(
+            logger,
+            day=day,
+            attempt=attempt,
+            reason=reason,
+            deleted_paths=deleted,
+            worker_root=worker_root,
+        )
+    return deleted
+
+
+def _cleanup_terminal_failure(
+    *,
+    local_gz: Path,
+    local_main: Path,
+    local_quote: Path,
+    keep_failed_gz: bool,
+    logger,
+    day: str,
+    attempt: int,
+    reason: str,
+    error: str,
+) -> None:
+    deleted_paths = _delete_existing(local_main, local_quote)
+    if deleted_paths:
+        _log_scratch_cleanup(
+            logger,
+            day=day,
+            attempt=attempt,
+            reason=reason,
+            deleted_paths=deleted_paths,
+        )
+    if not local_gz.exists():
+        return
+    _handle_failed_gz(
+        local_gz=local_gz,
+        keep_failed_gz=keep_failed_gz,
+        logger=logger,
+        day=day,
+        attempt=attempt,
+        reason=reason,
+        error=error,
+    )
+
+
+def _handle_failed_gz(
+    *,
+    local_gz: Path,
+    keep_failed_gz: bool,
+    logger,
+    day: str,
+    attempt: int,
+    reason: str,
+    error: str,
+) -> None:
+    detail = {
+        "attempt": attempt,
+        "reason": reason,
+        "path": str(local_gz),
+        "size_bytes": local_gz.stat().st_size,
+        "error": error,
+    }
+    if keep_failed_gz:
+        logger.warning(
+            "failed gz retained",
+            extra={
+                "event": "iextools_backfill_failed_gz_retained",
+                "day": day,
+                "detail": detail,
+            },
+        )
+        return
+    local_gz.unlink(missing_ok=True)
+    logger.info(
+        "failed gz deleted",
+        extra={
+            "event": "iextools_backfill_failed_gz_deleted",
+            "day": day,
+            "detail": detail,
+        },
+    )
+
+
+def _log_scratch_cleanup(
+    logger,
+    *,
+    day: str | None,
+    attempt: int | None,
+    reason: str,
+    deleted_paths: list[str],
+    worker_root: Path | None = None,
+) -> None:
+    detail = {
+        "attempt": attempt,
+        "reason": reason,
+        "deleted_paths": deleted_paths,
+    }
+    if worker_root is not None:
+        detail["worker_root"] = str(worker_root)
+    logger.info(
+        "scratch cleanup",
+        extra={
+            "event": "iextools_backfill_scratch_cleanup",
+            "day": day,
+            "detail": detail,
+        },
+    )
+
+
+def _delete_existing(*paths: Path) -> list[str]:
+    deleted: list[str] = []
+    for path in paths:
+        if path.exists():
+            path.unlink(missing_ok=True)
+            deleted.append(str(path))
+    return deleted
 
 
 def _utc_now() -> str:
@@ -355,8 +537,9 @@ def _utc_now() -> str:
 
 
 def _refresh_hist_records(hist_url: str, hist_index_path: Path):
-    download_hist_index(hist_url, hist_index_path)
-    return load_hist_index(hist_index_path)
+    with _HIST_REFRESH_LOCK:
+        download_hist_index(hist_url, hist_index_path)
+        return load_hist_index(hist_index_path)
 
 
 def _download_with_refresh(

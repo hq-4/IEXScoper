@@ -7,6 +7,8 @@
 - Each runner writes a child JSONL log to `reports/iextools-backfill/runner-logs/YYYYMMDD_hq-4_runner.jsonl`.
 - Day-level success/failure rows are appended to `reports/iextools-backfill/iextools_backfill_results.jsonl`.
 - Per-attempt retry decisions are logged in the parent JSONL with the `iextools_backfill_day_attempt_failed` event, including the attempt number, retryability decision, and condensed error.
+- Backfill scratch cleanup is logged with `iextools_backfill_scratch_cleanup`, including the day, attempt, cleanup reason, worker path, and deleted paths when available.
+- Terminal failed downloads are deleted by default and logged with `iextools_backfill_failed_gz_deleted`; if `--keep-failed-gz` is set, retention is logged with `iextools_backfill_failed_gz_retained`.
 - Runner failures now serialize `error_class`, `error_message`, and traceback text into the runner result JSON when the child exits normally through its top-level guard.
 - If a child runner exits without a result JSON, the parent records the subprocess return code plus bounded stdout/stderr tails instead of embedding the full child output stream.
 - Each runner also writes a quarantine artifact beside its result JSON:
@@ -17,8 +19,19 @@
   - `reports/iextools-backfill/retry_failed_days.txt`
   - `reports/iextools-backfill/remaining_missing_days.txt`
   - `reports/iextools-backfill/unattempted_missing_days.txt`
+- Price-column repair logs to `reports/iextools-price-repair/repair.jsonl` by default, and writes per-day audit/repair payloads to `reports/iextools-price-repair/results.jsonl`.
+- Price-column repair emits:
+  - `iextools_price_repair_start`
+  - `iextools_price_repair_day_complete`
+  - `iextools_price_repair_complete`
 - Unknown-type failures can be located by searching the parent or child logs for `ProtocolException: Unknown message type`.
 - Unknown-type quarantines can be located by searching for the `iex_benchmark_unknown_message` event.
+- Transport preprocessing emits:
+  - `iex_benchmark_transport_preprocess_start`
+  - `iex_benchmark_transport_preprocessed`
+  - `iex_benchmark_transport_preprocess_skipped`
+- For pcap-ng and classic pcap inputs, preprocessing details include capture format, TOPS version, packet count, UDP payload count, extracted payload bytes, source path, and worker-local payload-stream path.
+- The runner start event records `tops_version`, so TOPS 1.5 retry runs can be distinguished from canonical TOPS 1.6 output filenames.
 - Current RCA guidance:
   - a single recurring unknown code could indicate spec growth
   - many varying unknown codes on different days more likely indicate framing loss or parser desynchronization
@@ -27,3 +40,16 @@
   - `gzip_decompress_failed`
   - `parser_negative_message_length`
   - `parser_short_buffer`
+  - `parser_header_not_found`
+- Native runner crashes such as exit `139`, segmentation faults, and faulthandler dumps are treated as retryable so the next attempt refreshes the HIST URL and redownloads a clean gz.
+- Symbol stability audit logs to `reports/symbol-stability/symbol_stability_audit.jsonl` by default.
+- Symbol stability skips unreadable or schema-invalid Parquet days with `symbol_stability_day_skipped`; skipped days are excluded from continuity denominators and listed in the Markdown/JSON summary.
+- OpenFIGI enrichment logs to `reports/symbol-stability-openfigi/openfigi_enrichment.jsonl` by default.
+- OpenFIGI enrichment emits:
+  - `openfigi_enrichment_start`
+  - `openfigi_enrichment_cache_resolved`
+  - `openfigi_enrichment_batch_start`
+  - `openfigi_enrichment_batch_complete`
+  - `openfigi_enrichment_complete`
+- OpenFIGI logs include whether an API key was present as a boolean only; the key value is never logged.
+- OpenFIGI response details are stored in `openfigi_cache.jsonl` under the selected report root for request de-duplication and later audit.

@@ -53,9 +53,9 @@ def select_missing_tops_days(
 
 
 def choose_tops_record(records_by_day: dict[str, list[HistFileRecord]], day: str) -> HistFileRecord:
-    for record in records_by_day[day]:
-        if record.feed == "TOPS":
-            return record
+    tops_records = [record for record in records_by_day[day] if record.feed == "TOPS"]
+    if tops_records:
+        return max(tops_records, key=lambda record: (record.size_bytes, record.version))
     raise KeyError(f"missing TOPS record for {day}")
 
 

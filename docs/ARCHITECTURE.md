@@ -9,12 +9,27 @@
 
 ## Backfill Utilities
 
-- `utils/backfill_tops_iextools.py` runs the bounded TOPS backfill workflow with one raw `.pcap.gz` per worker, local NVMe staging, NAS publish, and cleanup after verified publish.
+- `utils/backfill_tops_iextools.py` runs the bounded TOPS backfill workflow with one raw `.pcap.gz` per worker, local NVMe staging, NAS publish, and cleanup after verified publish. Raw staged filenames preserve the HIST TOPS protocol version, while published Parquet filenames preserve the canonical existing `TOPS1.6` output contract.
 - `utils/iextools_backfill_core.py` owns scratch paths, publish paths, and NAS transfer/verification helpers.
 - `utils/iextools_backfill_reporting.py` classifies effective failures, aggregates unknown-type frequencies, derives retry-only and remaining-day lists, and computes the resume checkpoint.
 - `utils/iextools_backfill_recovery.py` centralizes retryable corruption/desync signatures and runner-failure extraction so the backfill can decide when to discard scratch state and retry a day.
+- `utils/iextools_price_repair.py` audits and repairs published hq-4 backfill Parquet files whose float price columns are null while lossless integer price columns are populated. It streams row groups, verifies schema/row-count/row-group invariants, and writes same-directory temp files before atomic replacement.
+- `utils/repair_iextools_price_columns.py` is the CLI wrapper for price-column audit/repair. Audit is the default; `--apply` is required for NAS mutation.
+- `utils/iex_transport_payloads.py` detects pcap-ng/classic pcap captures and extracts UDP payload bytes for parser paths that do not understand packet containers directly. It recognizes TOPS 1.5 and TOPS 1.6 IEX-TP protocol IDs.
 - `utils/parse_iex_hist_index.py` downloads and parses the live HIST index so workers can refresh expiring Google Cloud Storage URLs before each day starts.
 - `utils/summarize_iextools_backfill.py` renders summary artifacts from the backfill results log plus the current NAS parquet state.
+- `utils/build_symbol_stability_audit.py` scans completed TOPS main Parquet files and builds ticker-era continuity artifacts. It intentionally does not assert issuer identity; CIK/FIGI/CUSIP enrichment remains a separate security-master layer.
+- `utils/enrich_symbol_stability_openfigi.py` enriches symbol-stability rows with OpenFIGI mapping metadata through a cache-first, rate-limited API workflow.
+- `utils/openfigi_enrichment_core.py` owns OpenFIGI batching, cache lookup/write-through, response classification, and identity-risk flags.
+- `utils/openfigi_enrichment_outputs.py` writes the CSV, JSONL, summary JSON, and Markdown enrichment report.
+
+## Analysis Utility Flow
+
+- Symbol continuity analysis is deliberately two-stage:
+  - first, `build_symbol_stability_audit.py` classifies ticker-era continuity from local TOPS Parquet only
+  - second, `enrich_symbol_stability_openfigi.py` maps those ticker eras to current OpenFIGI metadata for review triage
+- OpenFIGI enrichment is not treated as a historical security master. It flags unresolved, multiple-match, ticker-mismatch, stable-match, and needs-review cases so downstream analysis can decide which tickers require licensed CUSIP/ISIN or exchange listing-history validation.
+- The OpenFIGI cache is append-only JSONL under the selected report root, so repeated enrichment runs avoid duplicate API calls for the same ticker/exchange/market-sector request.
 
 ## Current Failure Mode
 
@@ -55,3 +70,8 @@
   - parse IEX-TP segment headers and message blocks from validated payload boundaries
   - treat unknown-but-well-framed messages as quarantinable records
   - treat invalid lengths or broken segment structure as framing/corruption failures
+- The current mitigation implements the first transport boundary for `hq-4/IEXTools`: pcap-ng and classic pcap inputs are converted to a worker-local concatenated UDP payload stream before the IEXTools parser scans for IEX-TP headers. This covers modern HIST files whose public name remains `IEXTP1_TOPS1.6.pcap.gz` but whose internal capture comments reference `TOPS620`, and older 2016-2017 TOPS 1.5 files whose IEX-TP protocol ID is `0x8002`.
+- RCA for the 2017 failure batch: the backfill previously staged TOPS 1.5 downloads as `TOPS1.6` and skipped UDP extraction for classic pcap, so `IEXTools` scanned compressed pcap bytes for a TOPS 1.6 header until EOF and raised `IndexError` in `_get_session_id`. The owned runner now passes `--tops-version 1.5` for HIST 1.5 records and extracts classic pcap UDP payload streams before parsing.
+- Parallel backfill workers refresh the expiring HIST URL index under a shared lock, and index downloads use a temp-file write followed by atomic replace. This prevents one worker from reading a partially written JSON index while another worker refreshes links.
+- Published files created before the hq-4 slot-price adapter fix can be repaired without reparsing when `price_int`, `bid_price_int`, or `ask_price_int` are populated. The repair derives float prices with the canonical IEX scale (`integer / 10000`) and preserves existing non-null float values.
+- Second 2017 RCA pass found two distinct remaining causes. Some November 2017 HIST days list both a tiny TOPS 1.5 placeholder file and a full TOPS 1.6 file; `choose_tops_record()` now selects the largest TOPS record so workers do not parse placeholder captures with zero IEX payloads. Earlier 2017 short-buffer failures were caused by hq-4's TOPS 1.5 `TradeBreak` decoder expecting a 37-byte body while the wire files contain 41-byte bodies (`<Bq8sLqqxxxx`); the runner now applies an idempotent hq-4 compatibility patch before opening TOPS 1.5 files.

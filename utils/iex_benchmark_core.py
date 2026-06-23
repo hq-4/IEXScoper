@@ -209,9 +209,13 @@ def time_binary_path() -> str:
     raise FileNotFoundError("unable to locate time binary")
 
 
-def decode_sale_flags(flags: int | None) -> str | None:
+def decode_sale_flags(flags: int | bytes | None) -> str | None:
     if flags is None:
         return None
+    if isinstance(flags, bytes):
+        if not flags:
+            return None
+        flags = flags[0]
     values = [label for bit, label in SALE_FLAG_BITS if flags & bit]
     return "|".join(values) if values else None
 

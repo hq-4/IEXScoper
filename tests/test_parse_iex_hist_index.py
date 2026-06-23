@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from utils.parse_iex_hist_index import latest_records, load_hist_index, summarize_hist_index
+import utils.parse_iex_hist_index as hist
+from utils.parse_iex_hist_index import (
+    download_hist_index,
+    latest_records,
+    load_hist_index,
+    summarize_hist_index,
+)
 
 
 def test_load_and_summarize_hist_index(tmp_path: Path) -> None:
@@ -84,3 +90,22 @@ def test_latest_records_filters_and_orders(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0]["date"] == "20240103"
     assert rows[0]["size_bytes"] == 200
+
+
+def test_download_hist_index_replaces_target_atomically(monkeypatch, tmp_path: Path) -> None:
+    class FakeResponse:
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"ok": []}'
+
+    monkeypatch.setattr(hist, "urlopen", lambda _url: FakeResponse())
+    target = tmp_path / "hist.json"
+
+    assert download_hist_index("https://example.test/hist", target) == target
+    assert target.read_text(encoding="utf-8") == '{"ok": []}'
+    assert not target.with_name("hist.json.tmp").exists()
