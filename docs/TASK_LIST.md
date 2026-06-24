@@ -22,4 +22,5 @@
 - Symbol stability audit utility landed for TOPS ticker-era continuity checks before long-window analysis. It flags stable, IPO/new-listing, delisted/acquired, intermittent/reused, and partial-window candidates from observed Parquet symbols. `[CA][KBT][PA]`
 - Symbol stability audit now skips and reports unreadable Parquet days instead of aborting the full report. `[REH][KBT]`
 - OpenFIGI enrichment utility landed for cached, rate-limited current FIGI metadata triage over symbol-stability rows. It flags multiple matches, ticker mismatches, unresolved symbols, and stable candidates with matches, but does not replace a licensed historical security master. `[CA][IV][REH][SFT][PA]`
+- HIST TOPS day coverage is now complete through `20260622`; the remaining archive-quality follow-up is to repair the small set of unreadable published main Parquet files surfaced by the symbol-stability scan before broad end-to-end analysis. `[REH][CDiP][KBT]`
 - Remaining follow-up: replace brittle byte-stream header scanning with a transport-aware parser that distinguishes unknown-but-well-framed messages from framing loss. `[CA][REH][AS]`
