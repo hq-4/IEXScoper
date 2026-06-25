@@ -37,6 +37,8 @@ from utils.parse_iex_hist_index import DEFAULT_HIST_URL, download_hist_index, lo
 
 DEFAULT_UNKNOWN_MESSAGE_THRESHOLD = 10_000
 DEFAULT_UNKNOWN_MESSAGE_CONSECUTIVE_THRESHOLD = 10_000
+DEFAULT_MIN_SCRATCH_FREE_GB = 50.0
+SCRATCH_HEADROOM_MULTIPLIER = 5
 _HIST_REFRESH_LOCK = threading.Lock()
 
 
@@ -50,10 +52,17 @@ def main() -> int:
     parser.add_argument("--repo-cache-root", default="/tmp/iex-benchmark-repos")
     parser.add_argument("--start-day", default="20250501")
     parser.add_argument("--end-day")
+    parser.add_argument("--days", help="Comma-separated explicit TOPS days to process.")
     parser.add_argument("--limit-days", type=int)
     parser.add_argument("--max-workers", type=int, default=2)
     parser.add_argument("--max-day-attempts", type=int, default=3)
     parser.add_argument("--compression", default="snappy")
+    parser.add_argument(
+        "--min-scratch-free-gb",
+        type=float,
+        default=DEFAULT_MIN_SCRATCH_FREE_GB,
+        help="Minimum scratch free space required before a worker starts a day.",
+    )
     parser.add_argument(
         "--unknown-message-threshold-count",
         type=int,
@@ -66,8 +75,15 @@ def main() -> int:
     )
     parser.add_argument("--keep-local-parquet", action="store_true")
     parser.add_argument("--keep-failed-gz", action="store_true")
+    parser.add_argument(
+        "--replace-existing",
+        action="store_true",
+        help="Replace existing published Parquet pairs. Requires --days.",
+    )
     parser.add_argument("--download-index", action="store_true")
     args = parser.parse_args()
+    if args.replace_existing and not args.days:
+        parser.error("--replace-existing requires --days")
 
     scratch_root = Path(args.scratch_root)
     parquet_root = Path(args.parquet_root)
@@ -80,13 +96,7 @@ def main() -> int:
         download_hist_index(args.hist_url, hist_index_path)
     records_by_day = _refresh_hist_records(args.hist_url, hist_index_path)
     repo_root = ensure_repo_checkout("hq-4", Path(args.repo_cache_root))
-    days = select_missing_tops_days(
-        records_by_day,
-        parquet_root,
-        start_day=args.start_day,
-        end_day=args.end_day,
-        limit_days=args.limit_days,
-    )
+    days = _selected_days(args, records_by_day, parquet_root)
     logger.info(
         "backfill start",
         extra={
@@ -146,6 +156,8 @@ def main() -> int:
                     unknown_message_threshold_consecutive=args.unknown_message_threshold_consecutive,
                     keep_local_parquet=args.keep_local_parquet,
                     keep_failed_gz=args.keep_failed_gz,
+                    replace_existing=args.replace_existing,
+                    min_scratch_free_gb=args.min_scratch_free_gb,
                     hist_url=args.hist_url,
                     hist_index_path=hist_index_path,
                     logger=logger,
@@ -206,6 +218,8 @@ def _process_day(
     unknown_message_threshold_consecutive: int,
     keep_local_parquet: bool,
     keep_failed_gz: bool,
+    replace_existing: bool,
+    min_scratch_free_gb: float,
     hist_url: str,
     hist_index_path: Path,
     logger,
@@ -219,6 +233,14 @@ def _process_day(
         _cleanup(worker_root, logger=logger, day=day, attempt=attempt, reason="attempt_start")
         latest_records = _refresh_hist_records(hist_url, hist_index_path)
         fresh_record = choose_tops_record(latest_records, day)
+        _assert_scratch_headroom(
+            worker_root,
+            record_size_bytes=fresh_record.size_bytes,
+            min_scratch_free_gb=min_scratch_free_gb,
+            logger=logger,
+            day=day,
+            attempt=attempt,
+        )
         local_gz = _local_tops_input_path(worker_root, day, fresh_record.version)
         _download_with_refresh(
             fresh_record,
@@ -356,7 +378,12 @@ def _process_day(
             )
             raise RuntimeError("runner result payload missing after successful exit")
         publish = publish_parquet_pair(
-            local_main, local_quote, parquet_root, day, publish_token=f"worker-{worker_root.name}"
+            local_main,
+            local_quote,
+            parquet_root,
+            day,
+            publish_token=f"worker-{worker_root.name}",
+            replace_existing=replace_existing,
         )
         download_size_bytes = (
             local_gz.stat().st_size if local_gz.exists() else fresh_record.size_bytes
@@ -389,6 +416,61 @@ def _download(url: str, target: Path) -> None:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     handle.write(chunk)
+
+
+def _selected_days(args: argparse.Namespace, records_by_day, parquet_root: Path) -> list[str]:
+    if args.days:
+        days = _parse_days(args.days)
+        missing = [day for day in days if day not in records_by_day]
+        if missing:
+            raise ValueError(f"days missing from HIST index: {missing}")
+        return days[: args.limit_days] if args.limit_days is not None else days
+    return select_missing_tops_days(
+        records_by_day,
+        parquet_root,
+        start_day=args.start_day,
+        end_day=args.end_day,
+        limit_days=args.limit_days,
+    )
+
+
+def _parse_days(value: str) -> list[str]:
+    days = [part.strip() for part in value.split(",") if part.strip()]
+    invalid = [day for day in days if len(day) != 8 or not day.isdigit()]
+    if invalid:
+        raise ValueError(f"invalid YYYYMMDD day values: {invalid}")
+    return days
+
+
+def _assert_scratch_headroom(
+    worker_root: Path,
+    *,
+    record_size_bytes: int,
+    min_scratch_free_gb: float,
+    logger,
+    day: str,
+    attempt: int,
+) -> None:
+    free_bytes = shutil.disk_usage(worker_root).free
+    required_bytes = max(
+        int(min_scratch_free_gb * 1024**3),
+        int(record_size_bytes * SCRATCH_HEADROOM_MULTIPLIER),
+    )
+    detail = {
+        "attempt": attempt,
+        "free_bytes": free_bytes,
+        "required_bytes": required_bytes,
+        "record_size_bytes": record_size_bytes,
+    }
+    logger.info(
+        "scratch headroom checked",
+        extra={"event": "iextools_backfill_scratch_headroom_checked", "day": day, "detail": detail},
+    )
+    if free_bytes < required_bytes:
+        raise RuntimeError(
+            f"insufficient scratch free space for {day}: "
+            f"free={free_bytes} required={required_bytes}"
+        )
 
 
 def _local_tops_input_path(worker_root: Path, day: str, tops_version: str) -> Path:

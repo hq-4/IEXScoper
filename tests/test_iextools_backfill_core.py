@@ -46,6 +46,34 @@ def test_publish_parquet_pair_copies_and_verifies(tmp_path: Path) -> None:
     assert Path(publish["quote_path"]).exists()
     assert publish["main_rows"] == 2
     assert publish["quote_rows"] == 1
+    assert not publish["replaced_existing"]
+
+
+def test_publish_parquet_pair_replaces_existing_when_explicit(tmp_path: Path) -> None:
+    parquet_root = tmp_path / "nas"
+    final_main, final_quote = tops_output_paths(parquet_root, "20250501")
+    final_main.parent.mkdir(parents=True)
+    pq.write_table(pa.table({"x": [0]}), final_main)
+    pq.write_table(pa.table({"y": [0]}), final_quote)
+    local_main = tmp_path / "local_main.parquet"
+    local_quote = tmp_path / "local_quote.parquet"
+    pq.write_table(pa.table({"x": [1, 2, 3]}), local_main)
+    pq.write_table(pa.table({"y": [4, 5]}), local_quote)
+
+    publish = publish_parquet_pair(
+        local_main,
+        local_quote,
+        parquet_root,
+        "20250501",
+        publish_token="repair",
+        replace_existing=True,
+    )
+
+    assert publish["replaced_existing"]
+    assert publish["main_rows"] == 3
+    assert publish["quote_rows"] == 2
+    assert pq.ParquetFile(final_main).metadata.num_rows == 3
+    assert pq.ParquetFile(final_quote).metadata.num_rows == 2
 
 
 def test_choose_tops_record() -> None:

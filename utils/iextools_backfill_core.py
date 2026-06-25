@@ -77,24 +77,32 @@ def publish_parquet_pair(
     day: str,
     *,
     publish_token: str,
+    replace_existing: bool = False,
 ) -> dict[str, Any]:
     final_main, final_quote = tops_output_paths(parquet_root, day)
     final_main.parent.mkdir(parents=True, exist_ok=True)
-    if final_main.exists() or final_quote.exists():
+    existing_outputs = final_main.exists() or final_quote.exists()
+    if existing_outputs and not replace_existing:
         raise FileExistsError(f"refusing to overwrite existing parquet outputs for {day}")
 
     tmp_main = final_main.with_name(final_main.name + f".{publish_token}.tmp")
     tmp_quote = final_quote.with_name(final_quote.name + f".{publish_token}.tmp")
-    shutil.copy2(local_main, tmp_main)
-    shutil.copy2(local_quote, tmp_quote)
-    stats = verify_parquet_pair(tmp_main, tmp_quote)
-    tmp_main.replace(final_main)
-    tmp_quote.replace(final_quote)
+    try:
+        shutil.copy2(local_main, tmp_main)
+        shutil.copy2(local_quote, tmp_quote)
+        stats = verify_parquet_pair(tmp_main, tmp_quote)
+        tmp_main.replace(final_main)
+        tmp_quote.replace(final_quote)
+    except Exception:
+        tmp_main.unlink(missing_ok=True)
+        tmp_quote.unlink(missing_ok=True)
+        raise
     return {
         "main_path": str(final_main),
         "quote_path": str(final_quote),
         "main_size_bytes": final_main.stat().st_size,
         "quote_size_bytes": final_quote.stat().st_size,
+        "replaced_existing": existing_outputs,
         **stats,
     }
 

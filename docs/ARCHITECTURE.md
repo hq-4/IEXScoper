@@ -23,6 +23,13 @@
 - `utils/openfigi_enrichment_core.py` owns OpenFIGI batching, cache lookup/write-through, response classification, and identity-risk flags.
 - `utils/openfigi_enrichment_outputs.py` writes the CSV, JSONL, summary JSON, and Markdown enrichment report.
 
+## Parquet Repair Mode
+
+- Existing NAS Parquet outputs are immutable by default: normal backfill publish refuses to overwrite an existing main/quote pair.
+- Explicit repair requires both `--days` and `--replace-existing`, which prevents accidental broad overwrites.
+- Repair workers still stage one raw `.pcap.gz` per worker under the selected scratch root, regenerate the main and quote Parquet pair locally, verify the pair, copy to same-directory temporary files on the NAS, verify those temporary NAS files, and then atomically replace the final paths.
+- `--min-scratch-free-gb` guards local NVMe headroom before each day starts; the repair pass used one worker and a `120 GB` minimum for the nine unreadable published main Parquet files found by the symbol-stability scan.
+
 ## Analysis Utility Flow
 
 - Symbol continuity analysis is deliberately two-stage:

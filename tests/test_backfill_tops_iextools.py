@@ -9,9 +9,11 @@ import utils.backfill_tops_iextools as backfill
 from utils.backfill_tops_iextools import (
     DEFAULT_UNKNOWN_MESSAGE_CONSECUTIVE_THRESHOLD,
     DEFAULT_UNKNOWN_MESSAGE_THRESHOLD,
+    _assert_scratch_headroom,
     _cleanup,
     _cleanup_terminal_failure,
     _local_tops_input_path,
+    _parse_days,
     _refresh_hist_records,
 )
 
@@ -106,6 +108,37 @@ def test_local_tops_input_path_preserves_hist_version(tmp_path: Path) -> None:
     path = _local_tops_input_path(tmp_path, "20170103", "1.5")
 
     assert path == tmp_path / "20170103_IEXTP1_TOPS1.5.pcap.gz"
+
+
+def test_parse_days_rejects_non_yyyymmdd_values() -> None:
+    assert _parse_days("20260105, 20260106") == ["20260105", "20260106"]
+
+    try:
+        _parse_days("2026-01-05")
+    except ValueError as exc:
+        assert "invalid YYYYMMDD" in str(exc)
+    else:
+        raise AssertionError("expected invalid explicit day list to fail")
+
+
+def test_scratch_headroom_guard_fails_before_large_day(tmp_path: Path) -> None:
+    logger = CaptureLogger()
+
+    try:
+        _assert_scratch_headroom(
+            tmp_path,
+            record_size_bytes=10**18,
+            min_scratch_free_gb=50,
+            logger=logger,
+            day="20260105",
+            attempt=1,
+        )
+    except RuntimeError as exc:
+        assert "insufficient scratch free space" in str(exc)
+    else:
+        raise AssertionError("expected scratch headroom guard to fail")
+
+    assert logger.events[-1]["event"] == "iextools_backfill_scratch_headroom_checked"
 
 
 def test_refresh_hist_records_serializes_shared_index_writes(monkeypatch, tmp_path: Path) -> None:

@@ -20,5 +20,6 @@
 - fix: preserve hq-4 computed slot price fields during normalization so float price columns are populated with lossless values `[REH][PA][CDiP]`
 - fix: prefer full-size duplicate TOPS HIST records and patch hq-4 TOPS 1.5 TradeBreak decoding `[REH][KBT][PA][CDiP]`
 - fix: skip unreadable Parquet days during symbol-stability reporting and list them in outputs `[REH][KBT][CDiP]`
+- fix: add explicit TOPS Parquet replacement repair mode with scratch headroom checks and atomically repair nine unreadable published main Parquet days `[REH][RM][CA][CDiP]`
 - fix: preserve runner exception details and classify parser short-buffer failures `[REH][CDiP]`
 - docs: record backfill parser RCA and recommend transport-aware parser replacement path `[REH][AS][CDiP]`
