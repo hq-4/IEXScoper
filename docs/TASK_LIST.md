@@ -27,6 +27,7 @@
 - Stable long-window ticker-era universe landed under `reports/stable-long-window-universe`, with liquidity tiers derived from confirmed-trade median daily notional and trade-day coverage. `[CA][PA][KBT]`
 - Stable long-window quality report landed under `reports/stable-long-window-quality`, flagging invalid OHLC rows, nonpositive/near-zero prices, extreme raw returns, and volume/notional outliers before backtest panel construction. `[REH][PA][KBT]`
 - IEX entity snapshot diff and enrichment landed for local `iex_entities/` snapshots. The enrichment writes current listing evidence under `reports/iex-entity-enrichment` and joins it to both `symbol_eras.parquet` and the stable long-window universe without committing the raw snapshot directory. `[CA][KBT][PA][CDiP]`
+- Stable daily research panel landed at `/media/tn/pq/derived/stable-daily-panel/stable_daily_panel.parquet`, joining confirmed-trade OHLCV, stable universe metadata, IEX entity evidence, and quality flags for `6,656,475` rows across `2,874` stable ticker eras. `[CA][PA][KBT][CDiP]`
 - Symbol stability audit now skips and reports unreadable Parquet days instead of aborting the full report. `[REH][KBT]`
 - OpenFIGI enrichment utility landed for cached, rate-limited current FIGI metadata triage over symbol-stability rows. It flags multiple matches, ticker mismatches, unresolved symbols, and stable candidates with matches, but does not replace a licensed historical security master. `[CA][IV][REH][SFT][PA]`
 - HIST TOPS day coverage is now complete through `20260622`. `[REH][CDiP][KBT]`
