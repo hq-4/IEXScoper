@@ -17,6 +17,7 @@ if __package__ in {None, ""}:
 
 from src.framework.logging import get_logger, setup_logging
 from utils.iextools_backfill_core import existing_tops_days, tops_output_paths
+from utils.symbol_eras import EraBuildConfig, build_symbol_eras, write_symbol_era_outputs
 
 DEFAULT_OUTPUT_ROOT = Path("reports/symbol-stability")
 DEFAULT_START_DAY = "20160101"
@@ -37,9 +38,11 @@ class SymbolStats:
     trade_rows: int = 0
     min_timestamp: int | None = None
     max_timestamp: int | None = None
+    daily_rows: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def add_day(self, day: str, row: dict[str, Any]) -> None:
         self.observed_days.add(day)
+        self.daily_rows[day] = row
         self.main_rows += int(row.get("main_rows") or 0)
         self.trade_rows += int(row.get("trade_rows") or 0)
         self.first_day = min(filter(None, [self.first_day, day])) if self.first_day else day
@@ -106,9 +109,22 @@ def build_symbol_stability_audit(config: AuditConfig) -> dict[str, Any]:
         min_coverage=config.min_coverage,
         major_gap_days=config.major_gap_days,
     )
-    summary = build_summary(config, days, collection.scanned_days, collection.skipped_days, rows)
-    write_outputs(config.output_root, summary, rows)
-    return {"summary": summary, "rows": rows}
+    era_rows = build_symbol_eras(
+        collection.stats_by_symbol,
+        rows,
+        EraBuildConfig(
+            completed_days=collection.scanned_days,
+            first_window_day=collection.scanned_days[0] if collection.scanned_days else "",
+            last_window_day=collection.scanned_days[-1] if collection.scanned_days else "",
+            major_gap_days=config.major_gap_days,
+            min_coverage=config.min_coverage,
+        ),
+    )
+    summary = build_summary(
+        config, days, collection.scanned_days, collection.skipped_days, rows, era_rows
+    )
+    write_outputs(config.output_root, summary, rows, era_rows)
+    return {"summary": summary, "rows": rows, "era_rows": era_rows}
 
 
 def discover_completed_days(config: AuditConfig) -> list[str]:
@@ -305,6 +321,7 @@ def build_summary(
     scanned_days: list[str],
     skipped_days: list[dict[str, str]],
     rows: list[dict[str, Any]],
+    era_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     counts: dict[str, int] = {}
     for row in rows:
@@ -322,6 +339,8 @@ def build_summary(
         "first_scanned_day": scanned_days[0] if scanned_days else None,
         "last_scanned_day": scanned_days[-1] if scanned_days else None,
         "symbol_count": len(rows),
+        "symbol_era_count": len(era_rows),
+        "split_symbol_count": sum(1 for row in rows if row["major_gap_count"] > 0),
         "classification_counts": dict(sorted(counts.items())),
         "skipped_days": skipped_days,
         "method": "main TOPS Parquet ticker-era continuity audit",
@@ -333,7 +352,12 @@ def build_summary(
     }
 
 
-def write_outputs(output_root: Path, summary: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+def write_outputs(
+    output_root: Path,
+    summary: dict[str, Any],
+    rows: list[dict[str, Any]],
+    era_rows: list[dict[str, Any]],
+) -> None:
     (output_root / "symbol_stability_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
     )
@@ -342,6 +366,7 @@ def write_outputs(output_root: Path, summary: dict[str, Any], rows: list[dict[st
         encoding="utf-8",
     )
     write_csv(output_root / "symbol_stability_rows.csv", rows)
+    write_symbol_era_outputs(output_root, era_rows)
     write_markdown(output_root / "symbol_stability_report.md", summary, rows)
 
 
@@ -381,6 +406,8 @@ def write_markdown(path: Path, summary: dict[str, Any], rows: list[dict[str, Any
         f"- Readable TOPS days used: `{summary['scanned_day_count']}`",
         f"- Skipped TOPS days: `{summary['skipped_day_count']}`",
         f"- Symbols observed: `{summary['symbol_count']}`",
+        f"- Symbol eras emitted: `{summary['symbol_era_count']}`",
+        f"- Symbols split by major gaps: `{summary['split_symbol_count']}`",
         "",
         "## Classification Counts",
         "",

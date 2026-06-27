@@ -19,6 +19,9 @@
 - `utils/parse_iex_hist_index.py` downloads and parses the live HIST index so workers can refresh expiring Google Cloud Storage URLs before each day starts.
 - `utils/summarize_iextools_backfill.py` renders summary artifacts from the backfill results log plus the current NAS parquet state.
 - `utils/build_symbol_stability_audit.py` scans completed TOPS main Parquet files and builds ticker-era continuity artifacts. It intentionally does not assert issuer identity; CIK/FIGI/CUSIP enrichment remains a separate security-master layer.
+- `utils/symbol_eras.py` splits ticker observations at major calendar gaps and writes `symbol_eras.{parquet,csv,jsonl}`. This is the point-in-time analysis key layer: downstream OHLC/statistics should join on `symbol_era_id` plus date rather than treating ticker text alone as issuer identity.
+- `utils/build_daily_trade_bars.py` materializes confirmed `TradeReport` rows into daily OHLCV bars keyed by `symbol_era_id`. It reads only main TOPS Parquet files, writes day-partitioned derived Parquet files, and skips existing outputs by default for resumable long scans.
+- `utils/build_stable_long_window_universe.py` joins `long_window_candidate` symbol eras to confirmed-trade daily bars and writes the stable ticker-era universe with trade-day coverage and liquidity tiers.
 - `utils/enrich_symbol_stability_openfigi.py` enriches symbol-stability rows with OpenFIGI mapping metadata through a cache-first, rate-limited API workflow.
 - `utils/openfigi_enrichment_core.py` owns OpenFIGI batching, cache lookup/write-through, response classification, and identity-risk flags.
 - `utils/openfigi_enrichment_outputs.py` writes the CSV, JSONL, summary JSON, and Markdown enrichment report.
@@ -35,6 +38,9 @@
 - Symbol continuity analysis is deliberately two-stage:
   - first, `build_symbol_stability_audit.py` classifies ticker-era continuity from local TOPS Parquet only
   - second, `enrich_symbol_stability_openfigi.py` maps those ticker eras to current OpenFIGI metadata for review triage
+- `symbol_eras.parquet` is generated from the same scan as the symbol-stability report. A ticker with major observation gaps becomes multiple era rows, each with `symbol_era_id`, `first_day`, `last_day`, `recommended_use`, and `identity_status`.
+- Confirmed-trade daily bars are generated from main TOPS files after `symbol_eras.parquet` exists. The derived output shape is one row per `day` and `symbol_era_id`, with OHLC, volume, trade count, notional, VWAP, and first/last trade timestamps. QuoteUpdate files are intentionally excluded until market-structure analysis is needed.
+- The stable long-window universe is generated from `recommended_use == long_window_candidate` eras only. Its liquidity tiers are based on confirmed-trade median daily notional and trade-day coverage; they are screening labels, not issuer identity claims.
 - OpenFIGI enrichment is not treated as a historical security master. It flags unresolved, multiple-match, ticker-mismatch, stable-match, and needs-review cases so downstream analysis can decide which tickers require licensed CUSIP/ISIN or exchange listing-history validation.
 - The OpenFIGI cache is append-only JSONL under the selected report root, so repeated enrichment runs avoid duplicate API calls for the same ticker/exchange/market-sector request.
 

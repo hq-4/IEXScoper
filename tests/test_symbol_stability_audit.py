@@ -12,6 +12,7 @@ from utils.build_symbol_stability_audit import (
     classify_symbol,
     major_gap_ranges,
 )
+from utils.symbol_eras import split_observed_days
 
 
 def test_classify_symbol_stable_partial_and_gap() -> None:
@@ -59,6 +60,13 @@ def test_major_gap_ranges_detects_calendar_gap() -> None:
     ]
 
 
+def test_split_observed_days_uses_major_calendar_gap() -> None:
+    assert split_observed_days(["20250102", "20250103", "20250120"], 14) == [
+        ["20250102", "20250103"],
+        ["20250120"],
+    ]
+
+
 def test_build_symbol_stability_audit_outputs_rows(tmp_path: Path) -> None:
     parquet_root = tmp_path / "pq"
     _write_day(parquet_root, "20250102", ["AAA", "AAA", "OLD"])
@@ -84,6 +92,36 @@ def test_build_symbol_stability_audit_outputs_rows(tmp_path: Path) -> None:
     assert (tmp_path / "report" / "symbol_stability_summary.json").exists()
     assert (tmp_path / "report" / "symbol_stability_rows.csv").exists()
     assert (tmp_path / "report" / "symbol_stability_report.md").exists()
+    assert (tmp_path / "report" / "symbol_eras.parquet").exists()
+    assert (tmp_path / "report" / "symbol_eras.csv").exists()
+
+
+def test_build_symbol_stability_audit_splits_symbol_eras(tmp_path: Path) -> None:
+    parquet_root = tmp_path / "pq"
+    _write_day(parquet_root, "20250102", ["SNOW"])
+    _write_day(parquet_root, "20250103", ["SNOW"])
+    _write_day(parquet_root, "20250120", ["SNOW", "SNOW"])
+
+    result = build_symbol_stability_audit(
+        AuditConfig(
+            parquet_root=parquet_root,
+            output_root=tmp_path / "report",
+            start_day="20250102",
+            end_day="20250120",
+            min_coverage=0.95,
+            major_gap_days=14,
+            limit_days=None,
+        )
+    )
+
+    eras = [row for row in result["era_rows"] if row["symbol"] == "SNOW"]
+    assert [row["symbol_era_id"] for row in eras] == ["SNOW#001", "SNOW#002"]
+    assert [row["first_day"] for row in eras] == ["20250102", "20250120"]
+    assert [row["identity_status"] for row in eras] == [
+        "needs_security_master",
+        "needs_security_master",
+    ]
+    assert pl.read_parquet(tmp_path / "report" / "symbol_eras.parquet").height == 2
 
 
 def test_build_symbol_stability_audit_skips_unreadable_day(

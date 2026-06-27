@@ -44,6 +44,7 @@
 - Native runner crashes such as exit `139`, segmentation faults, and faulthandler dumps are treated as retryable so the next attempt refreshes the HIST URL and redownloads a clean gz.
 - Symbol stability audit logs to `reports/symbol-stability/symbol_stability_audit.jsonl` by default.
 - Symbol stability skips unreadable or schema-invalid Parquet days with `symbol_stability_day_skipped`; skipped days are excluded from continuity denominators and listed in the Markdown/JSON summary.
+- Daily confirmed-trade bar materialization logs to `<output-root>/daily_trade_bars_audit.jsonl`, emits per-day `processed`, `skipped_existing`, or `failed` events, and writes summary/result manifests beside the derived Parquet output.
 - OpenFIGI enrichment logs to `reports/symbol-stability-openfigi/openfigi_enrichment.jsonl` by default.
 - OpenFIGI enrichment emits:
   - `openfigi_enrichment_start`
