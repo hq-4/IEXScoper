@@ -26,6 +26,7 @@
 - Daily trade-bar coverage is complete across `2409` files after regenerating the seven latent corrupt main Parquet days. `20190330` is intentionally empty because it was a Saturday source file with no confirmed `TradeReport` rows. `[REH][PA][KBT]`
 - Stable long-window ticker-era universe landed under `reports/stable-long-window-universe`, with liquidity tiers derived from confirmed-trade median daily notional and trade-day coverage. `[CA][PA][KBT]`
 - Stable long-window quality report landed under `reports/stable-long-window-quality`, flagging invalid OHLC rows, nonpositive/near-zero prices, extreme raw returns, and volume/notional outliers before backtest panel construction. `[REH][PA][KBT]`
+- IEX entity snapshot diff and enrichment landed for local `iex_entities/` snapshots. The enrichment writes current listing evidence under `reports/iex-entity-enrichment` and joins it to both `symbol_eras.parquet` and the stable long-window universe without committing the raw snapshot directory. `[CA][KBT][PA][CDiP]`
 - Symbol stability audit now skips and reports unreadable Parquet days instead of aborting the full report. `[REH][KBT]`
 - OpenFIGI enrichment utility landed for cached, rate-limited current FIGI metadata triage over symbol-stability rows. It flags multiple matches, ticker mismatches, unresolved symbols, and stable candidates with matches, but does not replace a licensed historical security master. `[CA][IV][REH][SFT][PA]`
 - HIST TOPS day coverage is now complete through `20260622`. `[REH][CDiP][KBT]`

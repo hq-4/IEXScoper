@@ -14,6 +14,7 @@
 - feat: add stable long-window ticker-era universe report from confirmed daily bars `[CA][PA][KBT][CDiP]`
 - feat: add stable universe daily-bar quality report before backtest panel construction `[REH][PA][KBT][CDiP]`
 - feat: add cached OpenFIGI enrichment for symbol-stability review triage `[CA][IV][REH][SFT][PA][CDiP]`
+- feat: add local IEX entity snapshot diff and enrichment layer for ticker-era listing evidence `[CA][KBT][PA][CDiP]`
 - feat: add streaming IEXTools price-column repair utility for pre-fix Parquet outputs `[REH][RM][PA][CDiP]`
 - docs: record complete HIST TOPS day coverage through 2026-06-22 and note unreadable parquet follow-up `[CDiP][KBT]`
 - fix: raise unknown-message quarantine thresholds for TOPS forward-compatibility and enable faulthandler in the runner `[REH][PA]`
