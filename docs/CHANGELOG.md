@@ -12,6 +12,7 @@
 - feat: add symbol-era outputs that split ticker observations at major gaps for point-in-time analysis keys `[CA][KBT][PA][CDiP]`
 - feat: add resumable daily confirmed-trade OHLCV bars keyed by symbol era `[CA][PA][RM][CDiP]`
 - feat: add stable long-window ticker-era universe report from confirmed daily bars `[CA][PA][KBT][CDiP]`
+- feat: add stable universe daily-bar quality report before backtest panel construction `[REH][PA][KBT][CDiP]`
 - feat: add cached OpenFIGI enrichment for symbol-stability review triage `[CA][IV][REH][SFT][PA][CDiP]`
 - feat: add streaming IEXTools price-column repair utility for pre-fix Parquet outputs `[REH][RM][PA][CDiP]`
 - docs: record complete HIST TOPS day coverage through 2026-06-22 and note unreadable parquet follow-up `[CDiP][KBT]`
