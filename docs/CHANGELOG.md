@@ -15,6 +15,7 @@
 - feat: add stable universe daily-bar quality report before backtest panel construction `[REH][PA][KBT][CDiP]`
 - feat: add cached OpenFIGI enrichment for symbol-stability review triage `[CA][IV][REH][SFT][PA][CDiP]`
 - feat: add local IEX entity snapshot diff and enrichment layer for ticker-era listing evidence `[CA][KBT][PA][CDiP]`
+- feat: add no-key SEC ticker/CIK enrichment for symbol eras `[CA][REH][PA][KBT][CDiP]`
 - feat: add stable confirmed-trade daily panel with entity metadata and quality flags `[CA][PA][KBT][CDiP]`
 - feat: add stable daily panel validation report for structural contract checks `[REH][PA][CDiP]`
 - feat: add stable raw returns table with clean/dirty return flags `[CA][PA][KBT][CDiP]`

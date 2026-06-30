@@ -31,6 +31,7 @@
 - `utils/openfigi_enrichment_outputs.py` writes the CSV, JSONL, summary JSON, and Markdown enrichment report.
 - `utils/diff_iex_entities_snapshots.py` diffs local daily IEX entity JSON snapshots and records net adds/removes, issuer/status changes, invalid snapshots, and product hints.
 - `utils/build_iex_entity_enrichment.py` turns those snapshots into an entity lifecycle table and joins current IEX listing evidence onto `symbol_eras.parquet` and the stable long-window universe.
+- `utils/enrich_symbol_eras_sec.py` joins SEC current ticker/CIK metadata from `company_tickers_exchange.json` onto every `symbol_era_id`. It is a no-key enrichment path for operating-company CIK triage, not a historical ticker master.
 
 ## Parquet Repair Mode
 
@@ -51,6 +52,7 @@
 - OpenFIGI enrichment is not treated as a historical security master. It flags unresolved, multiple-match, ticker-mismatch, stable-match, and needs-review cases so downstream analysis can decide which tickers require licensed CUSIP/ISIN or exchange listing-history validation.
 - The OpenFIGI cache is append-only JSONL under the selected report root, so repeated enrichment runs avoid duplicate API calls for the same ticker/exchange/market-sector request.
 - IEX entity snapshot enrichment is a current/listing-evidence layer, not historical identity proof. The local snapshot window currently runs from `2026-02-22` to `2026-06-26`; enriched rows include `iex_entity_confidence` so downstream analysis can distinguish direct snapshot overlap, current-symbol-only matches, removed-before-latest matches, changed issuer/status rows, and unmatched ticker eras.
+- SEC ticker/CIK enrichment is current-biased. It hydrated `10,262` symbol eras with a single current CIK match and found `3` multiple current matches; the remaining `27,163` eras are unmatched in the current SEC ticker directory. Intermittent eras remain keyed by `symbol_era_id` because current CIK evidence does not prove historical ticker identity.
 - The stable daily panel lives at `/media/tn/pq/derived/stable-daily-panel/stable_daily_panel.parquet`. It currently covers `2,874` stable ticker eras, `6,656,475` daily rows, and keeps quality flags in-row so analysis can filter out raw-price or volume/notional anomaly days without rescanning the quality-event parquet.
 - Stable daily panel validation passed with zero hard failures: no duplicate keys, no critical nulls, no invalid OHLC rows, no nonpositive price/volume/trade-count/notional rows, no timestamp-order violations, and no mismatch between in-panel quality flags and `quality_events.parquet`. Sparse `thin` symbols can still have low observed panel-day coverage because the panel contains confirmed-trade days only.
 - The stable returns table lives at `/media/tn/pq/derived/stable-returns/stable_returns.parquet`. It keeps all `6,656,475` panel rows, has `6,653,601` non-null close-to-close return observations, and marks `6,561,194` observations as clean when neither the current nor previous day has a quality event. Returns remain raw and unadjusted for splits/dividends.
