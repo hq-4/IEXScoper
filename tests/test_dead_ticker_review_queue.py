@@ -13,12 +13,19 @@ from utils.build_dead_ticker_review_queue import (
 def test_build_dead_ticker_review_queue_classifies_evidence_and_hints(tmp_path: Path) -> None:
     sec_path = tmp_path / "sec.parquet"
     iex_path = tmp_path / "iex.parquet"
+    overrides_path = tmp_path / "overrides.csv"
     output_root = tmp_path / "out"
     _write_sec(sec_path)
     _write_iex(iex_path)
+    _write_overrides(overrides_path)
 
     result = build_dead_ticker_review_queue(
-        DeadTickerReviewConfig(sec_eras_path=sec_path, iex_eras_path=iex_path, output_root=output_root)
+        DeadTickerReviewConfig(
+            sec_eras_path=sec_path,
+            iex_eras_path=iex_path,
+            manual_overrides_path=overrides_path,
+            output_root=output_root,
+        )
     )
 
     rows = {
@@ -26,8 +33,13 @@ def test_build_dead_ticker_review_queue_classifies_evidence_and_hints(tmp_path: 
         for row in pl.read_parquet(output_root / "dead_ticker_review_queue.parquet").to_dicts()
     }
     assert "STABLE#001" not in rows
-    assert rows["DEAD#001"]["identity_evidence_status"] == "historical_identity_unresolved"
-    assert rows["DEAD#001"]["review_priority"] == 1
+    assert rows["DEAD#001"]["identity_evidence_status"] == "manual_verified_historical_identity"
+    assert rows["DEAD#001"]["review_priority"] == 0
+    assert rows["DEAD#001"]["historical_identity_status"] == "manual_verified_acquired_delisted"
+    assert rows["DEAD#001"]["historical_issuer_name"] == "Dead Company Inc."
+    assert rows["DEAD#001"]["historical_event_type"] == "acquired_delisted"
+    assert rows["DEAD#001"]["historical_event_date"] == "2020-01-02"
+    assert rows["DEAD#001"]["historical_successor"] == "Buyer Inc."
     assert rows["AACIU#001"]["instrument_hint"] == "probable_unit"
     assert rows["AACIW#001"]["instrument_hint"] == "probable_warrant"
     assert rows["CUR#001"]["identity_evidence_status"] == "current_sec_and_iex_evidence"
@@ -65,6 +77,22 @@ def _write_sec(path: Path) -> None:
             "sec_exchange": [None, None, None, "NYSE", "Nasdaq"],
         }
     ).write_parquet(path)
+
+
+def _write_overrides(path: Path) -> None:
+    pl.DataFrame(
+        {
+            "symbol": ["DEAD"],
+            "symbol_era_id": ["DEAD#001"],
+            "historical_identity_status": ["manual_verified_acquired_delisted"],
+            "historical_issuer_name": ["Dead Company Inc."],
+            "historical_event_type": ["acquired_delisted"],
+            "historical_event_date": ["2020-01-02"],
+            "historical_successor": ["Buyer Inc."],
+            "source_url": ["https://example.test/dead-company"],
+            "source_note": ["Unit test historical identity override."],
+        }
+    ).write_csv(path)
 
 
 def _write_iex(path: Path) -> None:

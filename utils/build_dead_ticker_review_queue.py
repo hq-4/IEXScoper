@@ -15,22 +15,21 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.framework.logging import get_logger, setup_logging
-
-DEFAULT_SEC_ERAS_PATH = Path("reports/sec-ticker-cik/symbol_eras_sec_enriched.parquet")
-DEFAULT_IEX_ERAS_PATH = Path("reports/iex-entity-enrichment/symbol_eras_iex_enriched.parquet")
-DEFAULT_OUTPUT_ROOT = Path("reports/dead-ticker-review")
-DEAD_REVIEW_CLASSES = {
-    "delisted_or_acquired_candidate",
-    "intermittent_or_reused_candidate",
-    "intermittent_full_window_candidate",
-    "partial_window_candidate",
-}
+from utils.dead_ticker_review_schema import (
+    DEAD_REVIEW_CLASSES,
+    DEFAULT_IEX_ERAS_PATH,
+    DEFAULT_MANUAL_OVERRIDES_PATH,
+    DEFAULT_OUTPUT_ROOT,
+    DEFAULT_SEC_ERAS_PATH,
+    REVIEW_COLUMNS,
+)
 
 
 @dataclass(frozen=True)
 class DeadTickerReviewConfig:
     sec_eras_path: Path
     iex_eras_path: Path
+    manual_overrides_path: Path
     output_root: Path
 
 
@@ -38,11 +37,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sec-eras-path", default=str(DEFAULT_SEC_ERAS_PATH))
     parser.add_argument("--iex-eras-path", default=str(DEFAULT_IEX_ERAS_PATH))
+    parser.add_argument("--manual-overrides-path", default=str(DEFAULT_MANUAL_OVERRIDES_PATH))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     args = parser.parse_args()
     config = DeadTickerReviewConfig(
         sec_eras_path=Path(args.sec_eras_path),
         iex_eras_path=Path(args.iex_eras_path),
+        manual_overrides_path=Path(args.manual_overrides_path),
         output_root=Path(args.output_root),
     )
     setup_logging(str(config.output_root / "dead_ticker_review.jsonl"))
@@ -65,7 +66,12 @@ def build_dead_ticker_review_queue(config: DeadTickerReviewConfig) -> dict[str, 
         "iex_product_hint",
         "iex_seen_in_latest",
     )
-    queue = build_queue(sec.join(iex, on="symbol_era_id", how="left"))
+    overrides = load_manual_overrides(config.manual_overrides_path)
+    queue = build_queue(
+        sec.join(iex, on="symbol_era_id", how="left").join(
+            overrides, on="symbol_era_id", how="left"
+        )
+    )
     summary = build_summary(config, queue)
     write_outputs(config.output_root, summary, queue)
     return {"summary": summary, "rows": queue.to_dicts()}
@@ -75,9 +81,28 @@ def validate_inputs(config: DeadTickerReviewConfig) -> None:
     for path, label in [
         (config.sec_eras_path, "SEC enriched symbol eras"),
         (config.iex_eras_path, "IEX enriched symbol eras"),
+        (config.manual_overrides_path, "manual historical identity overrides"),
     ]:
         if not path.exists():
             raise FileNotFoundError(f"{label} does not exist: {path}")
+
+
+def load_manual_overrides(path: Path) -> pl.DataFrame:
+    required = [
+        "symbol_era_id",
+        "historical_identity_status",
+        "historical_issuer_name",
+        "historical_event_type",
+        "historical_event_date",
+        "historical_successor",
+        "source_url",
+        "source_note",
+    ]
+    frame = pl.read_csv(path, infer_schema_length=0)
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise ValueError(f"manual override file missing required columns: {missing}")
+    return frame.select(required)
 
 
 def build_queue(frame: pl.DataFrame) -> pl.DataFrame:
@@ -100,6 +125,7 @@ def build_queue(frame: pl.DataFrame) -> pl.DataFrame:
             instrument_hint_expr().alias("instrument_hint"),
             evidence_status_expr().alias("identity_evidence_status"),
         )
+        .with_columns(apply_manual_evidence_expr().alias("identity_evidence_status"))
         .with_columns(review_priority_expr().alias("review_priority"))
         .select(REVIEW_COLUMNS)
         .sort(["review_priority", "trade_rows", "symbol"], descending=[False, True, False])
@@ -159,7 +185,9 @@ def evidence_status_expr() -> pl.Expr:
 
 def review_priority_expr() -> pl.Expr:
     return (
-        pl.when(pl.col("identity_evidence_status") == "historical_identity_unresolved")
+        pl.when(pl.col("historical_identity_status").is_not_null())
+        .then(0)
+        .when(pl.col("identity_evidence_status") == "historical_identity_unresolved")
         .then(1)
         .when(pl.col("source_classification") == "intermittent_or_reused_candidate")
         .then(2)
@@ -175,6 +203,7 @@ def build_summary(config: DeadTickerReviewConfig, queue: pl.DataFrame) -> dict[s
         "method": "dead and intermittent ticker-era identity review queue",
         "sec_eras_path": str(config.sec_eras_path),
         "iex_eras_path": str(config.iex_eras_path),
+        "manual_overrides_path": str(config.manual_overrides_path),
         "review_era_count": queue.height,
         "unique_symbol_count": queue.select("symbol").n_unique(),
         "evidence_status_counts": count_by(queue, "identity_evidence_status"),
@@ -189,8 +218,18 @@ def build_summary(config: DeadTickerReviewConfig, queue: pl.DataFrame) -> dict[s
     }
 
 
+def apply_manual_evidence_expr() -> pl.Expr:
+    return (
+        pl.when(pl.col("historical_identity_status").is_not_null())
+        .then(pl.lit("manual_verified_historical_identity"))
+        .otherwise(pl.col("identity_evidence_status"))
+    )
+
+
 def count_by(frame: pl.DataFrame, column: str) -> dict[str, int]:
-    return {str(row[column]): row["len"] for row in frame.group_by(column).len().sort(column).to_dicts()}
+    return {
+        str(row[column]): row["len"] for row in frame.group_by(column).len().sort(column).to_dicts()
+    }
 
 
 def write_outputs(root: Path, summary: dict[str, Any], queue: pl.DataFrame) -> None:
@@ -214,10 +253,16 @@ def write_markdown(path: Path, summary: dict[str, Any], queue: pl.DataFrame) -> 
         "## Evidence Status",
         "",
     ]
-    lines.extend(f"- `{key}`: `{value}`" for key, value in summary["evidence_status_counts"].items())
+    lines.extend(
+        f"- `{key}`: `{value}`" for key, value in summary["evidence_status_counts"].items()
+    )
     lines.extend(["", "## Instrument Hints", ""])
-    lines.extend(f"- `{key}`: `{value}`" for key, value in summary["instrument_hint_counts"].items())
-    lines.extend(["", "## Top Priority Sample", "", "| Symbol | Era | Class | Evidence | Hint | Trades |"])
+    lines.extend(
+        f"- `{key}`: `{value}`" for key, value in summary["instrument_hint_counts"].items()
+    )
+    lines.extend(
+        ["", "## Top Priority Sample", "", "| Symbol | Era | Class | Evidence | Hint | Trades |"]
+    )
     lines.append("|---|---|---|---|---|---:|")
     for row in queue.head(25).to_dicts():
         lines.append(
@@ -227,30 +272,6 @@ def write_markdown(path: Path, summary: dict[str, Any], queue: pl.DataFrame) -> 
     lines.extend(["", "## Caveats", ""])
     lines.extend(f"- {item}" for item in summary["limitations"])
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-REVIEW_COLUMNS = [
-    "symbol",
-    "symbol_era_id",
-    "source_classification",
-    "first_day",
-    "last_day",
-    "observed_days",
-    "trade_rows",
-    "main_rows",
-    "sec_current_confidence",
-    "sec_cik",
-    "sec_name",
-    "sec_ticker",
-    "sec_exchange",
-    "iex_entity_confidence",
-    "iex_latest_issuer",
-    "iex_product_hint",
-    "iex_seen_in_latest",
-    "identity_evidence_status",
-    "instrument_hint",
-    "review_priority",
-]
 
 
 if __name__ == "__main__":
