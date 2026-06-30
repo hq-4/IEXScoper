@@ -19,6 +19,7 @@ from src.framework.logging import get_logger, setup_logging
 DEFAULT_PANEL_PATH = Path("/media/tn/pq/derived/stable-daily-panel/stable_daily_panel.parquet")
 DEFAULT_OUTPUT_PATH = Path("/media/tn/pq/derived/stable-returns/stable_returns.parquet")
 DEFAULT_REPORT_ROOT = Path("reports/stable-returns")
+POTENTIAL_CORP_ACTION_THRESHOLD = 0.45
 RETURN_COLUMNS = [
     "day",
     "symbol",
@@ -36,6 +37,7 @@ RETURN_COLUMNS = [
     "quality_has_event",
     "prev_quality_has_event",
     "is_clean_return_day",
+    "potential_corporate_action",
     "dirty_return_reason",
     "iex_latest_issuer",
     "iex_entity_confidence",
@@ -142,6 +144,11 @@ def build_returns_frame(panel_path: Path) -> pl.DataFrame:
         )
         .with_columns(return_expr().alias("raw_close_return"))
         .with_columns(pl.col("raw_close_return").log1p().alias("log_close_return"))
+        .with_columns(
+            pl.col("raw_close_return").abs().ge(POTENTIAL_CORP_ACTION_THRESHOLD).fill_null(False).alias(
+                "potential_corporate_action"
+            )
+        )
         .with_columns(dirty_reason_expr().alias("dirty_return_reason"))
         .with_columns(pl.col("dirty_return_reason").is_null().alias("is_clean_return_day"))
         .select(RETURN_COLUMNS)
@@ -189,6 +196,7 @@ def build_summary(config: StableReturnsConfig) -> dict[str, Any]:
         pl.col("raw_close_return").is_not_null().sum().alias("return_observation_count"),
         pl.col("is_clean_return_day").sum().alias("clean_return_count"),
         (~pl.col("is_clean_return_day")).sum().alias("dirty_return_count"),
+        pl.col("potential_corporate_action").sum().alias("potential_corporate_action_count"),
     ).collect().to_dicts()[0]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -230,6 +238,7 @@ def write_markdown(path: Path, summary: dict[str, Any]) -> None:
         f"- Return observations: `{summary['return_observation_count']}`",
         f"- Clean return observations: `{summary['clean_return_count']}`",
         f"- Dirty return observations: `{summary['dirty_return_count']}`",
+        f"- Potential corporate-action-like jumps: `{summary['potential_corporate_action_count']}`",
         f"- Output size: `{summary['output_size_bytes']}` bytes",
         "",
         "## Dirty Return Reasons",

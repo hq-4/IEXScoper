@@ -18,6 +18,7 @@
 - feat: add stable confirmed-trade daily panel with entity metadata and quality flags `[CA][PA][KBT][CDiP]`
 - feat: add stable daily panel validation report for structural contract checks `[REH][PA][CDiP]`
 - feat: add stable raw returns table with clean/dirty return flags `[CA][PA][KBT][CDiP]`
+- feat: flag potential corporate-action-like jumps in the stable returns table `[REH][PA][CDiP]`
 - feat: add streaming IEXTools price-column repair utility for pre-fix Parquet outputs `[REH][RM][PA][CDiP]`
 - docs: record complete HIST TOPS day coverage through 2026-06-22 and note unreadable parquet follow-up `[CDiP][KBT]`
 - fix: raise unknown-message quarantine thresholds for TOPS forward-compatibility and enable faulthandler in the runner `[REH][PA]`

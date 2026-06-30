@@ -54,6 +54,7 @@
 - The stable daily panel lives at `/media/tn/pq/derived/stable-daily-panel/stable_daily_panel.parquet`. It currently covers `2,874` stable ticker eras, `6,656,475` daily rows, and keeps quality flags in-row so analysis can filter out raw-price or volume/notional anomaly days without rescanning the quality-event parquet.
 - Stable daily panel validation passed with zero hard failures: no duplicate keys, no critical nulls, no invalid OHLC rows, no nonpositive price/volume/trade-count/notional rows, no timestamp-order violations, and no mismatch between in-panel quality flags and `quality_events.parquet`. Sparse `thin` symbols can still have low observed panel-day coverage because the panel contains confirmed-trade days only.
 - The stable returns table lives at `/media/tn/pq/derived/stable-returns/stable_returns.parquet`. It keeps all `6,656,475` panel rows, has `6,653,601` non-null close-to-close return observations, and marks `6,561,194` observations as clean when neither the current nor previous day has a quality event. Returns remain raw and unadjusted for splits/dividends.
+- The stable returns table also includes `potential_corporate_action`, a conservative flag for large raw close-to-close jumps (`abs(return) >= 0.45`). It is a triage flag only; rows are retained so analysts can inspect them before deciding whether to exclude or adjust them.
 
 ## Current Failure Mode
 

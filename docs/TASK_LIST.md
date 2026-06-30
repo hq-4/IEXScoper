@@ -30,6 +30,7 @@
 - Stable daily research panel landed at `/media/tn/pq/derived/stable-daily-panel/stable_daily_panel.parquet`, joining confirmed-trade OHLCV, stable universe metadata, IEX entity evidence, and quality flags for `6,656,475` rows across `2,874` stable ticker eras. `[CA][PA][KBT][CDiP]`
 - Stable daily panel validation landed under `reports/stable-daily-panel-validation` and passed with `0` hard failures across duplicate keys, critical nulls, OHLC invariants, nonpositive metrics, timestamp order, and quality-flag source parity. `[REH][PA][CDiP]`
 - Stable returns table landed at `/media/tn/pq/derived/stable-returns/stable_returns.parquet`, deriving raw/log close-to-close returns and clean-return flags from the validated panel. It contains `6,653,601` non-null return observations and `6,561,194` clean return observations. `[CA][PA][KBT][CDiP]`
+- `potential_corporate_action` now flags large raw close-to-close jumps in the stable returns table for later split/dividend triage instead of filtering them out. `[REH][PA][CDiP]`
 - Symbol stability audit now skips and reports unreadable Parquet days instead of aborting the full report. `[REH][KBT]`
 - OpenFIGI enrichment utility landed for cached, rate-limited current FIGI metadata triage over symbol-stability rows. It flags multiple matches, ticker mismatches, unresolved symbols, and stable candidates with matches, but does not replace a licensed historical security master. `[CA][IV][REH][SFT][PA]`
 - HIST TOPS day coverage is now complete through `20260622`. `[REH][CDiP][KBT]`
