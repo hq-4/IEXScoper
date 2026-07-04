@@ -19,6 +19,7 @@
 - feat: add dead ticker review queue for unresolved historical identity work `[CA][REH][PA][KBT][CDiP]`
 - feat: add manual historical identity overrides for verified dead ticker eras `[CA][REH][KBT][CDiP]`
 - feat: add prioritized unresolved dead ticker review worklist `[CA][PA][KBT][CDiP]`
+- feat: add dead ticker resolution template and EDGAR lead lookup helper `[CA][IV][REH][SFT][CDiP]`
 - feat: add stable confirmed-trade daily panel with entity metadata and quality flags `[CA][PA][KBT][CDiP]`
 - feat: add stable daily panel validation report for structural contract checks `[REH][PA][CDiP]`
 - feat: add stable raw returns table with clean/dirty return flags `[CA][PA][KBT][CDiP]`
