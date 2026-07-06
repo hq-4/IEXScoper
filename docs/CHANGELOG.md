@@ -21,6 +21,7 @@
 - feat: add prioritized unresolved dead ticker review worklist `[CA][PA][KBT][CDiP]`
 - feat: add dead ticker resolution template and EDGAR lead lookup helper `[CA][IV][REH][SFT][CDiP]`
 - feat: add verified dead ticker manual override importer `[CA][IV][REH][SFT][CDiP]`
+- feat: add EDGAR full-text fallback search for dead ticker resolution leads `[CA][IV][REH][KBT][CDiP]`
 - feat: add stable confirmed-trade daily panel with entity metadata and quality flags `[CA][PA][KBT][CDiP]`
 - feat: add stable daily panel validation report for structural contract checks `[REH][PA][CDiP]`
 - feat: add stable raw returns table with clean/dirty return flags `[CA][PA][KBT][CDiP]`

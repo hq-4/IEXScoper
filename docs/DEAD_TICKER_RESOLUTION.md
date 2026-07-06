@@ -54,6 +54,22 @@ Outputs:
 
 The script requires `--user-agent` or `SEC_USER_AGENT` before any SEC request. Do not use a fake contact string.
 
+If the current ticker directory misses the batch, run the broader EDGAR full-text lead search:
+
+```bash
+SEC_USER_AGENT="IEXScoper research your-email@example.com" \
+uv run python utils/search_edgar_full_text.py
+```
+
+This writes:
+
+- `reports/dead-ticker-review/edgar-full-text/edgar_full_text_leads.csv`
+- `reports/dead-ticker-review/edgar-full-text/edgar_full_text_leads.parquet`
+- `reports/dead-ticker-review/edgar-full-text/edgar_full_text_raw.jsonl`
+- `reports/dead-ticker-review/edgar-full-text/edgar_full_text_summary.json`
+
+Full-text hits are noisy leads, especially for short tickers. Verify the CIK, issuer, filing date, and event before importing an override.
+
 ## Evidence Standard
 
 Prefer primary or near-primary sources:
