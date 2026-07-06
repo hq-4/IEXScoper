@@ -62,6 +62,44 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
     assert result["summary"]["symbols_with_hits"] == 1
 
 
+def test_search_edgar_full_text_continues_after_symbol_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    template_path = tmp_path / "template.csv"
+    output_root = tmp_path / "out"
+    _write_template(template_path)
+
+    def fake_get(
+        url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
+    ) -> FakeResponse:
+        if '"AAA"' in params["q"]:
+            raise RuntimeError("SEC 500")
+        return FakeResponse(_empty_payload())
+
+    monkeypatch.setattr("utils.search_edgar_full_text.requests.get", fake_get)
+
+    result = search_edgar_full_text(
+        EdgarFullTextConfig(
+            template_path=template_path,
+            output_root=output_root,
+            endpoint="https://efts.sec.gov/LATEST/search-index",
+            symbols=(),
+            user_agent="IEXScoper test admin@example.test",
+            forms=("8-K",),
+            event_terms=("merger",),
+            size=5,
+            max_symbols=None,
+            timeout_seconds=2,
+            sleep_seconds=0,
+        )
+    )
+
+    rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
+    assert [row["search_status"] for row in rows] == ["search_error", "no_hits"]
+    assert "SEC 500" in rows[0]["document_url"]
+    assert result["summary"]["status_counts"]["search_error"] == 1
+
+
 class FakeResponse:
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload

@@ -102,15 +102,18 @@ def search_edgar_full_text(config: EdgarFullTextConfig) -> dict[str, Any]:
         try:
             payload = request_search(config, target, query)
         except Exception as exc:
+            error = repr(exc)
             get_logger(__name__).exception(
                 "EDGAR full text symbol search failed",
                 extra={
                     "event": "edgar_full_text_symbol_failed",
                     "symbol": target["symbol"],
-                    "detail": {"query": query, "error": repr(exc)},
+                    "detail": {"query": query, "error": error},
                 },
             )
-            raise
+            rows.append(error_result_row(target, query, error))
+            time.sleep(config.sleep_seconds)
+            continue
         raw_payloads.append({"symbol": target["symbol"], "query": query, "payload": payload})
         rows.extend(rows_for_hits(target, query, payload))
         time.sleep(config.sleep_seconds)
@@ -225,6 +228,13 @@ def total_hits(payload: dict[str, Any]) -> int:
 def empty_result_row(target: dict[str, Any], query: str, total: int) -> dict[str, Any]:
     row = base_row(target, query, total)
     row["search_status"] = "no_hits"
+    return row
+
+
+def error_result_row(target: dict[str, Any], query: str, error: str) -> dict[str, Any]:
+    row = base_row(target, query, 0)
+    row["search_status"] = "search_error"
+    row["document_url"] = error
     return row
 
 
