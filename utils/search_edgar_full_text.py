@@ -167,7 +167,6 @@ def request_search(
     params = {
         "q": query,
         "entityName": str(target["symbol"]).upper(),
-        "size": str(config.size),
         "forms": ",".join(config.forms),
     }
     startdt = date_arg(target.get("first_day"))

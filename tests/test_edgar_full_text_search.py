@@ -58,6 +58,7 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
     assert seen[0]["params"]["entityName"] == "AAA"
     assert seen[0]["params"]["forms"] == "8-K"
     assert seen[0]["params"]["dateRange"] == "custom"
+    assert "size" not in seen[0]["params"]
     assert rows[0]["symbol"] == "AAA"
     assert rows[0]["search_status"] == "hit"
     assert rows[0]["entity"] == "AAA CORP"
