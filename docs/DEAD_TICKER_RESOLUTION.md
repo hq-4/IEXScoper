@@ -65,11 +65,32 @@ Prefer primary or near-primary sources:
 
 Record at least one strong source URL in `primary_source_url`. Use `secondary_source_url` for corroboration.
 
-## Commit Verified Overrides
+## Import Verified Overrides
 
-After research, transfer verified rows into:
+After research, mark completed rows in the template:
+
+- `research_status`: `verified`
+- `proposed_historical_identity_status`: for example `manual_verified_acquired_delisted`
+- `proposed_historical_issuer_name`: historical issuer name
+- `proposed_historical_event_type`: for example `acquired_delisted`, `taken_private_delisted`, `bankruptcy_delisted`
+- `proposed_historical_event_date`: event date in `YYYY-MM-DD`
+- `proposed_historical_successor`: acquirer/successor when applicable; leave blank if none
+- `primary_source_url`: strongest source URL
+- `research_note`: concise rationale
+
+Validate the completed template without mutating the override file:
+
+```bash
+uv run python utils/import_dead_ticker_manual_overrides.py --dry-run
+```
+
+Append verified rows into:
 
 - `data/manual_overrides/historical_ticker_identities.csv`
+
+```bash
+uv run python utils/import_dead_ticker_manual_overrides.py
+```
 
 Required override fields:
 
@@ -82,6 +103,8 @@ Required override fields:
 - `historical_successor`
 - `source_url`
 - `source_note`
+
+The importer only accepts rows with `research_status=verified`, rejects missing required evidence, and refuses duplicate `symbol_era_id` values already present in the manual override file.
 
 Then regenerate review artifacts:
 

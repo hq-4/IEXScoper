@@ -36,6 +36,7 @@
 - `utils/dead_ticker_review_schema.py` centralizes dead-ticker review defaults, target review classes, and selected output columns so the builder stays below the local script complexity threshold.
 - `utils/build_dead_ticker_priority_queue.py` derives the first manual-review worklist from the dead ticker review queue. It filters `historical_identity_unresolved` rows, ranks probable operating-company eras ahead of other instrument hints, ranks delisted/acquired candidates ahead of other unresolved classes, and then sorts by `trade_rows` descending.
 - `utils/build_dead_ticker_resolution_template.py` turns the priority queue into a fillable manual research CSV with proposed override/source columns.
+- `utils/import_dead_ticker_manual_overrides.py` validates completed research-template rows and appends only `research_status=verified` rows into the manual override CSV, rejecting missing evidence and duplicate `symbol_era_id` values.
 - `utils/lookup_edgar_tickers.py` performs a bounded EDGAR lead lookup with an explicit custom SEC User-Agent. It can map template symbols through the current SEC ticker directory and optionally fetch recent `data.sec.gov/submissions` metadata for current CIK matches.
 
 ## Parquet Repair Mode
