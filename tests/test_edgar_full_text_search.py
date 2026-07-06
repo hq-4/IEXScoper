@@ -15,7 +15,7 @@ from utils.search_edgar_full_text import (
 
 
 def test_query_for_symbol_combines_symbol_and_event_terms() -> None:
-    assert query_for_symbol("SQ", ("merger", "delisted")) == '"SQ" AND (merger OR delisted)'
+    assert query_for_symbol("SQ", ("merger", "delisted")) == "merger OR delisted"
 
 
 def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
@@ -30,7 +30,7 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
         url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
     ) -> FakeResponse:
         seen.append({"url": url, "params": params, "headers": headers, "timeout": timeout})
-        if '"AAA"' in params["q"]:
+        if params["entityName"] == "AAA":
             return FakeResponse(_hit_payload())
         return FakeResponse(_empty_payload())
 
@@ -55,6 +55,7 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
     assert seen[0]["headers"]["User-Agent"] == "IEXScoper test admin@example.test"
+    assert seen[0]["params"]["entityName"] == "AAA"
     assert seen[0]["params"]["forms"] == "8-K"
     assert seen[0]["params"]["dateRange"] == "custom"
     assert rows[0]["symbol"] == "AAA"
@@ -75,7 +76,7 @@ def test_search_edgar_full_text_continues_after_symbol_error(
     def fake_get(
         url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
     ) -> FakeResponse:
-        if '"AAA"' in params["q"]:
+        if params["entityName"] == "AAA":
             raise RuntimeError("SEC 500")
         return FakeResponse(_empty_payload())
 

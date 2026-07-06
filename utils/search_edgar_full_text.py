@@ -158,8 +158,7 @@ def load_targets(config: EdgarFullTextConfig) -> list[dict[str, Any]]:
 
 
 def query_for_symbol(symbol: str, event_terms: tuple[str, ...]) -> str:
-    terms = " OR ".join(event_terms)
-    return f'"{symbol}" AND ({terms})'
+    return " OR ".join(event_terms)
 
 
 def request_search(
@@ -167,6 +166,7 @@ def request_search(
 ) -> dict[str, Any]:
     params = {
         "q": query,
+        "entityName": str(target["symbol"]).upper(),
         "size": str(config.size),
         "forms": ",".join(config.forms),
     }
