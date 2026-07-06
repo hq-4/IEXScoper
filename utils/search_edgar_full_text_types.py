@@ -17,3 +17,4 @@ class EdgarFullTextConfig:
     max_symbols: int | None
     timeout_seconds: float
     sleep_seconds: float
+    retries: int

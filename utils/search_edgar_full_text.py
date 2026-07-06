@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-import requests
 
 if __package__ in {None, ""}:
     import sys
@@ -15,12 +14,14 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.framework.logging import get_logger, setup_logging
+from utils.edgar_full_text_client import request_with_retries
 from utils.edgar_full_text_outputs import build_summary, write_outputs
 from utils.edgar_full_text_schema import (
     DEFAULT_ENDPOINT,
     DEFAULT_EVENT_TERMS,
     DEFAULT_FORMS,
     DEFAULT_OUTPUT_ROOT,
+    DEFAULT_RETRIES,
     DEFAULT_SIZE,
     DEFAULT_SLEEP_SECONDS,
     DEFAULT_TEMPLATE_PATH,
@@ -47,6 +48,7 @@ def main() -> int:
             max_symbols=args.max_symbols,
             timeout_seconds=args.timeout_seconds,
             sleep_seconds=args.sleep_seconds,
+            retries=args.retries,
         )
         result = search_edgar_full_text(config)
     except Exception as exc:
@@ -75,6 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-symbols", type=int)
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--sleep-seconds", type=float, default=DEFAULT_SLEEP_SECONDS)
+    parser.add_argument("--retries", type=int, default=DEFAULT_RETRIES)
     return parser.parse_args()
 
 
@@ -134,6 +137,8 @@ def validate_config(config: EdgarFullTextConfig) -> None:
         raise ValueError("--timeout-seconds must be positive")
     if config.sleep_seconds < 0:
         raise ValueError("--sleep-seconds cannot be negative")
+    if config.retries <= 0:
+        raise ValueError("--retries must be positive")
 
 
 def load_targets(config: EdgarFullTextConfig) -> list[dict[str, Any]]:
@@ -171,13 +176,9 @@ def request_search(
         params["startdt"] = startdt
     if enddt:
         params["enddt"] = enddt
-    response = requests.get(
-        config.endpoint,
-        params=params,
-        headers={"User-Agent": config.user_agent, "Accept": "application/json"},
-        timeout=config.timeout_seconds,
-    )
-    response.raise_for_status()
+    if startdt or enddt:
+        params["dateRange"] = "custom"
+    response = request_with_retries(config, params)
     payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError(f"SEC full-text response must be a JSON object for {target['symbol']}")

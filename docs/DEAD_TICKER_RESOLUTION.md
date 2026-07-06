@@ -70,6 +70,8 @@ This writes:
 
 Full-text hits are noisy leads, especially for short tickers. Verify the CIK, issuer, filing date, and event before importing an override.
 
+The full-text helper sends `dateRange=custom` with era date bounds and retries transient SEC 5xx responses. If a symbol still fails after retries, the row is retained as `search_error` and the batch continues.
+
 ## Evidence Standard
 
 Prefer primary or near-primary sources:

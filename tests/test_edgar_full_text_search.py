@@ -5,6 +5,7 @@ from typing import Any
 
 import polars as pl
 import pytest
+import requests
 
 from utils.search_edgar_full_text import (
     EdgarFullTextConfig,
@@ -33,7 +34,7 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
             return FakeResponse(_hit_payload())
         return FakeResponse(_empty_payload())
 
-    monkeypatch.setattr("utils.search_edgar_full_text.requests.get", fake_get)
+    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
         EdgarFullTextConfig(
@@ -48,12 +49,14 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
             max_symbols=None,
             timeout_seconds=2,
             sleep_seconds=0,
+            retries=1,
         )
     )
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
     assert seen[0]["headers"]["User-Agent"] == "IEXScoper test admin@example.test"
     assert seen[0]["params"]["forms"] == "8-K"
+    assert seen[0]["params"]["dateRange"] == "custom"
     assert rows[0]["symbol"] == "AAA"
     assert rows[0]["search_status"] == "hit"
     assert rows[0]["entity"] == "AAA CORP"
@@ -76,7 +79,7 @@ def test_search_edgar_full_text_continues_after_symbol_error(
             raise RuntimeError("SEC 500")
         return FakeResponse(_empty_payload())
 
-    monkeypatch.setattr("utils.search_edgar_full_text.requests.get", fake_get)
+    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
         EdgarFullTextConfig(
@@ -91,6 +94,7 @@ def test_search_edgar_full_text_continues_after_symbol_error(
             max_symbols=None,
             timeout_seconds=2,
             sleep_seconds=0,
+            retries=1,
         )
     )
 
@@ -100,11 +104,55 @@ def test_search_edgar_full_text_continues_after_symbol_error(
     assert result["summary"]["status_counts"]["search_error"] == 1
 
 
+def test_search_edgar_full_text_retries_transient_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    template_path = tmp_path / "template.csv"
+    output_root = tmp_path / "out"
+    calls = []
+    _write_template(template_path)
+
+    def fake_get(
+        url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
+    ) -> FakeResponse:
+        calls.append(params)
+        if len(calls) == 1:
+            return FakeResponse({"message": "Internal server error"}, status_code=500)
+        return FakeResponse(_empty_payload())
+
+    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+
+    result = search_edgar_full_text(
+        EdgarFullTextConfig(
+            template_path=template_path,
+            output_root=output_root,
+            endpoint="https://efts.sec.gov/LATEST/search-index",
+            symbols=("AAA",),
+            user_agent="IEXScoper test admin@example.test",
+            forms=("8-K",),
+            event_terms=("merger",),
+            size=5,
+            max_symbols=None,
+            timeout_seconds=2,
+            sleep_seconds=0,
+            retries=2,
+        )
+    )
+
+    rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
+    assert len(calls) == 2
+    assert rows[0]["search_status"] == "no_hits"
+    assert result["summary"]["status_counts"]["no_hits"] == 1
+
+
 class FakeResponse:
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, payload: dict[str, Any], status_code: int = 200) -> None:
         self._payload = payload
+        self.status_code = status_code
 
     def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} error")
         return None
 
     def json(self) -> dict[str, Any]:
