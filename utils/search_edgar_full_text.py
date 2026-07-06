@@ -35,7 +35,7 @@ from utils.search_edgar_full_text_types import EdgarFullTextConfig
 def main() -> int:
     args = parse_args()
     output_root = Path(args.output_root)
-    setup_logging(str(output_root / "edgar_full_text_search.jsonl"))
+    setup_logging(str(prepare_log_path(output_root, append_log=args.append_log)))
     try:
         config = EdgarFullTextConfig(
             template_path=Path(args.template_path),
@@ -81,6 +81,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--sleep-seconds", type=float, default=DEFAULT_SLEEP_SECONDS)
     parser.add_argument("--retries", type=int, default=DEFAULT_RETRIES)
+    parser.add_argument("--append-log", action="store_true")
     return parser.parse_args()
 
 
@@ -95,6 +96,13 @@ def resolve_user_agent(value: str | None) -> str:
     if not user_agent:
         raise ValueError("provide --user-agent or set SEC_USER_AGENT before hitting EDGAR")
     return user_agent
+
+
+def prepare_log_path(output_root: Path, *, append_log: bool) -> Path:
+    log_path = output_root / "edgar_full_text_search.jsonl"
+    if not append_log and log_path.exists():
+        log_path.unlink()
+    return log_path
 
 
 def search_edgar_full_text(config: EdgarFullTextConfig) -> dict[str, Any]:

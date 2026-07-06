@@ -67,8 +67,11 @@ This writes:
 - `reports/dead-ticker-review/edgar-full-text/edgar_full_text_leads.parquet`
 - `reports/dead-ticker-review/edgar-full-text/edgar_full_text_raw.jsonl`
 - `reports/dead-ticker-review/edgar-full-text/edgar_full_text_summary.json`
+- `reports/dead-ticker-review/edgar-full-text/edgar_full_text_search.jsonl`
 
 Full-text hits are noisy leads, especially for short tickers. Verify the CIK, issuer, filing date, and event before importing an override.
+
+The search log is fresh per run by default so stale `ERROR` rows from older failed attempts do not pollute status checks. Pass `--append-log` only when cumulative JSONL history is intentional.
 
 The full-text helper mirrors the stable SEC search page request shape: event terms in `q`, ticker text in `entityName`, `dateRange=custom` with era date bounds, and no custom `size` parameter. By default it does not send a `forms` filter because SEC EFTS has repeatedly returned 500s for form-filtered ticker/date searches. Pass `--use-form-filter` only for targeted probes where the narrower filing set is worth the extra SEC failure risk. The helper retries transient SEC 5xx responses and transport failures. If an opt-in form-filtered request keeps failing, the helper retries the same symbol without the `forms` filter before recording a failure. If both request shapes fail, the row is retained as `search_error`, the console logs a warning instead of a traceback, and the batch continues.
 
