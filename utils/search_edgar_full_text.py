@@ -49,10 +49,10 @@ def main() -> int:
             sleep_seconds=args.sleep_seconds,
         )
         result = search_edgar_full_text(config)
-    except Exception:
+    except Exception as exc:
         get_logger(__name__).exception(
             "EDGAR full text search failed",
-            extra={"event": "edgar_full_text_search_failed"},
+            extra={"event": "edgar_full_text_search_failed", "detail": {"error": repr(exc)}},
         )
         return 1
     get_logger(__name__).info(
@@ -99,7 +99,18 @@ def search_edgar_full_text(config: EdgarFullTextConfig) -> dict[str, Any]:
     raw_payloads = []
     for target in targets:
         query = query_for_symbol(target["symbol"], config.event_terms)
-        payload = request_search(config, target, query)
+        try:
+            payload = request_search(config, target, query)
+        except Exception as exc:
+            get_logger(__name__).exception(
+                "EDGAR full text symbol search failed",
+                extra={
+                    "event": "edgar_full_text_symbol_failed",
+                    "symbol": target["symbol"],
+                    "detail": {"query": query, "error": repr(exc)},
+                },
+            )
+            raise
         raw_payloads.append({"symbol": target["symbol"], "query": query, "payload": payload})
         rows.extend(rows_for_hits(target, query, payload))
         time.sleep(config.sleep_seconds)
