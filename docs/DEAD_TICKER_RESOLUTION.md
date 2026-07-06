@@ -70,7 +70,7 @@ This writes:
 
 Full-text hits are noisy leads, especially for short tickers. Verify the CIK, issuer, filing date, and event before importing an override.
 
-The full-text helper mirrors the SEC search page request shape: event terms in `q`, ticker text in `entityName`, `dateRange=custom` with era date bounds, and no custom `size` parameter. It retries transient SEC 5xx responses and transport failures. If SEC keeps rejecting a form-filtered request, the helper retries the same symbol without the `forms` filter before recording a failure. If both request shapes fail, the row is retained as `search_error` and the batch continues.
+The full-text helper mirrors the SEC search page request shape: event terms in `q`, ticker text in `entityName`, `dateRange=custom` with era date bounds, and no custom `size` parameter. It retries transient SEC 5xx responses and transport failures. If SEC keeps rejecting a form-filtered request, the helper retries the same symbol without the `forms` filter before recording a failure. If both request shapes fail, the row is retained as `search_error`, the console logs a warning instead of a traceback, and the batch continues.
 
 The default full-text pass uses `q=merger` only. Avoid broad `OR` queries across many event terms; SEC EFTS has returned repeated 500s for that shape. Run separate passes when needed, for example:
 

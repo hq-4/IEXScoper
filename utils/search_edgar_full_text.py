@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
+import requests
 
 if __package__ in {None, ""}:
     import sys
@@ -106,14 +107,16 @@ def search_edgar_full_text(config: EdgarFullTextConfig) -> dict[str, Any]:
             payload = request_search(config, target, query)
         except Exception as exc:
             error = repr(exc)
-            get_logger(__name__).exception(
-                "EDGAR full text symbol search failed",
-                extra={
-                    "event": "edgar_full_text_symbol_failed",
-                    "symbol": target["symbol"],
-                    "detail": {"query": query, "error": error},
-                },
-            )
+            detail = {"query": query, "error": error}
+            extra = {
+                "event": "edgar_full_text_symbol_failed",
+                "symbol": target["symbol"],
+                "detail": detail,
+            }
+            if isinstance(exc, requests.RequestException):
+                get_logger(__name__).warning("EDGAR full text symbol request failed", extra=extra)
+            else:
+                get_logger(__name__).exception("EDGAR full text symbol search failed", extra=extra)
             rows.append(error_result_row(target, query, error))
             time.sleep(config.sleep_seconds)
             continue

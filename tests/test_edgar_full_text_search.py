@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -41,22 +42,7 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
 
     monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
-    result = search_edgar_full_text(
-        EdgarFullTextConfig(
-            template_path=template_path,
-            output_root=output_root,
-            endpoint="https://efts.sec.gov/LATEST/search-index",
-            symbols=(),
-            user_agent="IEXScoper test admin@example.test",
-            forms=("8-K",),
-            event_terms=("merger",),
-            size=5,
-            max_symbols=None,
-            timeout_seconds=2,
-            sleep_seconds=0,
-            retries=1,
-        )
-    )
+    result = search_edgar_full_text(_config(template_path=template_path, output_root=output_root))
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
     assert seen[0]["headers"]["User-Agent"] == "IEXScoper test admin@example.test"
@@ -88,22 +74,7 @@ def test_search_edgar_full_text_continues_after_symbol_error(
 
     monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
-    result = search_edgar_full_text(
-        EdgarFullTextConfig(
-            template_path=template_path,
-            output_root=output_root,
-            endpoint="https://efts.sec.gov/LATEST/search-index",
-            symbols=(),
-            user_agent="IEXScoper test admin@example.test",
-            forms=("8-K",),
-            event_terms=("merger",),
-            size=5,
-            max_symbols=None,
-            timeout_seconds=2,
-            sleep_seconds=0,
-            retries=1,
-        )
-    )
+    result = search_edgar_full_text(_config(template_path=template_path, output_root=output_root))
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
     assert [row["search_status"] for row in rows] == ["search_error", "no_hits"]
@@ -130,20 +101,7 @@ def test_search_edgar_full_text_retries_transient_500(
     monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
-        EdgarFullTextConfig(
-            template_path=template_path,
-            output_root=output_root,
-            endpoint="https://efts.sec.gov/LATEST/search-index",
-            symbols=("AAA",),
-            user_agent="IEXScoper test admin@example.test",
-            forms=("8-K",),
-            event_terms=("merger",),
-            size=5,
-            max_symbols=None,
-            timeout_seconds=2,
-            sleep_seconds=0,
-            retries=2,
-        )
+        _config(template_path=template_path, output_root=output_root, symbols=("AAA",), retries=2)
     )
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
@@ -171,20 +129,7 @@ def test_search_edgar_full_text_retries_transport_error(
     monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
-        EdgarFullTextConfig(
-            template_path=template_path,
-            output_root=output_root,
-            endpoint="https://efts.sec.gov/LATEST/search-index",
-            symbols=("AAA",),
-            user_agent="IEXScoper test admin@example.test",
-            forms=("8-K",),
-            event_terms=("merger",),
-            size=5,
-            max_symbols=None,
-            timeout_seconds=2,
-            sleep_seconds=0,
-            retries=2,
-        )
+        _config(template_path=template_path, output_root=output_root, symbols=("AAA",), retries=2)
     )
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
@@ -212,20 +157,7 @@ def test_search_edgar_full_text_falls_back_without_forms(
     monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
-        EdgarFullTextConfig(
-            template_path=template_path,
-            output_root=output_root,
-            endpoint="https://efts.sec.gov/LATEST/search-index",
-            symbols=("AAA",),
-            user_agent="IEXScoper test admin@example.test",
-            forms=("8-K",),
-            event_terms=("merger",),
-            size=5,
-            max_symbols=None,
-            timeout_seconds=2,
-            sleep_seconds=0,
-            retries=1,
-        )
+        _config(template_path=template_path, output_root=output_root, symbols=("AAA",))
     )
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
@@ -233,6 +165,35 @@ def test_search_edgar_full_text_falls_back_without_forms(
     assert "forms" not in calls[1]
     assert rows[0]["search_status"] == "no_hits"
     assert result["summary"]["status_counts"]["no_hits"] == 1
+
+
+def test_search_edgar_full_text_records_request_error_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    template_path = tmp_path / "template.csv"
+    output_root = tmp_path / "out"
+    calls = []
+    _write_template(template_path)
+    caplog.set_level(logging.INFO)
+
+    def fake_get(
+        url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
+    ) -> FakeResponse:
+        calls.append(params)
+        return FakeResponse({"message": "Internal server error"}, status_code=500)
+
+    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+
+    result = search_edgar_full_text(
+        _config(template_path=template_path, output_root=output_root, symbols=("AAA",))
+    )
+
+    rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
+    assert "forms" in calls[0]
+    assert "forms" not in calls[1]
+    assert rows[0]["search_status"] == "search_error"
+    assert result["summary"]["status_counts"]["search_error"] == 1
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
 
 
 class FakeResponse:
@@ -259,6 +220,25 @@ def _write_template(path: Path) -> None:
             "last_day": ["20201231", "20211231"],
         }
     ).write_csv(path)
+
+
+def _config(
+    *, template_path: Path, output_root: Path, symbols: tuple[str, ...] = (), retries: int = 1
+) -> EdgarFullTextConfig:
+    return EdgarFullTextConfig(
+        template_path=template_path,
+        output_root=output_root,
+        endpoint="https://efts.sec.gov/LATEST/search-index",
+        symbols=symbols,
+        user_agent="IEXScoper test admin@example.test",
+        forms=("8-K",),
+        event_terms=("merger",),
+        size=5,
+        max_symbols=None,
+        timeout_seconds=2,
+        sleep_seconds=0,
+        retries=retries,
+    )
 
 
 def _hit_payload() -> dict[str, Any]:
