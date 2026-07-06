@@ -44,6 +44,7 @@ def main() -> int:
             symbols=parse_csv_arg(args.symbols),
             user_agent=resolve_user_agent(args.user_agent),
             forms=parse_csv_arg(args.forms) or DEFAULT_FORMS,
+            use_form_filter=args.use_form_filter,
             event_terms=parse_csv_arg(args.event_terms) or DEFAULT_EVENT_TERMS,
             size=args.size,
             max_symbols=args.max_symbols,
@@ -73,6 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols")
     parser.add_argument("--user-agent")
     parser.add_argument("--forms", default=",".join(DEFAULT_FORMS))
+    parser.add_argument("--use-form-filter", action="store_true")
     parser.add_argument("--event-terms", default=",".join(DEFAULT_EVENT_TERMS))
     parser.add_argument("--size", type=int, default=DEFAULT_SIZE)
     parser.add_argument("--max-symbols", type=int)
@@ -167,10 +169,12 @@ def query_for_symbol(symbol: str, event_terms: tuple[str, ...]) -> str:
 def request_search(
     config: EdgarFullTextConfig, target: dict[str, Any], query: str
 ) -> dict[str, Any]:
-    params = search_params(config, target, query, include_forms=True)
+    params = search_params(config, target, query, include_forms=config.use_form_filter)
     try:
         response = request_with_retries(config, params)
     except Exception as exc:
+        if not config.use_form_filter:
+            raise
         fallback = search_params(config, target, query, include_forms=False)
         get_logger(__name__).info(
             "EDGAR full text retrying without forms",

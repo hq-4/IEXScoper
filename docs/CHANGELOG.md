@@ -40,5 +40,6 @@
 - fix: regenerate seven latent corrupt main Parquet days blocking confirmed-trade daily bars `[REH][PA][KBT]`
 - fix: harden EDGAR full-text search against SEC EFTS form-filter and transport failures with a no-forms fallback and lower-noise retry logging `[REH][PA][KBT][CDiP]`
 - fix: downgrade exhausted EDGAR request failures to warning-level per-symbol `search_error` rows while preserving error-level tracebacks for script bugs `[REH][KBT][CDiP]`
+- fix: default EDGAR full-text requests to omit brittle SEC EFTS form filters while keeping form filtering available via `--use-form-filter` `[REH][PA][KBT][CDiP]`
 - fix: preserve runner exception details and classify parser short-buffer failures `[REH][CDiP]`
 - docs: record backfill parser RCA and recommend transport-aware parser replacement path `[REH][AS][CDiP]`

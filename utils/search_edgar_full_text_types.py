@@ -12,6 +12,7 @@ class EdgarFullTextConfig:
     symbols: tuple[str, ...]
     user_agent: str
     forms: tuple[str, ...]
+    use_form_filter: bool
     event_terms: tuple[str, ...]
     size: int
     max_symbols: int | None

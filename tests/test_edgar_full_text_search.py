@@ -16,11 +16,8 @@ from utils.search_edgar_full_text import (
 )
 
 
-def test_default_event_terms_avoid_broad_or_query() -> None:
+def test_default_query_terms_are_narrow_but_composable() -> None:
     assert DEFAULT_EVENT_TERMS == ("merger",)
-
-
-def test_query_for_symbol_combines_symbol_and_event_terms() -> None:
     assert query_for_symbol("SQ", ("merger", "delisted")) == "merger OR delisted"
 
 
@@ -42,7 +39,9 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
 
     monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
-    result = search_edgar_full_text(_config(template_path=template_path, output_root=output_root))
+    result = search_edgar_full_text(
+        _config(template_path=template_path, output_root=output_root, use_form_filter=True)
+    )
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
     assert seen[0]["headers"]["User-Agent"] == "IEXScoper test admin@example.test"
@@ -80,6 +79,29 @@ def test_search_edgar_full_text_continues_after_symbol_error(
     assert [row["search_status"] for row in rows] == ["search_error", "no_hits"]
     assert "SEC 500" in rows[0]["document_url"]
     assert result["summary"]["status_counts"]["search_error"] == 1
+
+
+def test_search_edgar_full_text_omits_form_filter_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    template_path = tmp_path / "template.csv"
+    output_root = tmp_path / "out"
+    calls = []
+    _write_template(template_path)
+
+    def fake_get(
+        url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
+    ) -> FakeResponse:
+        calls.append(params)
+        return FakeResponse(_empty_payload())
+
+    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+
+    search_edgar_full_text(
+        _config(template_path=template_path, output_root=output_root, symbols=("AAA",))
+    )
+
+    assert "forms" not in calls[0]
 
 
 def test_search_edgar_full_text_retries_transient_500(
@@ -157,7 +179,12 @@ def test_search_edgar_full_text_falls_back_without_forms(
     monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
-        _config(template_path=template_path, output_root=output_root, symbols=("AAA",))
+        _config(
+            template_path=template_path,
+            output_root=output_root,
+            symbols=("AAA",),
+            use_form_filter=True,
+        )
     )
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
@@ -185,7 +212,12 @@ def test_search_edgar_full_text_records_request_error_without_traceback(
     monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
-        _config(template_path=template_path, output_root=output_root, symbols=("AAA",))
+        _config(
+            template_path=template_path,
+            output_root=output_root,
+            symbols=("AAA",),
+            use_form_filter=True,
+        )
     )
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
@@ -223,7 +255,12 @@ def _write_template(path: Path) -> None:
 
 
 def _config(
-    *, template_path: Path, output_root: Path, symbols: tuple[str, ...] = (), retries: int = 1
+    *,
+    template_path: Path,
+    output_root: Path,
+    symbols: tuple[str, ...] = (),
+    retries: int = 1,
+    use_form_filter: bool = False,
 ) -> EdgarFullTextConfig:
     return EdgarFullTextConfig(
         template_path=template_path,
@@ -232,6 +269,7 @@ def _config(
         symbols=symbols,
         user_agent="IEXScoper test admin@example.test",
         forms=("8-K",),
+        use_form_filter=use_form_filter,
         event_terms=("merger",),
         size=5,
         max_symbols=None,
@@ -242,21 +280,18 @@ def _config(
 
 
 def _hit_payload() -> dict[str, Any]:
+    source = {
+        "cik": "0000000001",
+        "entity": "AAA CORP",
+        "form": "8-K",
+        "file_date": "2020-12-31",
+        "adsh": "0000000001-20-000001",
+        "documentUrl": "https://www.sec.gov/Archives/example.htm",
+    }
     return {
         "hits": {
             "total": {"value": 1},
-            "hits": [
-                {
-                    "_source": {
-                        "cik": "0000000001",
-                        "entity": "AAA CORP",
-                        "form": "8-K",
-                        "file_date": "2020-12-31",
-                        "adsh": "0000000001-20-000001",
-                        "documentUrl": "https://www.sec.gov/Archives/example.htm",
-                    }
-                }
-            ],
+            "hits": [{"_source": source}],
         }
     }
 
