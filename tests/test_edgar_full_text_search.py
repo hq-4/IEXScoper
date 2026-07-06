@@ -9,9 +9,14 @@ import requests
 
 from utils.search_edgar_full_text import (
     EdgarFullTextConfig,
+    DEFAULT_EVENT_TERMS,
     query_for_symbol,
     search_edgar_full_text,
 )
+
+
+def test_default_event_terms_avoid_broad_or_query() -> None:
+    assert DEFAULT_EVENT_TERMS == ("merger",)
 
 
 def test_query_for_symbol_combines_symbol_and_event_terms() -> None:

@@ -72,6 +72,13 @@ Full-text hits are noisy leads, especially for short tickers. Verify the CIK, is
 
 The full-text helper mirrors the SEC search page request shape: event terms in `q`, ticker text in `entityName`, `dateRange=custom` with era date bounds, and no custom `size` parameter. It retries transient SEC 5xx responses. If a symbol still fails after retries, the row is retained as `search_error` and the batch continues.
 
+The default full-text pass uses `q=merger` only. Avoid broad `OR` queries across many event terms; SEC EFTS has returned repeated 500s for that shape. Run separate passes when needed, for example:
+
+```bash
+SEC_USER_AGENT="IEXScoper research your-email@example.com" \
+uv run python utils/search_edgar_full_text.py --event-terms acquisition --output-root reports/dead-ticker-review/edgar-full-text-acquisition
+```
+
 ## Evidence Standard
 
 Prefer primary or near-primary sources:
