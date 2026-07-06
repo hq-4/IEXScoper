@@ -38,5 +38,6 @@
 - fix: skip unreadable Parquet days during symbol-stability reporting and list them in outputs `[REH][KBT][CDiP]`
 - fix: add explicit TOPS Parquet replacement repair mode with scratch headroom checks and atomically repair nine unreadable published main Parquet days `[REH][RM][CA][CDiP]`
 - fix: regenerate seven latent corrupt main Parquet days blocking confirmed-trade daily bars `[REH][PA][KBT]`
+- fix: harden EDGAR full-text search against SEC EFTS form-filter and transport failures with a no-forms fallback and lower-noise retry logging `[REH][PA][KBT][CDiP]`
 - fix: preserve runner exception details and classify parser short-buffer failures `[REH][CDiP]`
 - docs: record backfill parser RCA and recommend transport-aware parser replacement path `[REH][AS][CDiP]`

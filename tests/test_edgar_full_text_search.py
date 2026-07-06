@@ -152,6 +152,89 @@ def test_search_edgar_full_text_retries_transient_500(
     assert result["summary"]["status_counts"]["no_hits"] == 1
 
 
+def test_search_edgar_full_text_retries_transport_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    template_path = tmp_path / "template.csv"
+    output_root = tmp_path / "out"
+    calls = []
+    _write_template(template_path)
+
+    def fake_get(
+        url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
+    ) -> FakeResponse:
+        calls.append(params)
+        if len(calls) == 1:
+            raise requests.Timeout("SEC timeout")
+        return FakeResponse(_empty_payload())
+
+    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+
+    result = search_edgar_full_text(
+        EdgarFullTextConfig(
+            template_path=template_path,
+            output_root=output_root,
+            endpoint="https://efts.sec.gov/LATEST/search-index",
+            symbols=("AAA",),
+            user_agent="IEXScoper test admin@example.test",
+            forms=("8-K",),
+            event_terms=("merger",),
+            size=5,
+            max_symbols=None,
+            timeout_seconds=2,
+            sleep_seconds=0,
+            retries=2,
+        )
+    )
+
+    rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
+    assert len(calls) == 2
+    assert rows[0]["search_status"] == "no_hits"
+    assert result["summary"]["status_counts"]["no_hits"] == 1
+
+
+def test_search_edgar_full_text_falls_back_without_forms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    template_path = tmp_path / "template.csv"
+    output_root = tmp_path / "out"
+    calls = []
+    _write_template(template_path)
+
+    def fake_get(
+        url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
+    ) -> FakeResponse:
+        calls.append(params)
+        if "forms" in params:
+            return FakeResponse({"message": "Internal server error"}, status_code=500)
+        return FakeResponse(_empty_payload())
+
+    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+
+    result = search_edgar_full_text(
+        EdgarFullTextConfig(
+            template_path=template_path,
+            output_root=output_root,
+            endpoint="https://efts.sec.gov/LATEST/search-index",
+            symbols=("AAA",),
+            user_agent="IEXScoper test admin@example.test",
+            forms=("8-K",),
+            event_terms=("merger",),
+            size=5,
+            max_symbols=None,
+            timeout_seconds=2,
+            sleep_seconds=0,
+            retries=1,
+        )
+    )
+
+    rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
+    assert "forms" in calls[0]
+    assert "forms" not in calls[1]
+    assert rows[0]["search_status"] == "no_hits"
+    assert result["summary"]["status_counts"]["no_hits"] == 1
+
+
 class FakeResponse:
     def __init__(self, payload: dict[str, Any], status_code: int = 200) -> None:
         self._payload = payload

@@ -14,7 +14,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.framework.logging import get_logger, setup_logging
-from utils.edgar_full_text_client import request_with_retries
+from utils.edgar_full_text_client import request_with_retries, search_params
 from utils.edgar_full_text_outputs import build_summary, write_outputs
 from utils.edgar_full_text_schema import (
     DEFAULT_ENDPOINT,
@@ -164,31 +164,24 @@ def query_for_symbol(symbol: str, event_terms: tuple[str, ...]) -> str:
 def request_search(
     config: EdgarFullTextConfig, target: dict[str, Any], query: str
 ) -> dict[str, Any]:
-    params = {
-        "q": query,
-        "entityName": str(target["symbol"]).upper(),
-        "forms": ",".join(config.forms),
-    }
-    startdt = date_arg(target.get("first_day"))
-    enddt = date_arg(target.get("last_day"))
-    if startdt:
-        params["startdt"] = startdt
-    if enddt:
-        params["enddt"] = enddt
-    if startdt or enddt:
-        params["dateRange"] = "custom"
-    response = request_with_retries(config, params)
+    params = search_params(config, target, query, include_forms=True)
+    try:
+        response = request_with_retries(config, params)
+    except Exception as exc:
+        fallback = search_params(config, target, query, include_forms=False)
+        get_logger(__name__).info(
+            "EDGAR full text retrying without forms",
+            extra={
+                "event": "edgar_full_text_without_forms",
+                "symbol": target["symbol"],
+                "detail": {"error": repr(exc), "params": fallback},
+            },
+        )
+        response = request_with_retries(config, fallback)
     payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError(f"SEC full-text response must be a JSON object for {target['symbol']}")
     return payload
-
-
-def date_arg(value: Any) -> str | None:
-    text = str(value or "")
-    if len(text) == 8 and text.isdigit():
-        return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
-    return None
 
 
 def rows_for_hits(
