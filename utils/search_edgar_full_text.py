@@ -32,21 +32,29 @@ from utils.search_edgar_full_text_types import EdgarFullTextConfig
 
 def main() -> int:
     args = parse_args()
-    config = EdgarFullTextConfig(
-        template_path=Path(args.template_path),
-        output_root=Path(args.output_root),
-        endpoint=args.endpoint,
-        symbols=parse_csv_arg(args.symbols),
-        user_agent=resolve_user_agent(args.user_agent),
-        forms=parse_csv_arg(args.forms) or DEFAULT_FORMS,
-        event_terms=parse_csv_arg(args.event_terms) or DEFAULT_EVENT_TERMS,
-        size=args.size,
-        max_symbols=args.max_symbols,
-        timeout_seconds=args.timeout_seconds,
-        sleep_seconds=args.sleep_seconds,
-    )
-    setup_logging(str(config.output_root / "edgar_full_text_search.jsonl"))
-    result = search_edgar_full_text(config)
+    output_root = Path(args.output_root)
+    setup_logging(str(output_root / "edgar_full_text_search.jsonl"))
+    try:
+        config = EdgarFullTextConfig(
+            template_path=Path(args.template_path),
+            output_root=output_root,
+            endpoint=args.endpoint,
+            symbols=parse_csv_arg(args.symbols),
+            user_agent=resolve_user_agent(args.user_agent),
+            forms=parse_csv_arg(args.forms) or DEFAULT_FORMS,
+            event_terms=parse_csv_arg(args.event_terms) or DEFAULT_EVENT_TERMS,
+            size=args.size,
+            max_symbols=args.max_symbols,
+            timeout_seconds=args.timeout_seconds,
+            sleep_seconds=args.sleep_seconds,
+        )
+        result = search_edgar_full_text(config)
+    except Exception:
+        get_logger(__name__).exception(
+            "EDGAR full text search failed",
+            extra={"event": "edgar_full_text_search_failed"},
+        )
+        return 1
     get_logger(__name__).info(
         "EDGAR full text search complete",
         extra={"event": "edgar_full_text_search_complete", "detail": result["summary"]},
