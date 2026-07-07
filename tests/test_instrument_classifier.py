@@ -8,6 +8,7 @@ from utils.instrument_classifier import (
     TYPE_RIGHT,
     TYPE_SHARE_CLASS,
     TYPE_UNIT,
+    TYPE_UNKNOWN,
     TYPE_WARRANT,
     classify_instrument,
     instrument_type_expr,
@@ -36,9 +37,20 @@ def test_warrant_unit_and_right_patterns() -> None:
         "XYZWS": TYPE_WARRANT,
         "XYZWT": TYPE_WARRANT,
         "ABC RT": TYPE_RIGHT,
+        "CCIV+": TYPE_WARRANT,
+        "BAC+A": TYPE_WARRANT,
+        "CVII=": TYPE_UNIT,
+        "BMY^": TYPE_RIGHT,
+        "RQI^": TYPE_RIGHT,
+        "BAC-I*": TYPE_PREFERRED,
     }
     for symbol, instrument_type in expected.items():
         assert classify_instrument(symbol).instrument_type == instrument_type
+
+
+def test_ambiguous_feed_markers_stay_unknown() -> None:
+    for symbol in ["KVUE#", "DOW#", "T$", "CEQP-", "ISF*"]:
+        assert classify_instrument(symbol).instrument_type == TYPE_UNKNOWN
 
 
 def test_short_common_symbols_are_not_warrants_or_rights() -> None:

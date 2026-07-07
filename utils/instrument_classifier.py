@@ -115,15 +115,18 @@ def _instrument_expr(field: str) -> pl.Expr:
 
 def _symbol_condition_exprs() -> dict[str, pl.Expr]:
     symbol = pl.col("symbol").fill_null("").str.to_uppercase()
+    symbol_without_star = symbol.str.replace(r"\*$", "")
     symbol_len = symbol.str.len_chars()
     return {
         "fund": pl.col("iex_product_hint").is_in(FUND_PRODUCT_HINTS),
         "issuer_fund": pl.col("iex_latest_issuer").fill_null("").str.contains(_FUND_ISSUER_PATTERN),
         "warrant": _warrant_expr(symbol, symbol_len),
         "unit": symbol.str.contains(r"(^|[-. ])U$")
-        | ((symbol_len >= 5) & symbol.str.ends_with("U")),
-        "right": symbol.str.contains(r"(^|[-. ])RTS?$"),
-        "preferred": symbol.str.contains(_PREFERRED_SUFFIX_PATTERN),
+        | ((symbol_len >= 5) & symbol.str.ends_with("U"))
+        | symbol.str.ends_with("="),
+        "right": symbol.str.contains(r"(^|[-. ])RTS?$") | symbol.str.ends_with("^"),
+        "preferred": symbol.str.contains(_PREFERRED_SUFFIX_PATTERN)
+        | symbol_without_star.str.contains(_PREFERRED_SUFFIX_PATTERN),
         "share_class": symbol.str.contains(_DOT_SHARE_CLASS_PATTERN),
         "common": symbol.str.contains(_COMMON_SYMBOL_PATTERN),
     }
@@ -136,6 +139,7 @@ def _warrant_expr(symbol: pl.Expr, symbol_len: pl.Expr) -> pl.Expr:
         | symbol.str.ends_with("WTS")
         | symbol.str.contains(r"(^|[-. ])WTS?$")
         | symbol.str.contains(r"(^|[-. ])WARRANTS?$")
+        | symbol.str.contains(r"\+[A-Z]?$")
         | ((symbol_len >= 5) & symbol.str.ends_with("W"))
     )
 
@@ -214,19 +218,22 @@ def _is_warrant(symbol: str) -> bool:
         or symbol.endswith("WTS")
         or symbol.endswith(("-W", ".W", " W", "-WS", ".WS", " WS", "-WT", ".WT", " WT"))
         or symbol.endswith(("WARRANT", "WARRANTS"))
+        or bool(re.search(r"\+[A-Z]?$", symbol))
     )
 
 
 def _is_unit(symbol: str) -> bool:
-    return symbol.endswith(("-U", ".U", " U")) or (len(symbol) >= 5 and symbol.endswith("U"))
+    return (
+        symbol.endswith(("=", "-U", ".U", " U")) or (len(symbol) >= 5 and symbol.endswith("U"))
+    )
 
 
 def _is_right(symbol: str) -> bool:
-    return symbol.endswith(("-RT", ".RT", " RT", "-RTS", ".RTS", " RTS"))
+    return symbol.endswith(("^", "-RT", ".RT", " RT", "-RTS", ".RTS", " RTS"))
 
 
 def _is_preferred(symbol: str) -> bool:
-    return bool(re.search(_PREFERRED_SUFFIX_PATTERN, symbol))
+    return bool(re.search(_PREFERRED_SUFFIX_PATTERN, symbol.removesuffix("*")))
 
 
 def _is_share_class(symbol: str) -> bool:
