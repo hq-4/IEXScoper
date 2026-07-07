@@ -43,5 +43,6 @@
 - fix: default EDGAR full-text requests to omit brittle SEC EFTS form filters while keeping form filtering available via `--use-form-filter` `[REH][PA][KBT][CDiP]`
 - fix: reset EDGAR full-text search logs by default and add `--append-log` for intentional cumulative logs `[REH][KBT][CDiP]`
 - fix: add EDGAR full-text request variants for SEC 500s on date-bounded `entityName` searches `[REH][PA][KBT][CDiP]`
+- fix: suppress normal-console EDGAR retry noise and add `SYMBOL AND query` fallback for SEC query-parser edge cases `[REH][PA][KBT][CDiP]`
 - fix: preserve runner exception details and classify parser short-buffer failures `[REH][CDiP]`
 - docs: record backfill parser RCA and recommend transport-aware parser replacement path `[REH][AS][CDiP]`

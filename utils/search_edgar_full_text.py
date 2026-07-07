@@ -177,10 +177,10 @@ def request_search(
             break
         except requests.RequestException as exc:
             last_error = exc
-            get_logger(__name__).info(
-                "EDGAR full text request variant failed",
+            get_logger(__name__).debug(
+                "EDGAR full text request variant retry",
                 extra={
-                    "event": "edgar_full_text_variant_failed",
+                    "event": "edgar_full_text_variant_retry",
                     "symbol": target["symbol"],
                     "detail": {"variant": label, "error": repr(exc), "params": params},
                 },

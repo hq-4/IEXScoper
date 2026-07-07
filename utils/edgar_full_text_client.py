@@ -55,6 +55,17 @@ def search_param_variants(
                 search_params(config, target, query, include_forms=False, include_dates=False),
             ),
             (
+                "ticker_and_query",
+                search_params(
+                    config,
+                    target,
+                    ticker_and_query(symbol, query),
+                    include_forms=False,
+                    include_dates=False,
+                    include_entity=False,
+                ),
+            ),
+            (
                 "ticker_in_query",
                 search_params(
                     config,
@@ -68,6 +79,12 @@ def search_param_variants(
         ]
     )
     return unique_variants(variants)
+
+
+def ticker_and_query(symbol: str, query: str) -> str:
+    if " OR " in query:
+        return f"{symbol} AND ({query})"
+    return f"{symbol} AND {query}"
 
 
 def unique_variants(
@@ -108,7 +125,7 @@ def request_with_retries(config: EdgarFullTextConfig, params: dict[str, str]) ->
             status_code = response.status_code
             if status_code not in RETRY_STATUS_CODES or attempt == config.retries:
                 raise
-            get_logger(__name__).info(
+            get_logger(__name__).debug(
                 "EDGAR full text retryable response",
                 extra={
                     "event": "edgar_full_text_retry",
@@ -120,7 +137,7 @@ def request_with_retries(config: EdgarFullTextConfig, params: dict[str, str]) ->
             last_error = exc
             if attempt == config.retries:
                 raise
-            get_logger(__name__).info(
+            get_logger(__name__).debug(
                 "EDGAR full text retryable transport error",
                 extra={
                     "event": "edgar_full_text_retry",
