@@ -29,7 +29,7 @@ REASON_DOT_SHARE_CLASS = "dot_share_class_suffix"
 REASON_COMMON_SYMBOL = "common_stock_symbol"
 REASON_AMBIGUOUS_SYMBOL = "ambiguous_symbol_pattern"
 
-_FUND_ISSUER_PATTERN = r"(?i)\b(etf|etn|fund|trust|portfolio|index)\b"
+_FUND_ISSUER_PATTERN = r"(?i)\b(etf|etn|fund|trust|portfolio|index|pref)\b"
 _PREFERRED_SUFFIX_PATTERN = (
     r"(^[A-Z]{1,5}[- ]PR[A-Z]$)|"
     r"(^[A-Z]{1,5}\.PR[A-Z]$)|"
@@ -122,7 +122,7 @@ def _symbol_condition_exprs() -> dict[str, pl.Expr]:
         "warrant": _warrant_expr(symbol, symbol_len),
         "unit": symbol.str.contains(r"(^|[-. ])U$")
         | ((symbol_len >= 5) & symbol.str.ends_with("U")),
-        "right": symbol.str.ends_with("RT") | symbol.str.contains(r"(^|[-. ])RTS?$"),
+        "right": symbol.str.contains(r"(^|[-. ])RTS?$"),
         "preferred": symbol.str.contains(_PREFERRED_SUFFIX_PATTERN),
         "share_class": symbol.str.contains(_DOT_SHARE_CLASS_PATTERN),
         "common": symbol.str.contains(_COMMON_SYMBOL_PATTERN),
@@ -131,8 +131,8 @@ def _symbol_condition_exprs() -> dict[str, pl.Expr]:
 
 def _warrant_expr(symbol: pl.Expr, symbol_len: pl.Expr) -> pl.Expr:
     return (
-        symbol.str.ends_with("WS")
-        | symbol.str.ends_with("WT")
+        ((symbol_len >= 5) & symbol.str.ends_with("WS"))
+        | ((symbol_len >= 5) & symbol.str.ends_with("WT"))
         | symbol.str.ends_with("WTS")
         | symbol.str.contains(r"(^|[-. ])WTS?$")
         | symbol.str.contains(r"(^|[-. ])WARRANTS?$")
@@ -210,10 +210,10 @@ def _normalize_symbol(symbol: str | None) -> str:
 
 def _is_warrant(symbol: str) -> bool:
     return (
-        symbol.endswith(("WS", "WT", "WTS"))
+        (len(symbol) >= 5 and symbol.endswith(("WS", "WT", "W")))
+        or symbol.endswith("WTS")
         or symbol.endswith(("-W", ".W", " W", "-WS", ".WS", " WS", "-WT", ".WT", " WT"))
         or symbol.endswith(("WARRANT", "WARRANTS"))
-        or (len(symbol) >= 5 and symbol.endswith("W"))
     )
 
 
@@ -222,7 +222,7 @@ def _is_unit(symbol: str) -> bool:
 
 
 def _is_right(symbol: str) -> bool:
-    return symbol.endswith(("RT", "-RT", ".RT", " RT", "-RTS", ".RTS", " RTS"))
+    return symbol.endswith(("-RT", ".RT", " RT", "-RTS", ".RTS", " RTS"))
 
 
 def _is_preferred(symbol: str) -> bool:

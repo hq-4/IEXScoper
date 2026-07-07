@@ -41,6 +41,12 @@ def test_warrant_unit_and_right_patterns() -> None:
         assert classify_instrument(symbol).instrument_type == instrument_type
 
 
+def test_short_common_symbols_are_not_warrants_or_rights() -> None:
+    for symbol in ["CART", "VXRT", "SMRT", "UWT", "DWT", "CLWT", "LAWS", "CTWS"]:
+        classification = classify_instrument(symbol)
+        assert classification.instrument_type not in {TYPE_RIGHT, TYPE_WARRANT}
+
+
 def test_iex_product_hint_precedence() -> None:
     classification = classify_instrument("AACIW", iex_product_hint="etf")
     assert classification.instrument_type == TYPE_FUND_OR_TRUST
