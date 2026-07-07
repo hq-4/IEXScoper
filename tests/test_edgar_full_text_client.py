@@ -13,7 +13,12 @@ from utils.search_edgar_full_text_types import EdgarFullTextConfig
 
 
 def test_search_param_variants_drop_brittle_filters_and_dates() -> None:
-    target = {"symbol": "SQ", "first_day": "20161212", "last_day": "20250117"}
+    target = {
+        "symbol": "SQ",
+        "first_day": "20161212",
+        "last_day": "20250117",
+        "edgar_aliases": ("Block",),
+    }
 
     variants = search_param_variants(_config(use_form_filter=True), target, "merger")
 
@@ -23,14 +28,16 @@ def test_search_param_variants_drop_brittle_filters_and_dates() -> None:
         "primary",
         "without_forms",
         "without_dates",
+        "alias_and_query",
         "ticker_and_query",
         "ticker_in_query",
     ]
     assert params[0]["forms"] == "8-K"
     assert "forms" not in params[1]
     assert "startdt" not in params[2]
-    assert params[3] == {"q": "SQ AND merger"}
-    assert params[4] == {"q": '"SQ" merger'}
+    assert params[3] == {"q": "Block AND merger"}
+    assert params[4] == {"q": "SQ AND merger"}
+    assert params[5] == {"q": '"SQ" merger'}
 
 
 def test_search_param_variants_are_deduplicated_without_date_bounds() -> None:
@@ -82,6 +89,7 @@ class FakeResponse:
 def _config(*, use_form_filter: bool, retries: int = 1) -> EdgarFullTextConfig:
     return EdgarFullTextConfig(
         template_path=Path("unused.csv"),
+        alias_path=Path("unused_aliases.csv"),
         output_root=Path("unused"),
         endpoint="https://efts.sec.gov/LATEST/search-index",
         symbols=("SQ",),

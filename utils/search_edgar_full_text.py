@@ -18,6 +18,7 @@ from src.framework.logging import get_logger, setup_logging
 from utils.edgar_full_text_client import request_with_retries, search_param_variants
 from utils.edgar_full_text_outputs import build_summary, prepare_log_path, write_outputs
 from utils.edgar_full_text_schema import (
+    DEFAULT_ALIAS_PATH,
     DEFAULT_ENDPOINT,
     DEFAULT_EVENT_TERMS,
     DEFAULT_FORMS,
@@ -29,6 +30,7 @@ from utils.edgar_full_text_schema import (
     DEFAULT_TIMEOUT_SECONDS,
     LEAD_SCHEMA,
 )
+from utils.edgar_full_text_targets import load_targets
 from utils.search_edgar_full_text_types import EdgarFullTextConfig
 
 
@@ -39,6 +41,7 @@ def main() -> int:
     try:
         config = EdgarFullTextConfig(
             template_path=Path(args.template_path),
+            alias_path=Path(args.alias_path),
             output_root=output_root,
             endpoint=args.endpoint,
             symbols=parse_csv_arg(args.symbols),
@@ -69,6 +72,7 @@ def main() -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--template-path", default=str(DEFAULT_TEMPLATE_PATH))
+    parser.add_argument("--alias-path", default=DEFAULT_ALIAS_PATH)
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
     parser.add_argument("--symbols")
@@ -107,7 +111,7 @@ def search_edgar_full_text(config: EdgarFullTextConfig) -> dict[str, Any]:
     for target in targets:
         query = query_for_symbol(target["symbol"], config.event_terms)
         try:
-            payload = request_search(config, target, query)
+            payload, used_query = request_search(config, target, query)
         except Exception as exc:
             error = repr(exc)
             detail = {"query": query, "error": error}
@@ -123,8 +127,8 @@ def search_edgar_full_text(config: EdgarFullTextConfig) -> dict[str, Any]:
             rows.append(error_result_row(target, query, error))
             time.sleep(config.sleep_seconds)
             continue
-        raw_payloads.append({"symbol": target["symbol"], "query": query, "payload": payload})
-        rows.extend(rows_for_hits(target, query, payload))
+        raw_payloads.append({"symbol": target["symbol"], "query": used_query, "payload": payload})
+        rows.extend(rows_for_hits(target, used_query, payload))
         time.sleep(config.sleep_seconds)
     leads = pl.DataFrame(rows, schema=LEAD_SCHEMA, orient="row")
     summary = build_summary(config, targets, leads)
@@ -147,34 +151,37 @@ def validate_config(config: EdgarFullTextConfig) -> None:
         raise ValueError("--retries must be positive")
 
 
-def load_targets(config: EdgarFullTextConfig) -> list[dict[str, Any]]:
-    if config.symbols:
-        targets = [
-            {"symbol": symbol.upper(), "first_day": None, "last_day": None}
-            for symbol in config.symbols
-        ]
-    else:
-        frame = pl.read_csv(config.template_path, infer_schema_length=0)
-        required = ["symbol", "symbol_era_id", "first_day", "last_day", "priority_rank"]
-        missing = [column for column in required if column not in frame.columns]
-        if missing:
-            raise ValueError(f"resolution template missing required columns: {missing}")
-        targets = frame.select(required).to_dicts()
-    return targets[: config.max_symbols] if config.max_symbols else targets
-
-
 def query_for_symbol(symbol: str, event_terms: tuple[str, ...]) -> str:
     return " OR ".join(event_terms)
 
 
 def request_search(
     config: EdgarFullTextConfig, target: dict[str, Any], query: str
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str]:
     last_error = None
+    last_empty = None
+    last_query = query
     for label, params in search_param_variants(config, target, query):
         try:
             response = request_with_retries(config, params)
-            break
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError(
+                    f"SEC full-text response must be a JSON object for {target['symbol']}"
+                )
+            used_query = params["q"]
+            if total_hits(payload) > 0:
+                return payload, used_query
+            last_empty = payload
+            last_query = used_query
+            get_logger(__name__).debug(
+                "EDGAR full text empty variant",
+                extra={
+                    "event": "edgar_full_text_empty_variant",
+                    "symbol": target["symbol"],
+                    "detail": {"variant": label, "params": params},
+                },
+            )
         except requests.RequestException as exc:
             last_error = exc
             get_logger(__name__).debug(
@@ -185,13 +192,10 @@ def request_search(
                     "detail": {"variant": label, "error": repr(exc), "params": params},
                 },
             )
-    else:
-        assert last_error is not None
-        raise last_error
-    payload = response.json()
-    if not isinstance(payload, dict):
-        raise ValueError(f"SEC full-text response must be a JSON object for {target['symbol']}")
-    return payload
+    if last_empty is not None:
+        return last_empty, last_query
+    assert last_error is not None
+    raise last_error
 
 
 def rows_for_hits(

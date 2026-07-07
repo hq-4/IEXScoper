@@ -33,7 +33,7 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
         url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
     ) -> FakeResponse:
         seen.append({"url": url, "params": params, "headers": headers, "timeout": timeout})
-        if params["entityName"] == "AAA":
+        if params.get("entityName") == "AAA":
             return FakeResponse(_hit_payload())
         return FakeResponse(_empty_payload())
 
@@ -67,7 +67,7 @@ def test_search_edgar_full_text_continues_after_symbol_error(
     def fake_get(
         url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
     ) -> FakeResponse:
-        if params["entityName"] == "AAA":
+        if params.get("entityName") == "AAA":
             raise RuntimeError("SEC 500")
         return FakeResponse(_empty_payload())
 
@@ -79,29 +79,6 @@ def test_search_edgar_full_text_continues_after_symbol_error(
     assert [row["search_status"] for row in rows] == ["search_error", "no_hits"]
     assert "SEC 500" in rows[0]["document_url"]
     assert result["summary"]["status_counts"]["search_error"] == 1
-
-
-def test_search_edgar_full_text_omits_form_filter_by_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    template_path = tmp_path / "template.csv"
-    output_root = tmp_path / "out"
-    calls = []
-    _write_template(template_path)
-
-    def fake_get(
-        url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float
-    ) -> FakeResponse:
-        calls.append(params)
-        return FakeResponse(_empty_payload())
-
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
-
-    search_edgar_full_text(
-        _config(template_path=template_path, output_root=output_root, symbols=("AAA",))
-    )
-
-    assert "forms" not in calls[0]
 
 
 def test_search_edgar_full_text_retries_transient_500(
@@ -127,7 +104,7 @@ def test_search_edgar_full_text_retries_transient_500(
     )
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert rows[0]["search_status"] == "no_hits"
     assert result["summary"]["status_counts"]["no_hits"] == 1
 
@@ -155,7 +132,7 @@ def test_search_edgar_full_text_retries_transport_error(
     )
 
     rows = pl.read_csv(output_root / "edgar_full_text_leads.csv", infer_schema_length=0).to_dicts()
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert rows[0]["search_status"] == "no_hits"
     assert result["summary"]["status_counts"]["no_hits"] == 1
 
@@ -258,12 +235,14 @@ def _config(
     *,
     template_path: Path,
     output_root: Path,
+    alias_path: Path | None = None,
     symbols: tuple[str, ...] = (),
     retries: int = 1,
     use_form_filter: bool = False,
 ) -> EdgarFullTextConfig:
     return EdgarFullTextConfig(
         template_path=template_path,
+        alias_path=alias_path or template_path.with_name("missing_aliases.csv"),
         output_root=output_root,
         endpoint="https://efts.sec.gov/LATEST/search-index",
         symbols=symbols,

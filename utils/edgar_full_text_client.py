@@ -54,6 +54,24 @@ def search_param_variants(
                 "without_dates",
                 search_params(config, target, query, include_forms=False, include_dates=False),
             ),
+        ]
+    )
+    for alias in target.get("edgar_aliases", ()):
+        variants.append(
+            (
+                "alias_and_query",
+                search_params(
+                    config,
+                    target,
+                    ticker_and_query(str(alias), query),
+                    include_forms=False,
+                    include_dates=False,
+                    include_entity=False,
+                ),
+            )
+        )
+    variants.extend(
+        [
             (
                 "ticker_and_query",
                 search_params(

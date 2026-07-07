@@ -7,6 +7,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class EdgarFullTextConfig:
     template_path: Path
+    alias_path: Path
     output_root: Path
     endpoint: str
     symbols: tuple[str, ...]

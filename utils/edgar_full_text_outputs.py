@@ -25,6 +25,7 @@ def build_summary(
         "method": "SEC EDGAR full-text lead search for dead ticker review",
         "endpoint": config.endpoint,
         "template_path": str(config.template_path),
+        "alias_path": str(config.alias_path),
         "target_symbol_count": len(targets),
         "forms": list(config.forms),
         "event_terms": list(config.event_terms),
