@@ -15,8 +15,13 @@ from utils.instrument_classifier import (
 
 
 def test_preferred_patterns() -> None:
-    for symbol in ["WFC-X", "SLG-I", "AHL-D", "TNP-B", "BAC-PRA", "ABC-PRC"]:
+    for symbol in ["WFC-X", "SLG-I", "AHL-D", "TNP-B", "BAC-PRA", "ABC-PRC", "BACPRC"]:
         assert classify_instrument(symbol).instrument_type == TYPE_PREFERRED
+
+
+def test_single_letter_base_pr_strings_are_not_preferred() -> None:
+    for symbol in ["RPRX", "APRN", "TPRE", "FPRX", "SPRB"]:
+        assert classify_instrument(symbol).instrument_type != TYPE_PREFERRED
 
 
 def test_share_class_patterns_are_not_preferred() -> None:

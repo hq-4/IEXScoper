@@ -34,7 +34,7 @@ _PREFERRED_SUFFIX_PATTERN = (
     r"(^[A-Z]{1,5}[- ]PR[A-Z]$)|"
     r"(^[A-Z]{1,5}\.PR[A-Z]$)|"
     r"(^[A-Z]{1,5}[- ][A-Z]$)|"
-    r"(^[A-Z]{1,5}PR[A-Z]$)"
+    r"(^[A-Z]{2,5}PR[A-Z]$)"
 )
 _DOT_SHARE_CLASS_PATTERN = r"^[A-Z]{1,5}\.[A-Z]$"
 _COMMON_SYMBOL_PATTERN = r"^[A-Z]{1,5}$"
