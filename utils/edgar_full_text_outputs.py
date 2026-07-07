@@ -10,6 +10,13 @@ import polars as pl
 from utils.search_edgar_full_text_types import EdgarFullTextConfig
 
 
+def prepare_log_path(output_root: Path, *, append_log: bool) -> Path:
+    log_path = output_root / "edgar_full_text_search.jsonl"
+    if not append_log and log_path.exists():
+        log_path.unlink()
+    return log_path
+
+
 def build_summary(
     config: EdgarFullTextConfig, targets: list[dict[str, Any]], leads: pl.DataFrame
 ) -> dict[str, Any]:

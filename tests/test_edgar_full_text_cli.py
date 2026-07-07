@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from utils.search_edgar_full_text import prepare_log_path
+from utils.edgar_full_text_outputs import prepare_log_path
 
 
 def test_prepare_log_path_truncates_stale_log_by_default(tmp_path: Path) -> None:

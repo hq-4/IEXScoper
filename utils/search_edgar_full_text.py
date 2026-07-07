@@ -15,8 +15,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.framework.logging import get_logger, setup_logging
-from utils.edgar_full_text_client import request_with_retries, search_params
-from utils.edgar_full_text_outputs import build_summary, write_outputs
+from utils.edgar_full_text_client import request_with_retries, search_param_variants
+from utils.edgar_full_text_outputs import build_summary, prepare_log_path, write_outputs
 from utils.edgar_full_text_schema import (
     DEFAULT_ENDPOINT,
     DEFAULT_EVENT_TERMS,
@@ -98,13 +98,6 @@ def resolve_user_agent(value: str | None) -> str:
     return user_agent
 
 
-def prepare_log_path(output_root: Path, *, append_log: bool) -> Path:
-    log_path = output_root / "edgar_full_text_search.jsonl"
-    if not append_log and log_path.exists():
-        log_path.unlink()
-    return log_path
-
-
 def search_edgar_full_text(config: EdgarFullTextConfig) -> dict[str, Any]:
     validate_config(config)
     config.output_root.mkdir(parents=True, exist_ok=True)
@@ -177,22 +170,24 @@ def query_for_symbol(symbol: str, event_terms: tuple[str, ...]) -> str:
 def request_search(
     config: EdgarFullTextConfig, target: dict[str, Any], query: str
 ) -> dict[str, Any]:
-    params = search_params(config, target, query, include_forms=config.use_form_filter)
-    try:
-        response = request_with_retries(config, params)
-    except Exception as exc:
-        if not config.use_form_filter:
-            raise
-        fallback = search_params(config, target, query, include_forms=False)
-        get_logger(__name__).info(
-            "EDGAR full text retrying without forms",
-            extra={
-                "event": "edgar_full_text_without_forms",
-                "symbol": target["symbol"],
-                "detail": {"error": repr(exc), "params": fallback},
-            },
-        )
-        response = request_with_retries(config, fallback)
+    last_error = None
+    for label, params in search_param_variants(config, target, query):
+        try:
+            response = request_with_retries(config, params)
+            break
+        except requests.RequestException as exc:
+            last_error = exc
+            get_logger(__name__).info(
+                "EDGAR full text request variant failed",
+                extra={
+                    "event": "edgar_full_text_variant_failed",
+                    "symbol": target["symbol"],
+                    "detail": {"variant": label, "error": repr(exc), "params": params},
+                },
+            )
+    else:
+        assert last_error is not None
+        raise last_error
     payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError(f"SEC full-text response must be a JSON object for {target['symbol']}")

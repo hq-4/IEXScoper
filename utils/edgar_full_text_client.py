@@ -10,16 +10,21 @@ from utils.search_edgar_full_text_types import EdgarFullTextConfig
 
 
 def search_params(
-    config: EdgarFullTextConfig, target: dict[str, object], query: str, *, include_forms: bool
+    config: EdgarFullTextConfig,
+    target: dict[str, object],
+    query: str,
+    *,
+    include_forms: bool,
+    include_dates: bool = True,
+    include_entity: bool = True,
 ) -> dict[str, str]:
-    params = {
-        "q": query,
-        "entityName": str(target["symbol"]).upper(),
-    }
+    params = {"q": query}
+    if include_entity:
+        params["entityName"] = str(target["symbol"]).upper()
     if include_forms:
         params["forms"] = ",".join(config.forms)
-    startdt = date_arg(target.get("first_day"))
-    enddt = date_arg(target.get("last_day"))
+    startdt = date_arg(target.get("first_day")) if include_dates else None
+    enddt = date_arg(target.get("last_day")) if include_dates else None
     if startdt:
         params["startdt"] = startdt
     if enddt:
@@ -27,6 +32,56 @@ def search_params(
     if startdt or enddt:
         params["dateRange"] = "custom"
     return params
+
+
+def search_param_variants(
+    config: EdgarFullTextConfig, target: dict[str, object], query: str
+) -> list[tuple[str, dict[str, str]]]:
+    symbol = str(target["symbol"]).upper()
+    variants = [
+        (
+            "primary",
+            search_params(config, target, query, include_forms=config.use_form_filter),
+        )
+    ]
+    if config.use_form_filter:
+        variants.append(
+            ("without_forms", search_params(config, target, query, include_forms=False))
+        )
+    variants.extend(
+        [
+            (
+                "without_dates",
+                search_params(config, target, query, include_forms=False, include_dates=False),
+            ),
+            (
+                "ticker_in_query",
+                search_params(
+                    config,
+                    target,
+                    f'"{symbol}" {query}',
+                    include_forms=False,
+                    include_dates=False,
+                    include_entity=False,
+                ),
+            ),
+        ]
+    )
+    return unique_variants(variants)
+
+
+def unique_variants(
+    variants: list[tuple[str, dict[str, str]]],
+) -> list[tuple[str, dict[str, str]]]:
+    seen = set()
+    unique = []
+    for label, params in variants:
+        key = tuple(sorted(params.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((label, params))
+    return unique
 
 
 def date_arg(value: object) -> str | None:
