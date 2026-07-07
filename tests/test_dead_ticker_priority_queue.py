@@ -26,6 +26,7 @@ def test_build_priority_queue_ranks_unresolved_operating_delisted_rows(
     assert rows[0]["priority_rank"] == 1
     assert rows[0]["is_probable_operating"] is True
     assert rows[0]["is_delisted_candidate"] is True
+    assert rows[0]["research_route"] == "operating_company_sec_event"
     assert result["summary"]["unresolved_era_count"] == 3
     assert result["summary"]["top_n"] == 2
     assert (output_root / "unresolved_priority_report.md").exists()
@@ -59,6 +60,18 @@ def _write_review_queue(path: Path) -> None:
                 "probable_operating_or_other",
                 "probable_operating_or_other",
                 "probable_operating_or_other",
+            ],
+            "instrument_type": [
+                "probable_fund_or_trust",
+                "probable_operating_company",
+                "probable_operating_company",
+                "probable_operating_company",
+            ],
+            "research_route": [
+                "fund_or_trust_closure",
+                "operating_company_sec_event",
+                "operating_company_sec_event",
+                "operating_company_sec_event",
             ],
         }
     ).write_parquet(path)

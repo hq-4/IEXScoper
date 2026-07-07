@@ -28,6 +28,11 @@ from utils.instrument_classifier import (
     instrument_reason_expr,
     instrument_type_expr,
 )
+from utils.instrument_research_routing import (
+    recommended_evidence_expr,
+    research_route_expr,
+    routing_reason_expr,
+)
 
 
 @dataclass(frozen=True)
@@ -132,6 +137,11 @@ def build_queue(frame: pl.DataFrame) -> pl.DataFrame:
             instrument_reason_expr().alias("instrument_reason"),
             evidence_status_expr().alias("identity_evidence_status"),
         )
+        .with_columns(
+            research_route_expr().alias("research_route"),
+            recommended_evidence_expr().alias("recommended_evidence"),
+            routing_reason_expr().alias("routing_reason"),
+        )
         .with_columns(apply_manual_evidence_expr().alias("identity_evidence_status"))
         .with_columns(review_priority_expr().alias("review_priority"))
         .select(REVIEW_COLUMNS)
@@ -195,6 +205,7 @@ def build_summary(config: DeadTickerReviewConfig, queue: pl.DataFrame) -> dict[s
         "instrument_hint_counts": count_by(queue, "instrument_hint"),
         "instrument_type_counts": count_by(queue, "instrument_type"),
         "instrument_reason_counts": count_by(queue, "instrument_reason"),
+        "research_route_counts": count_by(queue, "research_route"),
         "review_priority_counts": count_by(queue, "review_priority"),
         "classification_counts": count_by(queue, "source_classification"),
         "limitations": [
@@ -253,20 +264,22 @@ def write_markdown(path: Path, summary: dict[str, Any], queue: pl.DataFrame) -> 
     lines.extend(
         f"- `{key}`: `{value}`" for key, value in summary["instrument_type_counts"].items()
     )
+    lines.extend(["", "## Research Routes", ""])
+    lines.extend(f"- `{key}`: `{value}`" for key, value in summary["research_route_counts"].items())
     lines.extend(
         [
             "",
             "## Top Priority Sample",
             "",
-            "| Symbol | Era | Class | Evidence | Hint | Type | Trades |",
+            "| Symbol | Era | Class | Evidence | Hint | Type | Route | Trades |",
         ]
     )
-    lines.append("|---|---|---|---|---|---|---:|")
+    lines.append("|---|---|---|---|---|---|---|---:|")
     for row in queue.head(25).to_dicts():
         lines.append(
             "| {symbol} | {symbol_era_id} | {source_classification} | "
             "{identity_evidence_status} | {instrument_hint} | {instrument_type} | "
-            "{trade_rows} |".format(**row)
+            "{research_route} | {trade_rows} |".format(**row)
         )
     lines.extend(["", "## Caveats", ""])
     lines.extend(f"- {item}" for item in summary["limitations"])
@@ -281,6 +294,9 @@ def write_instrument_audit(root: Path, queue: pl.DataFrame) -> None:
             "instrument_hint",
             "instrument_type",
             "instrument_reason",
+            "research_route",
+            "recommended_evidence",
+            "routing_reason",
             "trade_rows",
             "source_classification",
             "identity_evidence_status",
@@ -296,6 +312,7 @@ def write_instrument_audit(root: Path, queue: pl.DataFrame) -> None:
         "instrument_hint_counts": count_by(audit, "instrument_hint"),
         "instrument_type_counts": count_by(audit, "instrument_type"),
         "instrument_reason_counts": count_by(audit, "instrument_reason"),
+        "research_route_counts": count_by(audit, "research_route"),
         "top_examples_by_type": top_examples_by_type(audit),
         "limitations": [
             "This audit uses local ticker syntax and IEX hints only.",

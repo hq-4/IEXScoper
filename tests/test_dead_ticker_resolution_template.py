@@ -24,6 +24,8 @@ def test_build_resolution_template_adds_blank_research_columns(tmp_path: Path) -
     rows = pl.read_csv(output_path, infer_schema_length=0).to_dicts()
     assert result["row_count"] == 1
     assert rows[0]["symbol"] == "AAA"
+    assert rows[0]["research_route"] == "operating_company_sec_event"
+    assert "8-K" in rows[0]["recommended_evidence"]
     assert rows[0]["research_status"] == "todo"
     assert rows[0]["proposed_historical_issuer_name"] is None
     assert rows[0]["primary_source_url"] is None
@@ -40,6 +42,17 @@ def _write_priority(path: Path) -> None:
                 "intermittent_or_reused_candidate",
             ],
             "instrument_hint": ["probable_operating_or_other", "probable_operating_or_other"],
+            "instrument_type": ["probable_operating_company", "probable_operating_company"],
+            "instrument_reason": ["common_stock_symbol", "common_stock_symbol"],
+            "research_route": ["operating_company_sec_event", "operating_company_sec_event"],
+            "recommended_evidence": [
+                "8-K, merger proxy/S-4, 25-NSE, 15-12B, issuer/acquirer release",
+                "8-K, merger proxy/S-4, 25-NSE, 15-12B, issuer/acquirer release",
+            ],
+            "routing_reason": [
+                "instrument_type=probable_operating_company",
+                "instrument_type=probable_operating_company",
+            ],
             "is_probable_operating": [True, True],
             "is_delisted_candidate": [True, False],
             "first_day": ["20170103", "20180103"],

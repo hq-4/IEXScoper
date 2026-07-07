@@ -122,6 +122,9 @@ def priority_columns(source_columns: list[str]) -> list[str]:
         "instrument_hint",
         "instrument_type",
         "instrument_reason",
+        "research_route",
+        "recommended_evidence",
+        "routing_reason",
         "is_probable_operating",
         "is_delisted_candidate",
         "first_day",
@@ -154,6 +157,9 @@ def build_summary(config: PriorityQueueConfig, priority: pl.DataFrame) -> dict[s
         "top_instrument_hint_counts": count_by(priority.head(config.top_n), "instrument_hint"),
         "top_instrument_type_counts": count_by_if_present(
             priority.head(config.top_n), "instrument_type"
+        ),
+        "top_research_route_counts": count_by_if_present(
+            priority.head(config.top_n), "research_route"
         ),
         "sort_order": [
             "is_probable_operating descending",
@@ -203,14 +209,16 @@ def write_markdown(path: Path, top_rows: pl.DataFrame, summary: dict[str, Any]) 
     lines.extend(f"- `{item}`" for item in summary["sort_order"])
     lines.extend(["", "## Top Review Targets", ""])
     type_column = "instrument_type" if "instrument_type" in top_rows.columns else "instrument_hint"
-    lines.append("| Rank | Symbol | Era | Class | Hint | Type | Trades | First | Last |")
-    lines.append("|---:|---|---|---|---|---|---:|---|---|")
+    route_column = "research_route" if "research_route" in top_rows.columns else "instrument_hint"
+    lines.append("| Rank | Symbol | Era | Class | Hint | Type | Route | Trades | First | Last |")
+    lines.append("|---:|---|---|---|---|---|---|---:|---|---|")
     for row in top_rows.to_dicts():
         row["display_instrument_type"] = row.get(type_column, "")
+        row["display_research_route"] = row.get(route_column, "")
         lines.append(
             "| {priority_rank} | {symbol} | {symbol_era_id} | {source_classification} | "
-            "{instrument_hint} | {display_instrument_type} | {trade_rows} | {first_day} | "
-            "{last_day} |".format(**row)
+            "{instrument_hint} | {display_instrument_type} | {display_research_route} | "
+            "{trade_rows} | {first_day} | {last_day} |".format(**row)
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

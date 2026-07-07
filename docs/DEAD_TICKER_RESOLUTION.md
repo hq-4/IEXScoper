@@ -43,6 +43,21 @@ patterns before downstream SEC research chooses an evidence path.
 These labels are heuristics from ticker syntax, IEX product hints, and issuer-name hints.
 They do not prove issuer identity or final disposition.
 
+The review queue and manual template also carry routing fields:
+
+- `research_route`
+- `recommended_evidence`
+- `routing_reason`
+
+Current route meanings:
+
+- `operating_company_sec_event`: use operating-company SEC/event evidence such as 8-K, merger proxy/S-4, 25-NSE, 15-12B, or issuer/acquirer release.
+- `fund_or_trust_closure`: use fund liquidation, closure, merger, trust termination, or sponsor notice evidence.
+- `preferred_redemption_or_delisting`: use preferred redemption, exchange, delisting, prospectus, or issuer notice evidence.
+- `warrant_unit_right_security_action`: use warrant/unit/right redemption, separation, expiration, or SPAC action evidence.
+- `share_class_corporate_action`: use share-class rename, ADR/common share conversion, merger, or delisting evidence.
+- `manual_syntax_review`: inspect the symbol syntax before choosing a research path.
+
 ## EDGAR Lookup Lead
 
 Use EDGAR as a lead source, not as final proof. The SEC ticker directory is current-biased, so it can miss dead tickers or point at a reused ticker.

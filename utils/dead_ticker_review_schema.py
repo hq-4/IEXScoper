@@ -43,5 +43,8 @@ REVIEW_COLUMNS = [
     "instrument_hint",
     "instrument_type",
     "instrument_reason",
+    "research_route",
+    "recommended_evidence",
+    "routing_reason",
     "review_priority",
 ]
