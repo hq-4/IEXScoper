@@ -41,10 +41,15 @@ def test_build_dead_ticker_review_queue_classifies_evidence_and_hints(tmp_path: 
     assert rows["DEAD#001"]["historical_event_date"] == "2020-01-02"
     assert rows["DEAD#001"]["historical_successor"] == "Buyer Inc."
     assert rows["AACIU#001"]["instrument_hint"] == "probable_unit"
+    assert rows["AACIU#001"]["instrument_type"] == "probable_unit"
     assert rows["AACIW#001"]["instrument_hint"] == "probable_warrant"
+    assert rows["AACIW#001"]["instrument_type"] == "probable_warrant"
     assert rows["CUR#001"]["identity_evidence_status"] == "current_sec_and_iex_evidence"
     assert result["summary"]["review_era_count"] == 4
+    assert "instrument_type_counts" in result["summary"]
     assert (output_root / "dead_ticker_review_report.md").exists()
+    assert (output_root / "instrument_heuristic_audit.csv").exists()
+    assert (output_root / "instrument_heuristic_audit_summary.json").exists()
 
 
 def _write_sec(path: Path) -> None:

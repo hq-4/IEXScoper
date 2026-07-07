@@ -41,5 +41,7 @@ REVIEW_COLUMNS = [
     "source_note",
     "identity_evidence_status",
     "instrument_hint",
+    "instrument_type",
+    "instrument_reason",
     "review_priority",
 ]

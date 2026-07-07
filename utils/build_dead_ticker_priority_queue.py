@@ -20,6 +20,7 @@ from utils.dead_ticker_review_schema import DEFAULT_OUTPUT_ROOT
 DEFAULT_REVIEW_QUEUE_PATH = DEFAULT_OUTPUT_ROOT / "dead_ticker_review_queue.parquet"
 UNRESOLVED_STATUS = "historical_identity_unresolved"
 OPERATING_HINT = "probable_operating_or_other"
+OPERATING_TYPE = "probable_operating_company"
 DELISTED_CLASS = "delisted_or_acquired_candidate"
 DEFAULT_TOP_N = 100
 
@@ -91,10 +92,15 @@ def load_review_queue(path: Path) -> pl.DataFrame:
 
 
 def prioritize_unresolved(frame: pl.DataFrame) -> pl.DataFrame:
+    operating_expr = (
+        pl.col("instrument_type") == OPERATING_TYPE
+        if "instrument_type" in frame.columns
+        else pl.col("instrument_hint") == OPERATING_HINT
+    )
     return (
         frame.filter(pl.col("identity_evidence_status") == UNRESOLVED_STATUS)
         .with_columns(
-            (pl.col("instrument_hint") == OPERATING_HINT).alias("is_probable_operating"),
+            operating_expr.alias("is_probable_operating"),
             (pl.col("source_classification") == DELISTED_CLASS).alias("is_delisted_candidate"),
         )
         .with_row_index("unresolved_rank", offset=1)
@@ -114,6 +120,8 @@ def priority_columns(source_columns: list[str]) -> list[str]:
         "symbol_era_id",
         "source_classification",
         "instrument_hint",
+        "instrument_type",
+        "instrument_reason",
         "is_probable_operating",
         "is_delisted_candidate",
         "first_day",
@@ -144,6 +152,9 @@ def build_summary(config: PriorityQueueConfig, priority: pl.DataFrame) -> dict[s
         "delisted_candidate_count": int(priority["is_delisted_candidate"].sum()),
         "top_classification_counts": count_by(priority.head(config.top_n), "source_classification"),
         "top_instrument_hint_counts": count_by(priority.head(config.top_n), "instrument_hint"),
+        "top_instrument_type_counts": count_by_if_present(
+            priority.head(config.top_n), "instrument_type"
+        ),
         "sort_order": [
             "is_probable_operating descending",
             "is_delisted_candidate descending",
@@ -157,6 +168,12 @@ def count_by(frame: pl.DataFrame, column: str) -> dict[str, int]:
     return {
         str(row[column]): row["len"] for row in frame.group_by(column).len().sort(column).to_dicts()
     }
+
+
+def count_by_if_present(frame: pl.DataFrame, column: str) -> dict[str, int]:
+    if column not in frame.columns:
+        return {}
+    return count_by(frame, column)
 
 
 def write_outputs(root: Path, priority: pl.DataFrame, summary: dict[str, Any], top_n: int) -> None:
@@ -185,12 +202,15 @@ def write_markdown(path: Path, top_rows: pl.DataFrame, summary: dict[str, Any]) 
     ]
     lines.extend(f"- `{item}`" for item in summary["sort_order"])
     lines.extend(["", "## Top Review Targets", ""])
-    lines.append("| Rank | Symbol | Era | Class | Hint | Trades | First | Last |")
-    lines.append("|---:|---|---|---|---|---:|---|---|")
+    type_column = "instrument_type" if "instrument_type" in top_rows.columns else "instrument_hint"
+    lines.append("| Rank | Symbol | Era | Class | Hint | Type | Trades | First | Last |")
+    lines.append("|---:|---|---|---|---|---|---:|---|---|")
     for row in top_rows.to_dicts():
+        row["display_instrument_type"] = row.get(type_column, "")
         lines.append(
             "| {priority_rank} | {symbol} | {symbol_era_id} | {source_classification} | "
-            "{instrument_hint} | {trade_rows} | {first_day} | {last_day} |".format(**row)
+            "{instrument_hint} | {display_instrument_type} | {trade_rows} | {first_day} | "
+            "{last_day} |".format(**row)
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

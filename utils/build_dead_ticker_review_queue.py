@@ -23,6 +23,11 @@ from utils.dead_ticker_review_schema import (
     DEFAULT_SEC_ERAS_PATH,
     REVIEW_COLUMNS,
 )
+from utils.instrument_classifier import (
+    instrument_hint_expr,
+    instrument_reason_expr,
+    instrument_type_expr,
+)
 
 
 @dataclass(frozen=True)
@@ -123,6 +128,8 @@ def build_queue(frame: pl.DataFrame) -> pl.DataFrame:
         frame.filter(pl.col("source_classification").is_in(DEAD_REVIEW_CLASSES))
         .with_columns(
             instrument_hint_expr().alias("instrument_hint"),
+            instrument_type_expr().alias("instrument_type"),
+            instrument_reason_expr().alias("instrument_reason"),
             evidence_status_expr().alias("identity_evidence_status"),
         )
         .with_columns(apply_manual_evidence_expr().alias("identity_evidence_status"))
@@ -136,28 +143,6 @@ def require_columns(frame: pl.DataFrame, columns: list[str]) -> None:
     missing = [column for column in columns if column not in frame.columns]
     if missing:
         raise ValueError(f"review input missing required columns: {missing}")
-
-
-def instrument_hint_expr() -> pl.Expr:
-    symbol = pl.col("symbol")
-    symbol_len = symbol.str.len_chars()
-    return (
-        pl.when(
-            symbol.str.ends_with("WS")
-            | symbol.str.ends_with("WT")
-            | ((symbol_len >= 5) & symbol.str.ends_with("W"))
-        )
-        .then(pl.lit("probable_warrant"))
-        .when((symbol_len >= 5) & symbol.str.ends_with("U"))
-        .then(pl.lit("probable_unit"))
-        .when(symbol.str.ends_with("RT"))
-        .then(pl.lit("probable_right"))
-        .when(symbol.str.contains("PRA") | symbol.str.contains("PRB") | symbol.str.contains("PRC"))
-        .then(pl.lit("possible_preferred"))
-        .when(pl.col("iex_product_hint").is_in(["etf", "etn", "fund_or_trust"]))
-        .then(pl.lit("probable_fund_or_trust"))
-        .otherwise(pl.lit("probable_operating_or_other"))
-    )
 
 
 def evidence_status_expr() -> pl.Expr:
@@ -208,11 +193,14 @@ def build_summary(config: DeadTickerReviewConfig, queue: pl.DataFrame) -> dict[s
         "unique_symbol_count": queue.select("symbol").n_unique(),
         "evidence_status_counts": count_by(queue, "identity_evidence_status"),
         "instrument_hint_counts": count_by(queue, "instrument_hint"),
+        "instrument_type_counts": count_by(queue, "instrument_type"),
+        "instrument_reason_counts": count_by(queue, "instrument_reason"),
         "review_priority_counts": count_by(queue, "review_priority"),
         "classification_counts": count_by(queue, "source_classification"),
         "limitations": [
             "This queue classifies ticker-era review targets; it does not prove issuer identity.",
             "Current SEC/IEX evidence can be stale or reused for historical eras.",
+            "Instrument types are first-pass heuristics from ticker syntax and IEX hints only.",
             "Rows with historical_identity_unresolved need historical listing, filings, or manual review.",
         ],
     }
@@ -235,6 +223,7 @@ def count_by(frame: pl.DataFrame, column: str) -> dict[str, int]:
 def write_outputs(root: Path, summary: dict[str, Any], queue: pl.DataFrame) -> None:
     queue.write_parquet(root / "dead_ticker_review_queue.parquet", compression="zstd")
     queue.write_csv(root / "dead_ticker_review_queue.csv")
+    write_instrument_audit(root, queue)
     (root / "dead_ticker_review_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -260,18 +249,72 @@ def write_markdown(path: Path, summary: dict[str, Any], queue: pl.DataFrame) -> 
     lines.extend(
         f"- `{key}`: `{value}`" for key, value in summary["instrument_hint_counts"].items()
     )
+    lines.extend(["", "## Instrument Types", ""])
     lines.extend(
-        ["", "## Top Priority Sample", "", "| Symbol | Era | Class | Evidence | Hint | Trades |"]
+        f"- `{key}`: `{value}`" for key, value in summary["instrument_type_counts"].items()
     )
-    lines.append("|---|---|---|---|---|---:|")
+    lines.extend(
+        [
+            "",
+            "## Top Priority Sample",
+            "",
+            "| Symbol | Era | Class | Evidence | Hint | Type | Trades |",
+        ]
+    )
+    lines.append("|---|---|---|---|---|---|---:|")
     for row in queue.head(25).to_dicts():
         lines.append(
             "| {symbol} | {symbol_era_id} | {source_classification} | "
-            "{identity_evidence_status} | {instrument_hint} | {trade_rows} |".format(**row)
+            "{identity_evidence_status} | {instrument_hint} | {instrument_type} | "
+            "{trade_rows} |".format(**row)
         )
     lines.extend(["", "## Caveats", ""])
     lines.extend(f"- {item}" for item in summary["limitations"])
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_instrument_audit(root: Path, queue: pl.DataFrame) -> None:
+    audit = queue.select(
+        [
+            "symbol",
+            "symbol_era_id",
+            "instrument_hint",
+            "instrument_type",
+            "instrument_reason",
+            "trade_rows",
+            "source_classification",
+            "identity_evidence_status",
+            "iex_product_hint",
+            "iex_latest_issuer",
+        ]
+    ).sort(["instrument_type", "trade_rows", "symbol"], descending=[False, True, False])
+    audit.write_csv(root / "instrument_heuristic_audit.csv")
+    summary = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "method": "first-pass local ticker-era instrument heuristic audit",
+        "row_count": audit.height,
+        "instrument_hint_counts": count_by(audit, "instrument_hint"),
+        "instrument_type_counts": count_by(audit, "instrument_type"),
+        "instrument_reason_counts": count_by(audit, "instrument_reason"),
+        "top_examples_by_type": top_examples_by_type(audit),
+        "limitations": [
+            "This audit uses local ticker syntax and IEX hints only.",
+            "Venue and feed symbol syntax differs; manual evidence is still required.",
+            "The audit does not change downstream SEC resolver behavior.",
+        ],
+    }
+    (root / "instrument_heuristic_audit_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def top_examples_by_type(audit: pl.DataFrame, limit: int = 10) -> dict[str, list[dict[str, Any]]]:
+    examples: dict[str, list[dict[str, Any]]] = {}
+    for instrument_type in sorted(audit["instrument_type"].unique().to_list()):
+        examples[str(instrument_type)] = (
+            audit.filter(pl.col("instrument_type") == instrument_type).head(limit).to_dicts()
+        )
+    return examples
 
 
 if __name__ == "__main__":

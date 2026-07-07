@@ -28,6 +28,21 @@ This writes:
 
 The template carries rank, symbol-era metadata, current SEC/IEX hints, and blank proposed override fields.
 
+## Instrument Heuristic Audit
+
+The dead-ticker review queue also writes a local-only first-pass instrument audit:
+
+- `reports/dead-ticker-review/instrument_heuristic_audit.csv`
+- `reports/dead-ticker-review/instrument_heuristic_audit_summary.json`
+
+The audit keeps the backward-compatible `instrument_hint` column and adds `instrument_type`
+plus `instrument_reason`. The richer type separates likely preferreds, warrants, units,
+rights, dot-suffix share classes, funds/trusts, operating companies, and ambiguous
+patterns before downstream SEC research chooses an evidence path.
+
+These labels are heuristics from ticker syntax, IEX product hints, and issuer-name hints.
+They do not prove issuer identity or final disposition.
+
 ## EDGAR Lookup Lead
 
 Use EDGAR as a lead source, not as final proof. The SEC ticker directory is current-biased, so it can miss dead tickers or point at a reused ticker.
