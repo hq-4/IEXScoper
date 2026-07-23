@@ -1,5 +1,18 @@
 # Logging
 
+## Resolution V2
+
+`run_dead_ticker_resolution_program.py` configures exactly two root handlers at startup:
+`pretty_handler` is the Rich console sink and `jsonl_handler` is a rotating 10 MB × 5 JSONL
+sink. Startup aborts on any other handler set. JSONL preserves `ts`, `level`, `name`, `subsys`,
+`guild_id`, `user_id`, `msg_id`, `event`, `detail`, and `message`; oversized values are bounded.
+
+Resolution events cover source/resolver start, batch and request counts, cache/resume behavior,
+missing requirements, circuit/budget stopping, canonical imports, and final reconciliation.
+The durable evidence registry—not log text—is the authority for cumulative request/cache
+metrics and completed evidence fingerprints. Logs never include SEC filing bodies, credentials,
+or contact-header contents. [REH][SFT][RM]
+
 - The benchmark harness writes its primary machine-readable output to `utils/benchmark_results/iex_parser_benchmark_results.json`.
 - Per-run `/usr/bin/time -v` stderr is preserved beside temp artifacts under the selected output root.
 - The benchmark does not mutate the immutable reference Parquet files.
