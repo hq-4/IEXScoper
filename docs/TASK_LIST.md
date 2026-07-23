@@ -1,5 +1,25 @@
 # Task List
 
+- Cohort volume-concentration analysis (confirmed with user): the `26,184`-era cohort holds
+  `1,034,586,884` trade rows, but the top 100 eras cover 27%, top 500 cover 62%, and top
+  `2,000` cover 92.7%. Restricting to the `25,364` eras without verified identity
+  (`700,862,222` trade rows), 50% of remaining volume sits in the top 252 eras, 80% at 867,
+  95% at `2,211`, and 99% at `4,484`. The tail is extreme: 54% of unknown eras have ≤100
+  lifetime trades (0.027% of volume) and 73% have ≤1,000 (0.295%). [PA][KBT]
+- Instrument mix of unknown eras: probable operating companies are 64% of eras but 95.4% of
+  volume; preferreds/warrants/units/rights together are ~27% of eras yet under 1% of volume;
+  funds/trusts are 6.8% of eras and 3.2% of volume. Volume-weighted resolution is therefore
+  almost entirely an operating-company problem; derivative/fund evidence paths serve the
+  long tail only. [KBT][CA]
+- Top-of-cohort manual classification review (agreed with user): at least 8 of the top 40
+  unknown eras are symbol renames whose era boundaries align to the day — FB→META
+  (2022-06-08/09), SQ→XYZ (2025-01-17), GOLD→B (2025-05-08), SWN→EXE (2024-10-01),
+  GPS→GAP (2024-08-21), FISV→FI (2023-06-06), NYCB→FLG (2024-10-25), COG→CTRA
+  (2021-10-04). VXX is misclassified as `probable_operating_company` (it is an ETN).
+  Agreed next build: a symbol-change candidate lane pairing an era `last_day` with another
+  era `first_day` within a few trading days, emitting review-only candidates; and a manual
+  review sprint over the top 200 unknown eras by volume. [KBT][CA][CDiP]
+
 - Evidence-delta ticker resolution V2 implemented and applied for the stable `26,184`-era
   cohort. The live SEC dry run using the approved User-Agent staged and applied 32 verified
   facts before the SEC EFTS transport circuit breaker stopped identity recovery: canonical
