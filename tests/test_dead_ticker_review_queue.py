@@ -14,10 +14,12 @@ def test_build_dead_ticker_review_queue_classifies_evidence_and_hints(tmp_path: 
     sec_path = tmp_path / "sec.parquet"
     iex_path = tmp_path / "iex.parquet"
     overrides_path = tmp_path / "overrides.csv"
+    ledger_path = tmp_path / "ledger.csv"
     output_root = tmp_path / "out"
     _write_sec(sec_path)
     _write_iex(iex_path)
     _write_overrides(overrides_path)
+    _write_ledger(ledger_path)
 
     result = build_dead_ticker_review_queue(
         DeadTickerReviewConfig(
@@ -25,6 +27,7 @@ def test_build_dead_ticker_review_queue_classifies_evidence_and_hints(tmp_path: 
             iex_eras_path=iex_path,
             manual_overrides_path=overrides_path,
             output_root=output_root,
+            resolution_ledger_path=ledger_path,
         )
     )
 
@@ -41,6 +44,8 @@ def test_build_dead_ticker_review_queue_classifies_evidence_and_hints(tmp_path: 
     assert rows["DEAD#001"]["historical_event_date"] == "2020-01-02"
     assert rows["DEAD#001"]["historical_successor"] == "Buyer Inc."
     assert rows["AACIU#001"]["instrument_hint"] == "probable_unit"
+    assert rows["AACIU#001"]["resolution_workflow_status"] == "ledger_terminal_disposition"
+    assert rows["AACIU#001"]["resolution_disposition"] == "terminal_parent_security_linked"
     assert rows["AACIU#001"]["instrument_type"] == "probable_unit"
     assert rows["AACIU#001"]["research_route"] == "warrant_unit_right_security_action"
     assert rows["AACIW#001"]["instrument_hint"] == "probable_warrant"
@@ -118,3 +123,25 @@ def _write_iex(path: Path) -> None:
             "iex_seen_in_latest": [False, False, False, True, True],
         }
     ).write_parquet(path)
+
+
+def _write_ledger(path: Path) -> None:
+    pl.DataFrame(
+        {
+            "symbol": ["AACIU"],
+            "symbol_era_id": ["AACIU#001"],
+            "resolution_status": ["terminal_disposition"],
+            "resolution_disposition": ["terminal_parent_security_linked"],
+            "evidence_tier": ["local_parent_root_evidence"],
+            "research_route": ["warrant_unit_right_security_action"],
+            "instrument_type": ["probable_unit"],
+            "historical_issuer_name": [None],
+            "event_type": ["warrant_unit_right_terminal_action"],
+            "event_date": ["20180103"],
+            "successor": [None],
+            "primary_source_url": ["local:test"],
+            "secondary_source_url": [None],
+            "source_note": ["Unit test terminal disposition."],
+            "resolver": ["unit_test"],
+        }
+    ).write_csv(path)

@@ -20,6 +20,7 @@ from utils.dead_ticker_review_schema import (
     DEFAULT_IEX_ERAS_PATH,
     DEFAULT_MANUAL_OVERRIDES_PATH,
     DEFAULT_OUTPUT_ROOT,
+    DEFAULT_RESOLUTION_LEDGER_PATH,
     DEFAULT_SEC_ERAS_PATH,
     REVIEW_COLUMNS,
 )
@@ -33,6 +34,11 @@ from utils.instrument_research_routing import (
     research_route_expr,
     routing_reason_expr,
 )
+from utils.resolution_ledger import (
+    ledger_select_for_join,
+    load_resolution_ledger,
+    resolution_workflow_status_expr,
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,7 @@ class DeadTickerReviewConfig:
     iex_eras_path: Path
     manual_overrides_path: Path
     output_root: Path
+    resolution_ledger_path: Path = DEFAULT_RESOLUTION_LEDGER_PATH
 
 
 def main() -> int:
@@ -48,6 +55,7 @@ def main() -> int:
     parser.add_argument("--sec-eras-path", default=str(DEFAULT_SEC_ERAS_PATH))
     parser.add_argument("--iex-eras-path", default=str(DEFAULT_IEX_ERAS_PATH))
     parser.add_argument("--manual-overrides-path", default=str(DEFAULT_MANUAL_OVERRIDES_PATH))
+    parser.add_argument("--resolution-ledger-path", default=str(DEFAULT_RESOLUTION_LEDGER_PATH))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     args = parser.parse_args()
     config = DeadTickerReviewConfig(
@@ -55,6 +63,7 @@ def main() -> int:
         iex_eras_path=Path(args.iex_eras_path),
         manual_overrides_path=Path(args.manual_overrides_path),
         output_root=Path(args.output_root),
+        resolution_ledger_path=Path(args.resolution_ledger_path),
     )
     setup_logging(str(config.output_root / "dead_ticker_review.jsonl"))
     result = build_dead_ticker_review_queue(config)
@@ -77,10 +86,11 @@ def build_dead_ticker_review_queue(config: DeadTickerReviewConfig) -> dict[str, 
         "iex_seen_in_latest",
     )
     overrides = load_manual_overrides(config.manual_overrides_path)
+    ledger = ledger_select_for_join(load_resolution_ledger(config.resolution_ledger_path))
     queue = build_queue(
-        sec.join(iex, on="symbol_era_id", how="left").join(
-            overrides, on="symbol_era_id", how="left"
-        )
+        sec.join(iex, on="symbol_era_id", how="left")
+        .join(overrides, on="symbol_era_id", how="left")
+        .join(ledger, on="symbol_era_id", how="left")
     )
     summary = build_summary(config, queue)
     write_outputs(config.output_root, summary, queue)
@@ -143,6 +153,7 @@ def build_queue(frame: pl.DataFrame) -> pl.DataFrame:
             routing_reason_expr().alias("routing_reason"),
         )
         .with_columns(apply_manual_evidence_expr().alias("identity_evidence_status"))
+        .with_columns(resolution_workflow_status_expr().alias("resolution_workflow_status"))
         .with_columns(review_priority_expr().alias("review_priority"))
         .select(REVIEW_COLUMNS)
         .sort(["review_priority", "trade_rows", "symbol"], descending=[False, True, False])
@@ -206,6 +217,8 @@ def build_summary(config: DeadTickerReviewConfig, queue: pl.DataFrame) -> dict[s
         "instrument_type_counts": count_by(queue, "instrument_type"),
         "instrument_reason_counts": count_by(queue, "instrument_reason"),
         "research_route_counts": count_by(queue, "research_route"),
+        "resolution_workflow_status_counts": count_by(queue, "resolution_workflow_status"),
+        "resolution_status_counts": count_by(queue, "resolution_status"),
         "review_priority_counts": count_by(queue, "review_priority"),
         "classification_counts": count_by(queue, "source_classification"),
         "limitations": [
@@ -213,6 +226,7 @@ def build_summary(config: DeadTickerReviewConfig, queue: pl.DataFrame) -> dict[s
             "Current SEC/IEX evidence can be stale or reused for historical eras.",
             "Instrument types are first-pass heuristics from ticker syntax and IEX hints only.",
             "Rows with historical_identity_unresolved need historical listing, filings, or manual review.",
+            "Resolution ledger dispositions are workflow state and may not assert issuer identity.",
         ],
     }
 
@@ -266,19 +280,25 @@ def write_markdown(path: Path, summary: dict[str, Any], queue: pl.DataFrame) -> 
     )
     lines.extend(["", "## Research Routes", ""])
     lines.extend(f"- `{key}`: `{value}`" for key, value in summary["research_route_counts"].items())
+    lines.extend(["", "## Resolution Workflow", ""])
+    lines.extend(
+        f"- `{key}`: `{value}`"
+        for key, value in summary["resolution_workflow_status_counts"].items()
+    )
     lines.extend(
         [
             "",
             "## Top Priority Sample",
             "",
-            "| Symbol | Era | Class | Evidence | Hint | Type | Route | Trades |",
+            "| Symbol | Era | Class | Evidence | Workflow | Hint | Type | Route | Trades |",
         ]
     )
-    lines.append("|---|---|---|---|---|---|---|---:|")
+    lines.append("|---|---|---|---|---|---|---|---|---:|")
     for row in queue.head(25).to_dicts():
         lines.append(
             "| {symbol} | {symbol_era_id} | {source_classification} | "
-            "{identity_evidence_status} | {instrument_hint} | {instrument_type} | "
+            "{identity_evidence_status} | {resolution_workflow_status} | "
+            "{instrument_hint} | {instrument_type} | "
             "{research_route} | {trade_rows} |".format(**row)
         )
     lines.extend(["", "## Caveats", ""])
@@ -300,6 +320,9 @@ def write_instrument_audit(root: Path, queue: pl.DataFrame) -> None:
             "trade_rows",
             "source_classification",
             "identity_evidence_status",
+            "resolution_workflow_status",
+            "resolution_status",
+            "resolution_disposition",
             "iex_product_hint",
             "iex_latest_issuer",
         ]

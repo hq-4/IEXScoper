@@ -16,6 +16,7 @@ if __package__ in {None, ""}:
 
 from src.framework.logging import get_logger, setup_logging
 from utils.dead_ticker_review_schema import DEFAULT_OUTPUT_ROOT
+from utils.resolution_ledger import WORKFLOW_NEEDS_RESOLUTION
 
 DEFAULT_REVIEW_QUEUE_PATH = DEFAULT_OUTPUT_ROOT / "dead_ticker_review_queue.parquet"
 UNRESOLVED_STATUS = "historical_identity_unresolved"
@@ -97,8 +98,13 @@ def prioritize_unresolved(frame: pl.DataFrame) -> pl.DataFrame:
         if "instrument_type" in frame.columns
         else pl.col("instrument_hint") == OPERATING_HINT
     )
+    workflow_expr = (
+        pl.col("resolution_workflow_status") == WORKFLOW_NEEDS_RESOLUTION
+        if "resolution_workflow_status" in frame.columns
+        else pl.lit(True)
+    )
     return (
-        frame.filter(pl.col("identity_evidence_status") == UNRESOLVED_STATUS)
+        frame.filter((pl.col("identity_evidence_status") == UNRESOLVED_STATUS) & workflow_expr)
         .with_columns(
             operating_expr.alias("is_probable_operating"),
             (pl.col("source_classification") == DELISTED_CLASS).alias("is_delisted_candidate"),
@@ -139,6 +145,10 @@ def priority_columns(source_columns: list[str]) -> list[str]:
         "iex_latest_issuer",
         "iex_product_hint",
         "identity_evidence_status",
+        "resolution_status",
+        "resolution_disposition",
+        "evidence_tier",
+        "resolution_workflow_status",
     ]
     generated = {"priority_rank", "is_probable_operating", "is_delisted_candidate"}
     return [column for column in preferred if column in source_columns or column in generated]
@@ -160,6 +170,9 @@ def build_summary(config: PriorityQueueConfig, priority: pl.DataFrame) -> dict[s
         ),
         "top_research_route_counts": count_by_if_present(
             priority.head(config.top_n), "research_route"
+        ),
+        "top_resolution_workflow_status_counts": count_by_if_present(
+            priority.head(config.top_n), "resolution_workflow_status"
         ),
         "sort_order": [
             "is_probable_operating descending",

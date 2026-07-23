@@ -5,6 +5,7 @@ from pathlib import Path
 DEFAULT_SEC_ERAS_PATH = Path("reports/sec-ticker-cik/symbol_eras_sec_enriched.parquet")
 DEFAULT_IEX_ERAS_PATH = Path("reports/iex-entity-enrichment/symbol_eras_iex_enriched.parquet")
 DEFAULT_MANUAL_OVERRIDES_PATH = Path("data/manual_overrides/historical_ticker_identities.csv")
+DEFAULT_RESOLUTION_LEDGER_PATH = Path("data/manual_overrides/ticker_era_resolution_ledger.csv")
 DEFAULT_OUTPUT_ROOT = Path("reports/dead-ticker-review")
 
 DEAD_REVIEW_CLASSES = {
@@ -39,6 +40,20 @@ REVIEW_COLUMNS = [
     "historical_successor",
     "source_url",
     "source_note",
+    "resolution_status",
+    "resolution_disposition",
+    "evidence_tier",
+    "ledger_research_route",
+    "ledger_instrument_type",
+    "ledger_historical_issuer_name",
+    "ledger_event_type",
+    "ledger_event_date",
+    "ledger_successor",
+    "ledger_primary_source_url",
+    "ledger_secondary_source_url",
+    "ledger_source_note",
+    "resolver",
+    "resolution_workflow_status",
     "identity_evidence_status",
     "instrument_hint",
     "instrument_type",
