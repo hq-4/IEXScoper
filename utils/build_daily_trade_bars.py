@@ -16,6 +16,7 @@ if __package__ in {None, ""}:
 
 from src.framework.logging import get_logger, setup_logging
 from utils.iextools_backfill_core import existing_tops_days, tops_output_paths
+from utils.session_validity import load_quarantined_days
 
 DEFAULT_PARQUET_ROOT = Path("/media/tn/pq")
 DEFAULT_OUTPUT_ROOT = Path("/media/tn/pq/derived/daily-trade-bars")
@@ -52,6 +53,7 @@ class TradeBarConfig:
     compression: str
     limit_days: int | None
     replace: bool
+    quarantine_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,10 @@ def main() -> int:
     parser.add_argument("--compression", default="zstd", choices=["zstd", "snappy"])
     parser.add_argument("--limit-days", type=int)
     parser.add_argument("--replace", action="store_true")
+    parser.add_argument(
+        "--quarantine-path",
+        help="session-validity manifest JSON; quarantined days are skipped",
+    )
     args = parser.parse_args()
 
     config = TradeBarConfig(
@@ -88,6 +94,7 @@ def main() -> int:
         compression=args.compression,
         limit_days=args.limit_days,
         replace=args.replace,
+        quarantine_path=Path(args.quarantine_path) if args.quarantine_path else None,
     )
     setup_logging(str(config.output_root / "daily_trade_bars_audit.jsonl"))
     result = build_daily_trade_bars(config)
@@ -109,10 +116,11 @@ def build_daily_trade_bars(config: TradeBarConfig) -> dict[str, Any]:
 
 
 def discover_days(config: TradeBarConfig) -> list[str]:
+    quarantined = load_quarantined_days(config.quarantine_path) if config.quarantine_path else set()
     days = [
         day
         for day in sorted(existing_tops_days(config.parquet_root))
-        if config.start_day <= day <= config.end_day
+        if config.start_day <= day <= config.end_day and day not in quarantined
     ]
     if config.limit_days is not None:
         return days[: config.limit_days]

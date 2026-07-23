@@ -17,6 +17,7 @@ if __package__ in {None, ""}:
 
 from src.framework.logging import get_logger, setup_logging
 from utils.iextools_backfill_core import existing_tops_days, tops_output_paths
+from utils.session_validity import load_quarantined_days
 from utils.symbol_eras import EraBuildConfig, build_symbol_eras, write_symbol_era_outputs
 
 DEFAULT_OUTPUT_ROOT = Path("reports/symbol-stability")
@@ -60,6 +61,7 @@ class AuditConfig:
     min_coverage: float
     major_gap_days: int
     limit_days: int | None
+    quarantine_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,10 @@ def main() -> int:
     parser.add_argument("--min-coverage", type=float, default=DEFAULT_MIN_COVERAGE)
     parser.add_argument("--major-gap-days", type=int, default=DEFAULT_MAJOR_GAP_DAYS)
     parser.add_argument("--limit-days", type=int)
+    parser.add_argument(
+        "--quarantine-path",
+        help="session-validity manifest JSON; quarantined days are excluded from era construction",
+    )
     args = parser.parse_args()
 
     config = AuditConfig(
@@ -88,6 +94,7 @@ def main() -> int:
         min_coverage=args.min_coverage,
         major_gap_days=args.major_gap_days,
         limit_days=args.limit_days,
+        quarantine_path=Path(args.quarantine_path) if args.quarantine_path else None,
     )
     setup_logging(str(config.output_root / "symbol_stability_audit.jsonl"))
     logger = get_logger(__name__)
@@ -120,18 +127,23 @@ def build_symbol_stability_audit(config: AuditConfig) -> dict[str, Any]:
             min_coverage=config.min_coverage,
         ),
     )
+    quarantined = (
+        sorted(load_quarantined_days(config.quarantine_path)) if config.quarantine_path else []
+    )
     summary = build_summary(
-        config, days, collection.scanned_days, collection.skipped_days, rows, era_rows
+        config, days, collection.scanned_days, collection.skipped_days, rows, era_rows,
+        quarantined_days=quarantined,
     )
     write_outputs(config.output_root, summary, rows, era_rows)
     return {"summary": summary, "rows": rows, "era_rows": era_rows}
 
 
 def discover_completed_days(config: AuditConfig) -> list[str]:
+    quarantined = load_quarantined_days(config.quarantine_path) if config.quarantine_path else set()
     days = [
         day
         for day in sorted(existing_tops_days(config.parquet_root))
-        if config.start_day <= day <= config.end_day
+        if config.start_day <= day <= config.end_day and day not in quarantined
     ]
     if config.limit_days is not None:
         return days[: config.limit_days]
@@ -322,6 +334,7 @@ def build_summary(
     skipped_days: list[dict[str, str]],
     rows: list[dict[str, Any]],
     era_rows: list[dict[str, Any]],
+    quarantined_days: list[str] | None = None,
 ) -> dict[str, Any]:
     counts: dict[str, int] = {}
     for row in rows:
@@ -331,6 +344,9 @@ def build_summary(
         "parquet_root": str(config.parquet_root),
         "start_day": config.start_day,
         "end_day": config.end_day,
+        "quarantine_path": str(config.quarantine_path) if config.quarantine_path else None,
+        "quarantined_day_count": len(quarantined_days or []),
+        "quarantined_days": quarantined_days or [],
         "completed_day_count": len(discovered_days),
         "scanned_day_count": len(scanned_days),
         "skipped_day_count": len(skipped_days),
@@ -403,6 +419,7 @@ def write_markdown(path: Path, summary: dict[str, Any], rows: list[dict[str, Any
         "",
         f"- Window: `{summary['start_day']}` to `{summary['end_day']}`",
         f"- Completed TOPS days scanned: `{summary['completed_day_count']}`",
+        f"- Quarantined session days excluded: `{summary['quarantined_day_count']}`",
         f"- Readable TOPS days used: `{summary['scanned_day_count']}`",
         f"- Skipped TOPS days: `{summary['skipped_day_count']}`",
         f"- Symbols observed: `{summary['symbol_count']}`",
