@@ -56,6 +56,9 @@ reports/
 # Legacy prototype (superseded by src/ + utils/; kept locally for reference)
 /old/
 
+# Raw daily IEX entity snapshots (re-downloadable inputs; ~100MB)
+/iex_entities/
+
 # Resolution V2 runtime cache and dry-run staging (canonical JSONL facts remain tracked)
 data/resolution/evidence_registry.sqlite*
 data/resolution/staged/
