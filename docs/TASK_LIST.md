@@ -1,5 +1,15 @@
 # Task List
 
+- Weekend test-session artifact discovered: 16 Saturday-dated TOPS captures (IEX weekend
+  sessions — e.g. `20170826` holds 8,445 OperationalHalts and only 165 TradeReports vs
+  657K trades on a normal Friday) shatter symbol continuity. 1,504 cohort eras (5.7%)
+  touch a weekend day (1,397 classified intermittent/reused), 786 eras exist entirely
+  inside weekend sessions, and 790 symbols carry both a weekend-end and weekend-start
+  era (clean splice candidates). Era-end clustering is therefore dominated by data seams
+  (2017 months: 1,000-1,800 ends/month) over real terminal events (late-2022/2023 M&A and
+  SPAC waves: 200-350 ends/month). Fix path: session-validity quarantine in ingest
+  validation, rebuild symbol eras without the 16 files, then reclassify. [REH][PA][KBT]
+
 - Cohort volume-concentration analysis (confirmed with user): the `26,184`-era cohort holds
   `1,034,586,884` trade rows, but the top 100 eras cover 27%, top 500 cover 62%, and top
   `2,000` cover 92.7%. Restricting to the `25,364` eras without verified identity
