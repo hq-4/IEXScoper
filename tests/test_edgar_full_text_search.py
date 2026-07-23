@@ -239,6 +239,7 @@ def _config(
     symbols: tuple[str, ...] = (),
     retries: int = 1,
     use_form_filter: bool = False,
+    strict_date_bounds: bool = False,
 ) -> EdgarFullTextConfig:
     return EdgarFullTextConfig(
         template_path=template_path,
@@ -255,6 +256,7 @@ def _config(
         timeout_seconds=2,
         sleep_seconds=0,
         retries=retries,
+        strict_date_bounds=strict_date_bounds,
     )
 
 

@@ -20,3 +20,4 @@ class EdgarFullTextConfig:
     timeout_seconds: float
     sleep_seconds: float
     retries: int
+    strict_date_bounds: bool = False

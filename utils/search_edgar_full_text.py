@@ -54,6 +54,7 @@ def main() -> int:
             timeout_seconds=args.timeout_seconds,
             sleep_seconds=args.sleep_seconds,
             retries=args.retries,
+            strict_date_bounds=args.strict_date_bounds,
         )
         result = search_edgar_full_text(config)
     except Exception as exc:
@@ -86,6 +87,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sleep-seconds", type=float, default=DEFAULT_SLEEP_SECONDS)
     parser.add_argument("--retries", type=int, default=DEFAULT_RETRIES)
     parser.add_argument("--append-log", action="store_true")
+    parser.add_argument(
+        "--strict-date-bounds",
+        action="store_true",
+        help="Keep era date bounds on every SEC search fallback variant.",
+    )
     return parser.parse_args()
 
 

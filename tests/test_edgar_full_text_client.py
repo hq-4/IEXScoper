@@ -52,6 +52,32 @@ def test_search_param_variants_are_deduplicated_without_date_bounds() -> None:
     ]
 
 
+def test_search_param_variants_can_keep_strict_date_bounds() -> None:
+    target = {
+        "symbol": "BIG",
+        "first_day": "20240101",
+        "last_day": "20260101",
+        "edgar_aliases": ("Big Lots",),
+    }
+
+    variants = search_param_variants(_config(use_form_filter=True, strict_dates=True), target, "merger")
+
+    labels = [label for label, params in variants]
+    assert labels == [
+        "primary",
+        "without_forms",
+        "alias_and_query",
+        "ticker_and_query",
+        "ticker_in_query",
+    ]
+    for _, params in variants:
+        assert params["startdt"] == "2024-01-01"
+        assert params["enddt"] == "2026-01-01"
+        assert params["dateRange"] == "custom"
+    assert variants[2][1]["q"] == "Big Lots AND merger"
+    assert "entityName" not in variants[2][1]
+
+
 def test_ticker_and_query_wraps_or_terms() -> None:
     assert ticker_and_query("SQ", "merger OR acquisition") == "SQ AND (merger OR acquisition)"
 
@@ -86,7 +112,9 @@ class FakeResponse:
             raise requests.HTTPError(f"{self.status_code} error")
 
 
-def _config(*, use_form_filter: bool, retries: int = 1) -> EdgarFullTextConfig:
+def _config(
+    *, use_form_filter: bool, retries: int = 1, strict_dates: bool = False
+) -> EdgarFullTextConfig:
     return EdgarFullTextConfig(
         template_path=Path("unused.csv"),
         alias_path=Path("unused_aliases.csv"),
@@ -102,4 +130,5 @@ def _config(*, use_form_filter: bool, retries: int = 1) -> EdgarFullTextConfig:
         timeout_seconds=2,
         sleep_seconds=0,
         retries=retries,
+        strict_date_bounds=strict_dates,
     )
