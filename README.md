@@ -1,15 +1,26 @@
 # IEXScoper
 
-IEXScoper is a Python project for ingestion and analytics on IEX tick data. The current active package builds per-second, per-symbol trade aggregates from parsed IEX trade CSV files and writes derived Parquet outputs.
+IEXScoper is a research platform for ingesting and analyzing IEX exchange historical market
+data. It downloads daily TOPS/DEEP PCAP captures from the IEX HIST API, parses them to Parquet,
+and builds derived research datasets on top — per-second per-symbol trade aggregates, daily
+OHLCV bars, and a symbol-era continuity panel. A second track resolves dead/delisted ticker
+identities using SEC EDGAR, OpenFIGI, and IEX entity snapshots.
 
 ## Features
 
-- **High-performance CSV scanning and aggregation** with Polars
-- **Per-second trade aggregates** by symbol
-- **VWAP, mean price, share volume, and trade count** outputs
-- **Session labels** for pre-market, regular, and after-hours trading
-- **Staging Parquet parts** partitioned by symbol
-- **Yearly master Parquet compaction**
+- **TOPS ingest pipeline**: download daily `.pcap.gz` HIST captures, parse with the bundled
+  C++-accelerated `iex-parser`, and write two-file TOPS Parquet (TradeReport + QuoteUpdate)
+- **Per-second per-symbol aggregation** with Polars: VWAP, mean price, share volume, and trade
+  count, labeled by session (pre-market / regular / after-hours)
+- **Staging → master compaction**: Parquet staging parts partitioned by symbol, compacted into
+  yearly master files (Zstandard compression)
+- **Ingest validation**: spec audits, throughput profiling, and scratch-disk budget guards for
+  large multi-year backfills
+- **Derived research datasets**: symbol eras, daily trade bars, stable-universe panel, and
+  stable returns tables
+- **Dead-ticker identity resolution**: evidence-based classification and enrichment via SEC
+  EDGAR (tickers, submissions, full-text search), OpenFIGI, and daily IEX entity snapshots,
+  with facts stored as JSONL + SQLite under `data/resolution/`
 - **uv-managed dependencies** through `pyproject.toml` and `uv.lock`
 
 ## Setup
@@ -18,89 +29,49 @@ IEXScoper is a Python project for ingestion and analytics on IEX tick data. The 
 
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv) package manager
-
-### Windows Compatibility
-
-This tool is fully compatible with Windows operating systems. When using Windows:
-
-1. **Path Separators**: The tool automatically handles path separators, so you can use either forward slashes (/) or backslashes (\\) in file paths.
-2. **Line Endings**: CSV files with either Unix (LF) or Windows (CRLF) line endings are supported.
-3. **File Permissions**: Ensure that the user running the tool has read permissions for input files and write permissions for the output directory.
-
-For best results on Windows:
-- Use the latest version of Python 3.8 or higher
-- Install dependencies using `uv` as described in the setup instructions
-- When specifying file paths, you can use either format:
-  - Forward slashes: `--file data/ticks.csv`
-  - Backslashes: `--file data\ticks.csv` (escape backslashes in some shells)
-  - Raw strings: `--file data\ticks.csv` (in PowerShell)
+- A C++ toolchain (to build the bundled `iex-parser` binary)
 
 ### Installation
 
-1. Clone or navigate to the project directory:
+1. Clone the repository:
    ```bash
    git clone <repository-url>
    cd IEXScoper
    ```
 
-2. Install dependencies using [uv](https://github.com/astral-sh/uv):
+2. Install dependencies:
    ```bash
    uv sync
    ```
 
-3. Configure input/output roots:
+3. Build the vendored PCAP parser (binary lands at
+   `iex-parser/iex_cppparser/bin/iex_parser.out`; see `iex-parser/README.md`):
+   ```bash
+   cd iex-parser/iex_cppparser && uv run python compile_cpp.py && cd ../..
+   ```
+
+4. Configure input/output roots:
    ```bash
    cp .env.example .env
-   # edit .env with IEX_CSV_ROOT, IEX_PARQUET_ROOT, IEX_WORK_ROOT, and IEX_REPORT_ROOT
+   # edit .env with IEX_CSV_ROOT, IEX_PARQUET_ROOT, IEX_WORK_ROOT, IEX_REPORT_ROOT
    ```
 
-4. Run the CLI:
-   ```bash
-   uv run iexscoper aggregate-per-second --year 2025 --limit-days 1 --dry-run
-   ```
+   | Variable | Purpose | Default |
+   |---|---|---|
+   | `IEX_CSV_ROOT` | Parsed trade CSV input root | — |
+   | `IEX_PARQUET_ROOT` | Published Parquet output root (e.g. NAS) | — |
+   | `IEX_WORK_ROOT` | PCAP scratch space and fallback CSV/Parquet locations | `data/iex` |
+   | `IEX_REPORT_ROOT` | Validation metrics and audit reports | `reports` |
+   | `DISPLAY_TZ` | Display timezone | `America/New_York` |
+   | `LOG_JSONL_PATH` | Structured log file | `logs/app.jsonl` |
+   | `DATABASE_URL` | Optional Postgres metadata store | — |
 
-To compact staging output into a yearly master Parquet file:
+   Backfills assume large local NVMe scratch (guarded by `--min-scratch-free-gb`, typically
+   120–200 GB) and a publish target such as a NAS mount.
 
-```bash
-uv run iexscoper compact-master --year 2025
-```
+## Usage
 
-To validate TOPS ingestion before a broad backfill:
-
-```bash
-uv run iexscoper tops-spec-audit --report-root reports
-uv run iexscoper validate-tops-ingest --dry-run
-uv run iexscoper validate-tops-ingest --all-available --start-day 20250101 --max-workers 1 --limit-days 10
-uv run iexscoper tops-profile-report --report-root reports
-```
-
-`IEX_WORK_ROOT` controls PCAP scratch space and fallback CSV/Parquet locations. `IEX_REPORT_ROOT`
-controls validation metrics and audit reports. Explicit `--work-root` and `--report-root` CLI
-arguments override the `.env` values.
-
-### Windows Examples
-
-For Windows users, here are some example commands:
-
-1. **Install dependencies**:
-   ```cmd
-   uv sync
-   ```
-
-2. **Aggregate one dry-run day**:
-   ```cmd
-   uv run iexscoper aggregate-per-second --year 2025 --limit-days 1 --dry-run
-   ```
-
-3. **Using PowerShell** (note the backtick for line continuation):
-   ```powershell
-   uv run iexscoper aggregate-per-second `
-                 --year 2025 `
-                 --symbols AAPL,MSFT `
-                 --limit-days 10
-   ```
-
-### Command Line Options
+The CLI is exposed as `iexscoper` (`src/framework/cli.py`). Run everything via `uv run`.
 
 Aggregate parsed trade CSVs into per-second staging Parquet files:
 
@@ -114,85 +85,68 @@ Compact staging Parquet files into the yearly master file:
 uv run iexscoper compact-master --year 2025
 ```
 
-Validate TOPS discovery, download, PCAP parsing, raw Parquet conversion, and per-second aggregation:
+Validate TOPS discovery, download, PCAP parsing, raw Parquet conversion, and aggregation
+before a broad backfill:
 
 ```bash
-uv run iexscoper validate-tops-ingest [--days 20250102,20250407] [--dry-run] [--all-available] [--limit-days 10] [--max-workers 1] [--worker-scratch-budget-gb 180] [--scratch-reserve-gb 200] [--scratch-hard-floor-gb 150] [--fail-threshold 5] [--write-profile-report]
+uv run iexscoper tops-spec-audit --report-root reports
+uv run iexscoper validate-tops-ingest --dry-run
+uv run iexscoper validate-tops-ingest --all-available --limit-days 10 --max-workers 1
+uv run iexscoper tops-profile-report --report-root reports
 ```
 
-Write a compact throughput/profile summary from checkpoint state files:
+Explicit `--work-root` / `--report-root` CLI arguments override the `.env` values.
+
+Beyond the CLI, most operational work runs as standalone scripts under `utils/`, e.g.:
 
 ```bash
-uv run iexscoper tops-profile-report [--days 20250102,20250407]
+uv run python utils/backfill_tops_iextools.py --help
+uv run python utils/run_dead_ticker_resolution_program.py --help
 ```
-
-### Expected CSV Format
-
-The tool specifically supports the IEX TP1 DEEP1.0 format with columns:
-- `Exchange Timestamp`: Primary timestamp (preferred)
-- `Packet Capture Time`: Alternative timestamp
-- `Send Time`: Alternative timestamp
-- `Symbol`: Stock symbol
-- `Price`: Tick price
-- `Size`: Tick volume
-- `Tick Type`: Type of tick
-- `Trade ID`: Trade identifier
-- `Sale Condition`: Sale condition flags
-
-### Visualization Types
-
-1. **Price Time Series**: Interactive line chart of price movements
-2. **Volume Bars**: Bar chart of trading volume over time
-3. **Datashader Scatter**: High-performance scatter plot for large datasets
-4. **OHLC Bars**: Candlestick-style bars showing open/high/low/close prices
-5. **Dashboard**: Combined view of all visualizations
 
 ## Project Structure
 
 ```
 IEXScoper/
-├── pyproject.toml       # Package metadata and dependencies
-├── uv.lock              # Locked uv dependency graph
-├── README.md           # This file
-├── .gitignore          # Git ignore patterns
-├── src/                # Active application package
-├── iex-parser/         # Bundled IEX PCAP-to-CSV parser
-└── old/                # Legacy files
+├── pyproject.toml         # Package metadata and dependencies
+├── uv.lock                # Locked uv dependency graph
+├── .env.example           # Required environment variables (no secrets)
+├── src/                   # Active application package (clean architecture)
+│   ├── domain/            # Pure models: per-second rows, dataset/session enums
+│   ├── usecases/          # TOPS ingest, per-second aggregation orchestration
+│   ├── adapters/          # I/O boundaries: CSV readers, Parquet writers, DB
+│   └── framework/         # CLI entrypoint, config, dual-sink logging
+├── utils/                 # One-off operational scripts (backfill, enrichment, resolution)
+├── tests/                 # pytest suite mirroring src/ and utils/
+├── iex-parser/            # Vendored C++-accelerated IEX PCAP parser (github.com/hq-4/iex-parser)
+├── data/                  # Manual overrides and resolution facts (runtime data gitignored)
+├── iex_entities/          # Daily IEX entity snapshots (YYYY-MM-DD.json)
+├── sample_data/           # Sample TOPS 1.6 Parquet files
+├── reports/               # Generated audit/validation reports (gitignored)
+├── logs/                  # Runtime logs (gitignored)
+├── docs/                  # Living docs: architecture, task list, logging, security, changelog
+└── PLANS/                 # Design and planning documents
 ```
 
-## Dependencies
+## Development
 
-### Core Libraries
-- **polars**: High-performance DataFrame library
-- **numpy**: Numerical computing
-- **pyarrow**: Apache Arrow library for Polars
+```bash
+uv run -m pytest -q          # tests (markers: unit, integration, slow)
+uv run ruff check .          # lint
+uv run ruff format .         # format
+uv run bandit -q -r src      # static security analysis
+```
 
-### IEX Data Parser
-- **iex-parser**: IEX data parsing library (from GitHub: https://github.com/hq-4/iex-parser.git)
+Logging uses a dual-sink strategy (pretty Rich console + rotating JSONL at `logs/app.jsonl`),
+enforced at startup. See `docs/LOGGING.md`.
 
-## Performance Notes
+## External Services
 
-- **Polars** is used for fast data loading and aggregation
-- **PyArrow** is used for Parquet writing
-- **Zstandard** compression is used for derived Parquet outputs
+Some `utils/` workflows call external APIs and require polite configuration:
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Import errors**: Ensure all dependencies are installed with `uv sync`
-2. **Memory issues**: Use `--symbols` or `--limit-days` for smaller runs while validating configuration
-3. **Date parsing errors**: Check your CSV timestamp format
-
-### Getting Help
-
-- Check the console output for detailed error messages
-- Ensure your CSV file follows the expected format
-- Try running with sample data first to verify the setup
-
-## Contributing
-
-Feel free to submit issues and enhancement requests!
+- **IEX HIST** (`https://iextrading.com/api/1.0/hist`) — PCAP capture downloads
+- **SEC EDGAR** — ticker/submissions APIs and full-text search (custom User-Agent required)
+- **OpenFIGI** — instrument mapping (rate-limited, responses cached)
 
 ## License
 
