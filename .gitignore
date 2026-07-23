@@ -53,6 +53,13 @@ coverage.xml
 logs/
 reports/
 
+# Legacy prototype (superseded by src/ + utils/; kept locally for reference)
+/old/
+
+# Resolution V2 runtime cache and dry-run staging (canonical JSONL facts remain tracked)
+data/resolution/evidence_registry.sqlite*
+data/resolution/staged/
+
 # Translations
 *.mo
 *.pot
@@ -131,6 +138,7 @@ data/*.csv
 data/*.parquet
 data/*.json
 *.csv
+!data/manual_overrides/ticker_era_resolution_ledger.csv
 *.parquet
 
 # Output files
