@@ -1,5 +1,33 @@
 # Architecture
 
+## Dead Ticker Evidence-Delta V2
+
+- `resolution_v2_schema.py` defines deterministic fact IDs, evidence fingerprints, canonical
+  paths, and independent status dimensions.
+- `resolution_v2_migration.py` normalizes V1 overrides, identity-only holds, ledger closures,
+  lifecycle attempts, and the stable 26,184-era cohort without mutating legacy sources.
+- `resolution_v2_store.py` owns atomic, duplicate-free JSONL fact projections.
+- `resolution_v2_registry.py` is the shared SQLite request, negative-result, document-metadata,
+  cumulative-metric, and resume registry. Filing bodies never enter it.
+- `resolution_v2_events.py`, `resolution_v2_identity.py`, `resolution_v2_local.py`, and
+  `resolution_v2_sec.py` implement evidence gates. Identity and event proof remain separate;
+  symbol changes precede generic terminal language.
+- `resolution_v2_lanes.py` orders known-identity event salvage before missing-identity work,
+  resumes by evidence fingerprint, applies request/impact stopping policy, and persists facts
+  as each row completes.
+- `resolution_v2_outputs.py` emits dimension-specific queues, complete-population reconciliation,
+  and the verified identity-plus-event legacy projection.
+- `run_dead_ticker_resolution_program.py` is the only V2 composition root. Dry run builds a
+  deterministic stage; `--apply` promotes that stage with zero network calls.
+
+Data flow:
+
+`stable cohort → local migration/harvest → cached semantic rescoring → ordered public-primary lanes → staged facts → apply → projections/queues`
+
+The primary invariant is that workflow closure, local observation, heuristic instrument type,
+verified identity, and verified endpoint event are different facts. Eligibility requires the
+applicable hard gates; absence of evidence is never converted into event proof. [CA][REH][PA]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.
@@ -41,6 +69,10 @@
 - `utils/import_dead_ticker_manual_overrides.py` validates completed research-template rows and appends only `research_status=verified` rows into the manual override CSV, rejecting missing evidence and duplicate `symbol_era_id` values.
 - `utils/lookup_edgar_tickers.py` performs a bounded EDGAR lead lookup with an explicit custom SEC User-Agent. It can map template symbols through the current SEC ticker directory and optionally fetch recent `data.sec.gov/submissions` metadata for current CIK matches.
 - `utils/search_edgar_full_text.py` performs a broader SEC EFTS lead search over the manual-resolution template when current ticker lookup misses dead symbols. Its companion modules keep endpoint constants, output writing, and config types separate.
+- `utils/run_sec_high_impact_identity_resolution_iterations.py` is the identity-first SEC composition root. It snapshots and hashes its input, harvests local EFTS payloads, resumes row state, anchors a unique date-scoped CIK, queries that CIK's recent and overlapping historical submissions shards, scores bounded event snippets, and invokes the existing override importer once. Transport, parsing/scoring, state, outputs, and runtime side effects live in separate `sec_*` modules under the 300-SLOC gate.
+- Historical identity and event resolution remain separate facts. Exact filer-ticker/date/CIK evidence admits identity; only anchored-CIK actual terminal or symbol-change evidence admits import. Active/data-gap, identity-only, collision, no-evidence, and fetch-error rows remain non-importable.
+- `utils/dead_ticker_workplan_automation.py` joins resumable workflow state into workplan reports. `automation_exhausted` suppresses misleading repeated automation while preserving `historical_identity_unresolved` until real evidence is imported.
+- `utils/derivative_identity_resolution.py` enforces instrument-specific derivative gates. Share classes require exact child ticker, same CIK, and a near parent action; warrants, units, rights, and preferreds require explicit child/class action language and a near date. Parent-root syntax by itself is never a disposition.
 
 ## Parquet Repair Mode
 

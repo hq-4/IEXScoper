@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- feat: add the evidence-delta dead ticker resolution V2 program with canonical identity,
+  event, observation, attempt, and research-decision facts; shared persistent cache/resume;
+  hard-gated public-primary resolvers; independent gap queues; stable cohort staging; and
+  zero-network apply `[CA][IV][REH][RM][SFT][PA][KBT][CDiP]`
+- feat: migrate 364 identities, 127 verified events, 237 event candidates, 454 identity-only
+  holds, 5,694 workflow closures, and 5,659 lifecycle attempts without rewriting legacy
+  override inputs `[CA][REH][KBT]`
+- fix: decode HTML/XML entities before tag removal and rank expanded date formats in the
+  terminal-action sentence, recovering legacy `160`-corrupted date evidence `[REH][CSD]`
+- fix: enforce subject/filer separation for Form 25, regulatory-rule date provenance,
+  postponement blocking, stratified filing quotas, and two-source symbol-change confirmation
+  `[REH][SFT][KBT]`
+- fix: harden the global dual-sink logger with exact handler enforcement, rotating JSONL,
+  required fields, bounded values, Rich tracebacks, millisecond local timestamps, and symbols
+  `[REH][SFT][RM]`
+- fix: bound V2 semantic date sentence scans for large SEC filings, replace applied
+  research-decision projections instead of merging stale decision fact IDs, and reconcile
+  recorded request totals to the actual source-request counter `[REH][PA][CA]`
+- docs: record the live V2 SEC run using the approved User-Agent, including 32 applied facts,
+  transport circuit-breaker stop, and unchanged rerun idempotency `[CDiP][KBT][RM]`
+- feat: add resumable identity-first SEC resolution for high-impact ticker eras with conservative terminal and symbol-change import gates `[CA][IV][REH][RM][SFT][PA][CDiP]`
+- feat: read overlapping historical SEC submissions shards with accession deduplication, cache reuse, and bounded retry backoff `[REH][RM][PA]`
+- feat: add workplan automation-exhaustion reporting and filing-backed derivative security gates `[CA][REH][KBT][CDiP]`
+- fix: emit structured progress events from the identity-first SEC runner so the Rich console and JSONL sink show active work before completion `[REH][KBT][CDiP]`
 - feat: add standalone IEX parser parity benchmark harness and report generator `[CA][PA][CDiP]`
 - feat: add HIST index parser and bounded `IEXTools` TOPS backfill workflow `[CA][RM][PA][CDiP]`
 - feat: quarantine unknown parser message types with threshold-based runner failure `[REH][PA][CDiP]`
@@ -23,6 +47,7 @@
 - feat: add verified dead ticker manual override importer `[CA][IV][REH][SFT][CDiP]`
 - feat: add EDGAR full-text fallback search for dead ticker resolution leads `[CA][IV][REH][KBT][CDiP]`
 - feat: add dead ticker research routing fields for instrument-specific evidence paths `[CA][CSD][KBT][CDiP]`
+- feat: add impact-weighted dead ticker resolution workplan with dry-run low-materiality ledger candidates `[CA][REH][PA][KBT][CDiP]`
 - feat: add stable confirmed-trade daily panel with entity metadata and quality flags `[CA][PA][KBT][CDiP]`
 - feat: add stable daily panel validation report for structural contract checks `[REH][PA][CDiP]`
 - feat: add stable raw returns table with clean/dirty return flags `[CA][PA][KBT][CDiP]`
