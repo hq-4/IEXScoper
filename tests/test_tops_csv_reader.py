@@ -131,6 +131,46 @@ def test_scan_tops_trades_include_odd_lots_opt_in(tmp_path):
     assert row["vwap"] == (100 * 10.0 + 200 * 11.0) / 300
 
 
+def test_scan_tops_trades_labels_out_of_hours_timestamps_unknown(tmp_path):
+    day = "20250102"
+    target = tmp_path / "2025" / "01" / f"{day}_IEXTP1_TOPS1.6_trd.csv"
+    target.parent.mkdir(parents=True)
+    rows = [
+        {
+            # 08:30 UTC = 03:30 NY, before the 04:00 pre-market open
+            "Exchange Timestamp": _ns(datetime(2025, 1, 2, 8, 30, 0, tzinfo=UTC)),
+            "Symbol": "AAPL",
+            "Size": 100,
+            "Price": 10.0,
+            "Trade ID": "1",
+            "Sale Condition": "EXTENDED_HOURS",
+        },
+        {
+            # 2025-01-03 01:30 UTC = 20:30 NY, after the 20:00 close
+            "Exchange Timestamp": _ns(datetime(2025, 1, 3, 1, 30, 0, tzinfo=UTC)),
+            "Symbol": "AAPL",
+            "Size": 100,
+            "Price": 10.0,
+            "Trade ID": "2",
+            "Sale Condition": "EXTENDED_HOURS",
+        },
+    ]
+    with target.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    df = scan_trades_csv_for_day(
+        csv_root=str(tmp_path),
+        yyyymmdd=day,
+        symbols=None,
+        display_tz="America/New_York",
+    )
+
+    assert df is not None
+    assert {row["session"] for row in df.to_dicts()} == {"unknown"}
+
+
 def test_scan_tops_trades_accepts_parser_raw_timestamp_header(tmp_path):
     day = "20250102"
     target = tmp_path / "2025" / "01" / f"{day}_IEXTP1_TOPS1.6_trd.csv"

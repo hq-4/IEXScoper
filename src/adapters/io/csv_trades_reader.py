@@ -40,6 +40,10 @@ def resolve_trade_csv_path(csv_root: str, yyyymmdd: str, feed: str = "TOPS") -> 
 
 
 def _session_expression(ts_col: str) -> pl.Expr:
+    # Clock-time session labels (America/New_York). No `unknown` bucket would let
+    # corrupted timestamps pass as plausible sessions: anything outside 04:00-20:00
+    # is anomalous on IEX and must be labeled "unknown". Note: labels are clock-based
+    # and do not model early-close (half-day) calendars.
     minutes = (pl.col(ts_col).dt.hour().cast(pl.Int16) * 60) + pl.col(ts_col).dt.minute().cast(
         pl.Int16
     )
@@ -54,9 +58,7 @@ def _session_expression(ts_col: str) -> pl.Expr:
         .then(pl.lit("regular"))
         .when((minutes >= after_start) & (minutes < after_end))
         .then(pl.lit("after"))
-        .when(minutes < pre_start)
-        .then(pl.lit("pre"))
-        .otherwise(pl.lit("after"))
+        .otherwise(pl.lit("unknown"))
     )
 
 
