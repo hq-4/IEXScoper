@@ -101,6 +101,15 @@ def test_scan_tops_trades_include_odd_lots_opt_in(tmp_path):
             "Trade ID": "2",
             "Sale Condition": "REGULAR_HOURS",
         },
+        {
+            # retransmitted trade 1 with a perturbed timestamp: must dedupe away
+            "Exchange Timestamp": _ns(datetime(2025, 1, 2, 14, 30, 0, 500000, tzinfo=UTC)),
+            "Symbol": "AAPL",
+            "Size": 100,
+            "Price": 10.0,
+            "Trade ID": "1",
+            "Sale Condition": "REGULAR_HOURS|ODD_LOT",
+        },
     ]
     with target.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))

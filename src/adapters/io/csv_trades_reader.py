@@ -5,6 +5,8 @@ from typing import Iterable
 
 import polars as pl
 
+from src.framework.logging import get_logger
+
 # Sale conditions emitted by the bundled TOPS parser (decode_messages.cpp):
 # INTERMARKET_SWEEP, EXTENDED_HOURS, REGULAR_HOURS, ODD_LOT, TRADE_THROUGH_EXEMPT,
 # SINGLE_PRICE_CROSS. Cancels are NOT a sale condition — they arrive as Trade Break
@@ -96,7 +98,21 @@ def scan_trades_csv_for_day(
     )
     if exclude_odd_lots:
         lf = lf.filter(~pl.col("sale_condition").str.contains(ODD_LOT_CONDITION, literal=True))
-    lf = lf.unique(subset=["trade_id", "exchange_timestamp_ns", "symbol"], keep="first")
+    # Trade IDs are unique per symbol per day; dedupe on (trade_id, symbol) alone so
+    # retransmitted messages with perturbed timestamps (IEX-TP gap fill, PCAP replay)
+    # cannot survive as duplicate trades. Collisions are counted as a DQ metric.
+    raw = lf.collect()
+    collisions = raw.height - raw.select(pl.struct("trade_id", "symbol").n_unique()).item()
+    if collisions:
+        get_logger(__name__).warning(
+            "trade_id_collisions",
+            extra={
+                "event": "trade_id_collisions",
+                "day": yyyymmdd,
+                "detail": {"collisions": collisions},
+            },
+        )
+    lf = raw.unique(subset=["trade_id", "symbol"], keep="first").lazy()
     lf = lf.with_columns(
         pl.col("exchange_timestamp_ns")
         .cast(pl.Datetime(time_zone="UTC", time_unit="ns"))
