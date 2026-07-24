@@ -1,5 +1,20 @@
 # Task List
 
+- Session-validity quarantine implemented and applied (`utils/session_validity.py`,
+  `utils/build_session_validity.py`, `--quarantine-path` wiring in the stability audit and
+  daily bars). The manifest quarantines exactly the 16 Saturday test sessions with zero
+  weekday false positives; the trade-share floor had to be 5%, not 50% — a 50% floor
+  would have quarantined 44 real high-volume weekdays from the 2021-10..2022-02 feed-mix
+  period. [REH][IV][PA]
+- Quarantined era rebuild (`reports/symbol-stability-quarantined/`) measured: 37,428 to
+  36,866 eras (-562 weekend micro-eras; 785 single-day weekend micro-eras existed),
+  `intermittent_or_reused` 15,241 to 14,664 (-3.8%), the `20170826` end-date spike
+  1,113 to 0, 9 ghost-only symbols removed, 22 splices healed. Correction to the earlier
+  estimate: most 2017 fragmentation is genuine thin-symbol sparsity (the `20170925`
+  1,075-end spike persists), so weekend artifacts explain ~4% of the intermittent class,
+  not more. Downstream products (daily bars, V2 cohort) still point at the pre-quarantine
+  era table; swapping the canonical path is the next decision. [REH][PA][KBT]
+
 - Weekend test-session artifact discovered: 16 Saturday-dated TOPS captures (IEX weekend
   sessions — e.g. `20170826` holds 8,445 OperationalHalts and only 165 TradeReports vs
   657K trades on a normal Friday) shatter symbol continuity. 1,504 cohort eras (5.7%)

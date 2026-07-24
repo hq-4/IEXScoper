@@ -18,7 +18,10 @@ import polars as pl
 from utils.iextools_backfill_core import tops_output_paths
 
 TRADE_TYPE = "TradeReport"
-MIN_TRADE_SHARE = 0.5
+# Conservative guard: real weekday sessions in the corpus never fall below ~0.39 trade
+# share (2021-10..2022-02 feed mix), while junk sessions sit near zero. The weekend rule
+# is the primary detector; this floor only catches non-weekend outage-style captures.
+MIN_TRADE_SHARE = 0.05
 REASON_WEEKEND = "weekend_session"
 REASON_NO_TRADES = "no_trade_reports"
 REASON_LOW_SHARE = "low_trade_share"

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- feat: add session-validity quarantine for weekend IEX test captures with manifest-driven
+  exclusion in the stability audit and daily bars builders `[REH][IV][PA][CDiP]`
+- fix: set the session trade-share floor to 5% after the initial 50% floor flagged 44 real
+  2021-10..2022-02 weekdays; quarantined era rebuild removes 562 weekend micro-eras and the
+  `20170826` end-date spike `[REH][PA][KBT]`
 - feat: add the evidence-delta dead ticker resolution V2 program with canonical identity,
   event, observation, attempt, and research-decision facts; shared persistent cache/resume;
   hard-gated public-primary resolvers; independent gap queues; stable cohort staging; and
