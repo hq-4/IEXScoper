@@ -1,5 +1,18 @@
 # Task List
 
+- External code review triaged and mostly confirmed. Fixed: the dead `CANCEL`/
+  `CORRECTION` sale-condition regex (unmatchable; cancels are Trade Break messages the
+  CSV path does not carry) replaced with documented default odd-lot exclusion
+  (`FILTER_VERSION` `v2`); `--limit-days` now counts trading days and corrupt days no
+  longer abort runs; dedupe tightened to `trade_id`+`symbol` with a collision metric;
+  sessions gained an `unknown` bucket. Verified non-issues: `data/manual_overrides` is
+  2.6MB tracked (the ~33MB is `data/resolution` canonical facts, intentional); `numpy`
+  was already removed from the README. TradeBreak measurement: 160 breaks across 6.6B
+  trades (0.000002%, 55 days) — negligible historical impact; daily bars now apply breaks
+  via `trade_id` anti-join with a summary metric, so a bars rebuild is optional rather
+  than required. Outstanding: packaging rename (`src` → `iexscoper`) and moving
+  `requests` out of the dev group remain open. [REH][KBT]
+
 - Session-validity quarantine implemented and applied (`utils/session_validity.py`,
   `utils/build_session_validity.py`, `--quarantine-path` wiring in the stability audit and
   daily bars). The manifest quarantines exactly the 16 Saturday test sessions with zero

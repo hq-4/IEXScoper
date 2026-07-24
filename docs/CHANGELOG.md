@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- fix: replace the dead `CANCEL`/`CORRECTION` sale-condition regex (unmatchable against
+  parser-emitted conditions) with documented default odd-lot exclusion, real-condition test
+  fixtures, and `--include-odd-lots`; `FILTER_VERSION` bumped to `v2`, existing per-second
+  Parquet treated as unreconciled `[REH][IV][KBT]`
+- fix: apply Trade Break messages in daily bars via `trade_id` anti-join with a
+  `trade_break_row_count` summary metric; corpus measurement found 160 breaks across 6.6B
+  trades (0.000002%), so historical bars impact is negligible `[REH][IV][PA]`
+- fix: count `--limit-days` in trading days, tolerate corrupt days without aborting
+  multi-month runs, and exit non-zero when zero days process or any day fails `[REH][KBT]`
+- fix: dedupe per-second trades on `trade_id`+`symbol` only and log collisions as a
+  data-quality metric, closing the retransmit/perturbed-timestamp duplicate path `[REH][IV]`
+- fix: label out-of-hours timestamps as `unknown` session instead of the catch-all
+  `after`/`pre` buckets `[REH][IV]`
 - feat: add session-validity quarantine for weekend IEX test captures with manifest-driven
   exclusion in the stability audit and daily bars builders `[REH][IV][PA][CDiP]`
 - fix: set the session trade-share floor to 5% after the initial 50% floor flagged 44 real
