@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- feat: add review-only symbol-change (rename) candidate lane pairing era boundaries by
+  mutual-heaviest volume recapture; recovers all 8 seed renames (FB→META … COG→CTRA) in
+  the top 47 of 334 candidates from 4.6M raw pairs; IEX/SEC enrichments regenerated
+  against the quarantined era build `[CA][IV][KBT]`
 - fix: replace the dead `CANCEL`/`CORRECTION` sale-condition regex (unmatchable against
   parser-emitted conditions) with documented default odd-lot exclusion, real-condition test
   fixtures, and `--include-odd-lots`; `FILTER_VERSION` bumped to `v2`, existing per-second
