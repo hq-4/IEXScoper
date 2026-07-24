@@ -5,11 +5,11 @@ from src.framework.config import get_settings
 from src.framework.logging import setup_logging, get_logger
 from src.usecases.aggregate_per_second import run_aggregate_per_second, run_compact_master
 from src.usecases.tops_ingest import (
-    SAMPLE_DAYS,
     run_tops_ingest_validation,
     write_tops_profile_report,
     write_tops_spec_audit,
 )
+
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="iexscoper")
@@ -21,6 +21,11 @@ def main() -> None:
     p1.add_argument("--rebuild", action="store_true")
     p1.add_argument("--dry-run", action="store_true")
     p1.add_argument("--limit-days", type=int)
+    p1.add_argument(
+        "--include-odd-lots",
+        action="store_true",
+        help="include odd-lot trades (excluded by default: not last-sale eligible)",
+    )
 
     p2 = sub.add_parser("compact-master")
     p2.add_argument("--year", type=int, required=True)
@@ -66,8 +71,11 @@ def main() -> None:
             dry_run=args.dry_run,
             limit_days=args.limit_days,
             settings=settings,
+            include_odd_lots=args.include_odd_lots,
         )
-        logger.info("aggregate-per-second exit", extra={"event": "aggregate_per_second", "year": args.year})
+        logger.info(
+            "aggregate-per-second exit", extra={"event": "aggregate_per_second", "year": args.year}
+        )
         raise SystemExit(code)
     if args.cmd == "compact-master":
         code = run_compact_master(year=args.year, settings=settings)
@@ -99,16 +107,25 @@ def main() -> None:
             fail_threshold=args.fail_threshold,
         )
         if args.write_profile_report:
-            detail = write_tops_profile_report(Path(args.report_root or settings.iex_report_root), days or None)
-            logger.info("tops-profile-report exit", extra={"event": "tops_profile_report", "detail": detail})
+            detail = write_tops_profile_report(
+                Path(args.report_root or settings.iex_report_root), days or None
+            )
+            logger.info(
+                "tops-profile-report exit", extra={"event": "tops_profile_report", "detail": detail}
+            )
         logger.info("validate-tops-ingest exit", extra={"event": "validate_tops_ingest"})
         raise SystemExit(code)
     if args.cmd == "tops-profile-report":
         days = [day.strip() for day in args.days.split(",") if day.strip()]
-        result = write_tops_profile_report(Path(args.report_root or settings.iex_report_root), days or None)
-        logger.info("tops-profile-report exit", extra={"event": "tops_profile_report", "detail": result})
+        result = write_tops_profile_report(
+            Path(args.report_root or settings.iex_report_root), days or None
+        )
+        logger.info(
+            "tops-profile-report exit", extra={"event": "tops_profile_report", "detail": result}
+        )
         print(result)
         raise SystemExit(0)
+
 
 if __name__ == "__main__":
     main()

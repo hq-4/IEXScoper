@@ -12,7 +12,7 @@ from src.adapters.io.derived_writer import (
     delete_old_staging_parts,
 )
 
-FILTER_VERSION = "v1"
+FILTER_VERSION = "v2"
 
 
 def _iterate_dates(year: int) -> Iterable[date]:
@@ -30,12 +30,15 @@ def run_aggregate_per_second(
     dry_run: bool,
     limit_days: int | None,
     settings: Settings,
+    include_odd_lots: bool = False,
 ) -> int:
     logger = get_logger("usecases.aggregate_per_second")
     logger.info("start", extra={"event": "aggregate_per_second", "year": year})
 
     if not settings.iex_csv_root:
-        logger.error("IEX_CSV_ROOT is not configured", extra={"event": "aggregate_per_second", "year": year})
+        logger.error(
+            "IEX_CSV_ROOT is not configured", extra={"event": "aggregate_per_second", "year": year}
+        )
         return 1
     if not settings.iex_parquet_root:
         logger.error(
@@ -59,6 +62,7 @@ def run_aggregate_per_second(
                 yyyymmdd=yyyymmdd,
                 symbols=symbols_upper,
                 display_tz=settings.display_tz,
+                exclude_odd_lots=not include_odd_lots,
             )
         except FileNotFoundError:
             logger.debug(
@@ -142,7 +146,9 @@ def run_compact_master(year: int, settings: Settings) -> int:
     logger = get_logger("usecases.compact_master")
     logger.info("start", extra={"event": "compact_master", "year": year})
     if not settings.iex_parquet_root:
-        logger.error("IEX_PARQUET_ROOT is not configured", extra={"event": "compact_master", "year": year})
+        logger.error(
+            "IEX_PARQUET_ROOT is not configured", extra={"event": "compact_master", "year": year}
+        )
         return 1
 
     summary = compact_master_from_staging(

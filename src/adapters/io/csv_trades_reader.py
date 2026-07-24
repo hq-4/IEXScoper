@@ -5,7 +5,13 @@ from typing import Iterable
 
 import polars as pl
 
-SALE_CONDITION_EXCLUDES: tuple[str, ...] = ("CANCEL", "CORRECTION", "CORR")
+# Sale conditions emitted by the bundled TOPS parser (decode_messages.cpp):
+# INTERMARKET_SWEEP, EXTENDED_HOURS, REGULAR_HOURS, ODD_LOT, TRADE_THROUGH_EXEMPT,
+# SINGLE_PRICE_CROSS. Cancels are NOT a sale condition — they arrive as Trade Break
+# messages, which this trade-only CSV path does not carry, so busted trades cannot be
+# excluded here. Odd lots are not last-sale eligible; excluding them is the default so
+# VWAP follows consolidated-tape conventions (pass exclude_odd_lots=False to keep them).
+ODD_LOT_CONDITION = "ODD_LOT"
 
 
 def resolve_trade_csv_path(csv_root: str, yyyymmdd: str, feed: str = "TOPS") -> Path:
@@ -18,9 +24,7 @@ def resolve_trade_csv_path(csv_root: str, yyyymmdd: str, feed: str = "TOPS") -> 
         day_dir / f"data_feeds_{yyyymmdd}_{yyyymmdd}_IEXTP1_{feed_upper}1.6_trd.csv",
     ]
     if feed_upper == "DEEP":
-        candidates.append(
-            day_dir / f"data_feeds_{yyyymmdd}_{yyyymmdd}_IEXTP1_DEEP1.0_trd.csv"
-        )
+        candidates.append(day_dir / f"data_feeds_{yyyymmdd}_{yyyymmdd}_IEXTP1_DEEP1.0_trd.csv")
     for path in candidates:
         if path.exists():
             return path
@@ -60,6 +64,8 @@ def scan_trades_csv_for_day(
     symbols: Iterable[str] | None,
     display_tz: str,
     feed: str = "TOPS",
+    *,
+    exclude_odd_lots: bool = True,
 ) -> pl.DataFrame | None:
     path = resolve_trade_csv_path(csv_root, yyyymmdd, feed=feed)
     lf = pl.scan_csv(path, infer_schema_length=2000)
@@ -86,10 +92,10 @@ def scan_trades_csv_for_day(
         pl.col("size").cast(pl.Int64),
         pl.col("price").cast(pl.Float64),
         pl.col("trade_id").cast(pl.Utf8),
-        pl.col("sale_condition").cast(pl.Utf8).fill_null("")
+        pl.col("sale_condition").cast(pl.Utf8).fill_null(""),
     )
-    pattern = "|".join(SALE_CONDITION_EXCLUDES)
-    lf = lf.filter(~pl.col("sale_condition").str.contains(pattern, literal=False, strict=False))
+    if exclude_odd_lots:
+        lf = lf.filter(~pl.col("sale_condition").str.contains(ODD_LOT_CONDITION, literal=True))
     lf = lf.unique(subset=["trade_id", "exchange_timestamp_ns", "symbol"], keep="first")
     lf = lf.with_columns(
         pl.col("exchange_timestamp_ns")
