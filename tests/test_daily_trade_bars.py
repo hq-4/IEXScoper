@@ -34,11 +34,12 @@ def test_build_day_bars_filters_confirmed_trades_and_assigns_era(tmp_path: Path)
         }
     )
 
-    bars, trade_rows, unmatched = build_day_bars(main_path, "20250102", eras)
+    bars, trade_rows, unmatched, trade_breaks = build_day_bars(main_path, "20250102", eras)
 
     rows = {row["symbol_era_id"]: row for row in bars.to_dicts()}
     assert trade_rows == 3
     assert unmatched == 0
+    assert trade_breaks == 0
     assert rows["AAA#001"]["open"] == 10.0
     assert rows["AAA#001"]["high"] == 11.0
     assert rows["AAA#001"]["low"] == 10.0
@@ -69,11 +70,44 @@ def test_build_day_bars_reports_unmatched_trade_rows(tmp_path: Path) -> None:
         }
     )
 
-    bars, trade_rows, unmatched = build_day_bars(main_path, "20250102", eras)
+    bars, trade_rows, unmatched, _ = build_day_bars(main_path, "20250102", eras)
 
     assert trade_rows == 2
     assert unmatched == 1
     assert bars["symbol_era_id"].to_list() == ["AAA#001"]
+
+
+def test_build_day_bars_applies_trade_breaks(tmp_path: Path) -> None:
+    main_path = tmp_path / "20250102_IEXTP1_TOPS1.6.parquet"
+    _write_main(
+        main_path,
+        {
+            "type": ["TradeReport", "TradeReport", "TradeBreak"],
+            "timestamp": [1, 2, 3],
+            "symbol": ["AAA", "AAA", "AAA"],
+            "size": [100, 500, 100],
+            "price": [10.0, 99.0, 10.0],
+            "trade_id": [11, 22, 11],
+        },
+    )
+    eras = pl.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "symbol_era_id": ["AAA#001"],
+            "first_day": ["20250102"],
+            "last_day": ["20250102"],
+        }
+    )
+
+    bars, trade_rows, unmatched, trade_breaks = build_day_bars(main_path, "20250102", eras)
+
+    row = bars.to_dicts()[0]
+    assert trade_rows == 1  # busted trade excluded before counting
+    assert trade_breaks == 1
+    assert unmatched == 0
+    assert row["volume"] == 500
+    assert row["trade_count"] == 1
+    assert row["open"] == 99.0
 
 
 def test_build_daily_trade_bars_is_resumable_and_splits_ticker_eras(tmp_path: Path) -> None:
@@ -126,9 +160,7 @@ def test_build_daily_trade_bars_is_resumable_and_splits_ticker_eras(tmp_path: Pa
     assert (output_root / "daily_trade_bars_results.jsonl").exists()
 
 
-def _write_tops_day(
-    parquet_root: Path, day: str, symbols: list[str], prices: list[float]
-) -> None:
+def _write_tops_day(parquet_root: Path, day: str, symbols: list[str], prices: list[float]) -> None:
     target_dir = parquet_root / day[:4] / day[4:6]
     target_dir.mkdir(parents=True, exist_ok=True)
     main_path = target_dir / f"{day}_IEXTP1_TOPS1.6.parquet"

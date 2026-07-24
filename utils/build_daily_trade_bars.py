@@ -24,6 +24,7 @@ DEFAULT_SYMBOL_ERAS_PATH = Path("reports/symbol-stability/symbol_eras.parquet")
 DEFAULT_START_DAY = "20161212"
 DEFAULT_END_DAY = "20260622"
 TRADE_TYPE = "TradeReport"
+TRADE_BREAK_TYPE = "TradeBreak"
 PRICE_SCALE = 10_000
 
 OUTPUT_SCHEMA = {
@@ -65,6 +66,7 @@ class DayResult:
     rows: int = 0
     trade_rows: int = 0
     unmatched_trade_rows: int = 0
+    trade_break_rows: int = 0
     size_bytes: int = 0
     error: str | None = None
 
@@ -145,7 +147,7 @@ def process_day(config: TradeBarConfig, day: str, era_frame: pl.DataFrame) -> Da
     main_path, _ = tops_output_paths(config.parquet_root, day)
     logger = get_logger(__name__)
     try:
-        bars, trade_rows, unmatched = build_day_bars(main_path, day, era_frame)
+        bars, trade_rows, unmatched, trade_breaks = build_day_bars(main_path, day, era_frame)
         write_day_bars(output_path, bars, config.compression)
     except (OSError, ValueError, pl.exceptions.PolarsError) as exc:
         result = DayResult(
@@ -165,23 +167,27 @@ def process_day(config: TradeBarConfig, day: str, era_frame: pl.DataFrame) -> Da
         rows=bars.height,
         trade_rows=trade_rows,
         unmatched_trade_rows=unmatched,
+        trade_break_rows=trade_breaks,
         size_bytes=output_path.stat().st_size,
     )
     logger.info("daily trade bars day processed", extra=day_extra(day, result))
     return result
 
 
-def build_day_bars(path: Path, day: str, era_frame: pl.DataFrame) -> tuple[pl.DataFrame, int, int]:
+def build_day_bars(
+    path: Path, day: str, era_frame: pl.DataFrame
+) -> tuple[pl.DataFrame, int, int, int]:
     validate_trade_columns(path)
     day_eras = era_frame.filter((pl.col("first_day") <= day) & (pl.col("last_day") >= day))
+    trade_breaks = count_trade_breaks(path)
     if day_eras.is_empty():
-        return empty_bars(), 0, 0
+        return empty_bars(), 0, 0, trade_breaks
     trades = build_trade_frame(path, day)
     trade_rows = trades.select(pl.len()).collect().item()
     joined = trades.join(day_eras.lazy(), on="symbol", how="left")
     unmatched = joined.filter(pl.col("symbol_era_id").is_null()).select(pl.len()).collect().item()
     bars = aggregate_trades(joined.filter(pl.col("symbol_era_id").is_not_null()), day)
-    return bars, int(trade_rows), int(unmatched)
+    return bars, int(trade_rows), int(unmatched), trade_breaks
 
 
 def validate_trade_columns(path: Path) -> None:
@@ -195,16 +201,43 @@ def validate_trade_columns(path: Path) -> None:
 
 
 def build_trade_frame(path: Path, day: str) -> pl.LazyFrame:
-    price = trade_price_expr(pl.scan_parquet(str(path)).collect_schema().names())
-    return (
+    columns = pl.scan_parquet(str(path)).collect_schema().names()
+    price = trade_price_expr(columns)
+    select_cols: list[Any] = ["type", "timestamp", "symbol", "size", price.alias("trade_price")]
+    if "trade_id" in columns:
+        select_cols.append("trade_id")
+    trades = (
         pl.scan_parquet(str(path))
-        .select("type", "timestamp", "symbol", "size", price.alias("trade_price"))
+        .select(select_cols)
         .filter(pl.col("type") == TRADE_TYPE)
         .filter(pl.col("symbol").is_not_null())
         .filter(pl.col("timestamp").is_not_null())
         .filter(pl.col("size").is_not_null() & (pl.col("size") > 0))
         .filter(pl.col("trade_price").is_not_null() & (pl.col("trade_price") > 0))
-        .with_columns(pl.lit(day).alias("day"))
+    )
+    if "trade_id" in columns:
+        # Apply Trade Break messages: busted trades must not enter OHLCV.
+        breaks = (
+            pl.scan_parquet(str(path))
+            .filter(pl.col("type") == TRADE_BREAK_TYPE)
+            .select("symbol", "trade_id")
+            .drop_nulls()
+            .unique()
+        )
+        trades = trades.join(breaks, on=["symbol", "trade_id"], how="anti")
+    return trades.with_columns(pl.lit(day).alias("day"))
+
+
+def count_trade_breaks(path: Path) -> int:
+    columns = pl.scan_parquet(str(path)).collect_schema().names()
+    if "type" not in columns:
+        return 0
+    return (
+        pl.scan_parquet(str(path))
+        .filter(pl.col("type") == TRADE_BREAK_TYPE)
+        .select(pl.len())
+        .collect()
+        .item()
     )
 
 
@@ -273,6 +306,7 @@ def build_summary(
         "bar_row_count": sum(result.rows for result in results),
         "trade_row_count": sum(result.trade_rows for result in results),
         "unmatched_trade_row_count": sum(result.unmatched_trade_rows for result in results),
+        "trade_break_row_count": sum(result.trade_break_rows for result in results),
     }
 
 
