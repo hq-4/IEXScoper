@@ -49,13 +49,13 @@ def run_aggregate_per_second(
 
     processed = 0
     attempted = 0
+    failed_days: list[str] = []
     symbols_upper = [s.upper() for s in symbols] if symbols else None
 
     for current in _iterate_dates(year):
-        yyyymmdd = current.strftime("%Y%m%d")
-        if limit_days is not None and attempted >= limit_days:
+        if limit_days is not None and processed >= limit_days:
             break
-        attempted += 1
+        yyyymmdd = current.strftime("%Y%m%d")
         try:
             df = scan_trades_csv_for_day(
                 csv_root=settings.iex_csv_root,
@@ -65,6 +65,7 @@ def run_aggregate_per_second(
                 exclude_odd_lots=not include_odd_lots,
             )
         except FileNotFoundError:
+            # Non-trading day or missing CSV: skipped, never counted as an attempt.
             logger.debug(
                 "csv_missing",
                 extra={
@@ -76,6 +77,8 @@ def run_aggregate_per_second(
             )
             continue
         except Exception as exc:  # noqa: BLE001
+            # A corrupt day must not kill a multi-month run; collect and report at the end.
+            failed_days.append(yyyymmdd)
             logger.exception(
                 "csv_processing_failed",
                 extra={
@@ -85,7 +88,8 @@ def run_aggregate_per_second(
                     "detail": str(exc),
                 },
             )
-            return 1
+            continue
+        attempted += 1
 
         if df is None or df.height == 0:
             logger.debug(
@@ -136,9 +140,33 @@ def run_aggregate_per_second(
         extra={
             "event": "aggregate_per_second",
             "year": year,
-            "detail": {"processed_days": processed, "attempted_days": attempted},
+            "detail": {
+                "processed_days": processed,
+                "attempted_days": attempted,
+                "failed_days": failed_days,
+            },
         },
     )
+    if processed == 0:
+        logger.error(
+            "no_days_processed",
+            extra={
+                "event": "aggregate_per_second",
+                "year": year,
+                "detail": "no trading days produced output; check IEX_CSV_ROOT and --year",
+            },
+        )
+        return 1
+    if failed_days:
+        logger.error(
+            "days_failed",
+            extra={
+                "event": "aggregate_per_second",
+                "year": year,
+                "detail": {"failed_days": failed_days, "failed_count": len(failed_days)},
+            },
+        )
+        return 1
     return 0
 
 
