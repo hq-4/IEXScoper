@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from utils.era_id_remap import load_era_id_remap
 from utils.resolution_v2_schema import (
     DEFAULT_LEDGER_PATH,
     DEFAULT_OVERRIDE_PATH,
@@ -28,21 +29,56 @@ def build_legacy_migration(
     ledger_path: Path = DEFAULT_LEDGER_PATH,
     workplan_path: Path = DEFAULT_WORKPLAN_PATH,
     identity_state_path: Path = LATEST_IDENTITY_STATE,
+    remap_path: Path | None = None,
 ) -> dict[str, Any]:
     cohort = _read_csv(review_path)
     by_era = {row["symbol_era_id"]: row for row in cohort}
-    overrides = _read_csv(override_path)
-    ledger = _read_csv(ledger_path)
+    mapping = load_era_id_remap(remap_path) if remap_path else {}
+    remap_counts: dict[str, int] = {}
+    overrides = _translate_rows(_read_csv(override_path), mapping, "overrides", remap_counts)
+    ledger = _translate_rows(_read_csv(ledger_path), mapping, "ledger", remap_counts)
+    workplan_rows = _translate_rows(
+        _read_csv(workplan_path) if workplan_path.exists() else [],
+        mapping,
+        "attempts",
+        remap_counts,
+    )
     identities = [
         _override_identity(row, by_era.get(row["symbol_era_id"], {})) for row in overrides
     ]
     events = [_override_event(row) for row in overrides]
-    identities.extend(_identity_holds(identity_state_path, by_era))
+    identities.extend(_identity_holds(identity_state_path, by_era, mapping, remap_counts))
     observations = [_observation(row) for row in cohort]
     decisions = _decisions(cohort, identities, events, ledger)
-    attempts = _lifecycle_attempts(workplan_path)
+    attempts = _lifecycle_attempts(workplan_rows)
     records = (identities, events, observations, decisions, attempts)
-    return _migration_payload(cohort, records, overrides, ledger)
+    return _migration_payload(cohort, records, overrides, ledger, remap_counts)
+
+
+def _translate_rows(
+    rows: list[dict[str, str]],
+    mapping: dict[str, str],
+    label: str,
+    counts: dict[str, int],
+) -> list[dict[str, str]]:
+    """Translate legacy era ids; rows on vanished eras drop out with a count. [KBT]"""
+    if not mapping:
+        return rows
+    remapped = vanished = 0
+    out = []
+    for row in rows:
+        era_id = row.get("symbol_era_id", "")
+        if era_id not in mapping:
+            if label == "overrides":
+                raise ValueError(f"verified override on vanished era: {era_id}")
+            vanished += 1
+            continue
+        new_id = mapping[era_id]
+        remapped += new_id != era_id
+        out.append({**row, "symbol_era_id": new_id})
+    counts[f"{label}_remapped"] = remapped
+    counts[f"{label}_vanished_dropped"] = vanished
+    return out
 
 
 def _migration_payload(
@@ -50,6 +86,7 @@ def _migration_payload(
     records: tuple[list[dict[str, Any]], ...],
     overrides: list[dict[str, str]],
     ledger: list[dict[str, str]],
+    remap_counts: dict[str, int],
 ) -> dict[str, Any]:
     identities, events, observations, decisions, attempts = records
     return {
@@ -60,7 +97,7 @@ def _migration_payload(
         "decision": _unique_facts(decisions),
         "attempt": _unique_facts(attempts),
         "migration_counts": _migration_counts(
-            cohort, overrides, ledger, identities, events, attempts
+            cohort, overrides, ledger, identities, events, attempts, remap_counts
         ),
     }
 
@@ -72,6 +109,7 @@ def _migration_counts(
     identities: list[dict[str, Any]],
     events: list[dict[str, Any]],
     attempts: list[dict[str, Any]],
+    remap_counts: dict[str, int],
 ) -> dict[str, int]:
     return {
         "legacy_identities": len(overrides),
@@ -81,6 +119,7 @@ def _migration_counts(
         "research_closures": len(ledger),
         "lifecycle_v1_attempts": len(attempts),
         "cohort_rows": len(cohort),
+        **remap_counts,
     }
 
 
@@ -127,16 +166,31 @@ def _override_event(row: dict[str, str]) -> dict[str, Any]:
     )
 
 
-def _identity_holds(path: Path, by_era: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
+def _identity_holds(
+    path: Path,
+    by_era: dict[str, dict[str, str]],
+    mapping: dict[str, str],
+    remap_counts: dict[str, int],
+) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     state = json.loads(path.read_text(encoding="utf-8"))
     output = []
+    remapped = vanished = 0
     for era_id, entry in state.get("rows", {}).items():
         if entry.get("bucket") != "identity_only_hold":
             continue
+        if mapping:
+            if era_id not in mapping:
+                vanished += 1
+                continue
+            remapped += mapping[era_id] != era_id
+            era_id = mapping[era_id]
         result, era = entry.get("result", {}), by_era.get(era_id, {})
         output.append(_hold_identity(era_id, era, result))
+    if mapping:
+        remap_counts["holds_remapped"] = remapped
+        remap_counts["holds_vanished_dropped"] = vanished
     return output
 
 
@@ -228,8 +282,7 @@ def _instrument_status(instrument: str) -> str:
     return "heuristic" if instrument and instrument != "unknown_instrument" else UNRESOLVED
 
 
-def _lifecycle_attempts(path: Path) -> list[dict[str, Any]]:
-    rows = _read_csv(path) if path.exists() else []
+def _lifecycle_attempts(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     return [
         prepare_fact(
             "attempt",

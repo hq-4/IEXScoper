@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.framework.logging import get_logger
+from utils.era_id_remap import DEFAULT_REMAP_PATH
 from utils.resolution_v2_lanes import refresh_decisions, run_network_lanes
 from utils.resolution_v2_local_reconcile import run_local_reconciliation
 from utils.resolution_v2_migration import build_legacy_migration
@@ -58,7 +59,8 @@ def run_resolution_program(config: ProgramConfig) -> dict[str, Any]:
 
 
 def _prepare_migration() -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    migration = build_legacy_migration()
+    remap_path = DEFAULT_REMAP_PATH if DEFAULT_REMAP_PATH.exists() else None
+    migration = build_legacy_migration(remap_path=remap_path)
     cached_events = salvage_cached_events(migration["identity"])
     migration["event"] = _unique(migration["event"] + cached_events)
     migration["decision"] = update_decisions_for_events(migration["decision"], migration["event"])

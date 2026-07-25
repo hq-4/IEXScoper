@@ -165,3 +165,6 @@ Thumbs.db
 sample_data/*
 AGENTS.md
 PLANS/
+
+# V1 fact store archive (pre-quarantine era ids)
+data/resolution-v1-archive/

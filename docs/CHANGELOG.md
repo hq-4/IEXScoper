@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- feat: remigrate the V2 resolution fact store onto the quarantined era build via a
+  derived old→new `symbol_era_id` remap artifact (tiered exact/first-day/last-day
+  matching, ambiguity-abort); legacy overrides, ledger, holds, and workplan attempts are
+  translated at read time, rows on vanished eras drop with counts, and overrides on
+  vanished eras abort. Cohort 26,184→25,622 eras; 818 verified identities, 127 verified
+  events, 237 candidates, 454 holds preserved with zero loss; 448 weekend micro-era
+  ledger closures retired; V1 store archived to `data/resolution-v1-archive/` `[CA][IV][REH][KBT]`
+- fix: drop uncovered legacy era ids instead of passing them through on remap — a
+  vanished old id can collide with an unrelated same-symbol era in the new build and
+  misattach ledger closures (432 collisions avoided) `[REH][KBT]`
 - feat: add review-only symbol-change (rename) candidate lane pairing era boundaries by
   mutual-heaviest volume recapture; recovers all 8 seed renames (FB→META … COG→CTRA) in
   the top 47 of 334 candidates from 4.6M raw pairs; IEX/SEC enrichments regenerated
