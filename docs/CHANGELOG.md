@@ -105,3 +105,6 @@
 - fix: add EDGAR full-text issuer alias fallback for historical ticker no-hit cases such as `XLNX` and `ZNGA` `[REH][KBT][PA][CDiP]`
 - fix: preserve runner exception details and classify parser short-buffer failures `[REH][CDiP]`
 - docs: record backfill parser RCA and recommend transport-aware parser replacement path `[REH][AS][CDiP]`
+- fix: repair four corrupt NAS TOPS days (`20201027`, `20220628`, `20240405`,
+  `20240515`) from IEX HIST PCAPs and force-rebuild their stale pre-quarantine daily
+  bars; bars coverage is now 2,393/2,393 days with zero failures `[REH][RM][KBT]`
