@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.framework.logging import get_logger
+from utils.era_id_remap import DEFAULT_REMAP_PATH
 from utils.resolution_v2_lanes import refresh_decisions, run_network_lanes
 from utils.resolution_v2_local_reconcile import run_local_reconciliation
 from utils.resolution_v2_migration import build_legacy_migration
@@ -58,7 +59,8 @@ def run_resolution_program(config: ProgramConfig) -> dict[str, Any]:
 
 
 def _prepare_migration() -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    migration = build_legacy_migration()
+    remap_path = DEFAULT_REMAP_PATH if DEFAULT_REMAP_PATH.exists() else None
+    migration = build_legacy_migration(remap_path=remap_path)
     cached_events = salvage_cached_events(migration["identity"])
     migration["event"] = _unique(migration["event"] + cached_events)
     migration["decision"] = update_decisions_for_events(migration["decision"], migration["event"])
@@ -68,30 +70,55 @@ def _prepare_migration() -> tuple[dict[str, Any], list[dict[str, Any]]]:
 def _prepare_stage(config: ProgramConfig, migration: dict[str, Any]) -> dict[str, Any]:
     cohort_sha, cohort_created = snapshot_cohort(config.fact_root, migration["cohort"])
     stage_mode = "local" if config.local_only else "network"
-    stage_id = fingerprint(
-        {"cohort": cohort_sha, "resolver": RESOLVER_VERSION, "mode": stage_mode}
-    )[:20]
+    migration_sha = _migration_fingerprint(migration)
+    stage_id = _stage_id(cohort_sha, migration_sha, stage_mode)
     stage_root = config.fact_root / "staged" / stage_id
     stage_store = CanonicalFactStore(stage_root)
     manifest = _read_json(stage_root / "stage_manifest.json")
     if config.apply and manifest.get("status") != "complete":
         raise ValueError("--apply requires a completed dry-run stage for this stable cohort")
-    if manifest.get("status") != "complete":
-        _initialize_stage(stage_store, migration)
-        run_local_reconciliation(stage_store, migration["cohort"], stage_root)
-        stop_reason = run_network_lanes(config, stage_store, migration["cohort"])
-        _finalize_stage(stage_store, stage_root, cohort_sha, migration, stop_reason)
-    else:
-        stop_reason = str(manifest.get("stopping_reason") or "unchanged_evidence_snapshot")
+    stop_reason = _execute_stage(
+        config, migration, stage_store, stage_root, manifest, cohort_sha, migration_sha
+    )
     return {
         "store": stage_store,
         "cohort_sha": cohort_sha,
         "cohort_created": cohort_created,
+        "migration_sha": migration_sha,
         "stage_id": stage_id,
         "stage_mode": stage_mode,
         "stop_reason": stop_reason,
         "local_reconciliation": _read_json(stage_root / "local_reconciliation.json"),
     }
+
+
+def _stage_id(cohort_sha: str, migration_sha: str, stage_mode: str) -> str:
+    return fingerprint(
+        {
+            "cohort": cohort_sha,
+            "migration": migration_sha,
+            "resolver": RESOLVER_VERSION,
+            "mode": stage_mode,
+        }
+    )[:20]
+
+
+def _execute_stage(
+    config: ProgramConfig,
+    migration: dict[str, Any],
+    store: CanonicalFactStore,
+    root: Path,
+    manifest: dict[str, Any],
+    cohort_sha: str,
+    migration_sha: str,
+) -> str:
+    if manifest.get("status") == "complete":
+        return str(manifest.get("stopping_reason") or "unchanged_evidence_snapshot")
+    _initialize_stage(store, migration)
+    run_local_reconciliation(store, migration["cohort"], root)
+    stop_reason = run_network_lanes(config, store, migration["cohort"])
+    _finalize_stage(store, root, cohort_sha, migration_sha, migration, stop_reason)
+    return stop_reason
 
 
 def _facts_and_output(
@@ -144,6 +171,7 @@ def _summary_metadata(
         "applied": config.apply,
         "cohort_sha256": stage["cohort_sha"],
         "cohort_created": stage["cohort_created"],
+        "migration_sha256": stage["migration_sha"],
         "stage_id": stage["stage_id"],
         "stage_mode": stage["stage_mode"],
         "migration_counts": migration["migration_counts"],
@@ -164,7 +192,12 @@ def _initialize_stage(store: CanonicalFactStore, migration: dict[str, Any]) -> N
 
 
 def _finalize_stage(
-    store: CanonicalFactStore, root: Path, cohort_sha: str, migration: dict[str, Any], reason: str
+    store: CanonicalFactStore,
+    root: Path,
+    cohort_sha: str,
+    migration_sha: str,
+    migration: dict[str, Any],
+    reason: str,
 ) -> None:
     refresh_decisions(store)
     write_summary(
@@ -172,11 +205,17 @@ def _finalize_stage(
         {
             "status": "complete",
             "cohort_sha256": cohort_sha,
+            "migration_sha256": migration_sha,
             "resolver_version": RESOLVER_VERSION,
             "stopping_reason": reason,
             "migration_counts": migration["migration_counts"],
         },
     )
+
+
+def _migration_fingerprint(migration: dict[str, Any]) -> str:
+    snapshot = {kind: sorted(str(row["fact_id"]) for row in migration[kind]) for kind in FACT_KINDS}
+    return fingerprint(snapshot)
 
 
 def _apply_stage(

@@ -29,22 +29,48 @@ MONTHS = {
     for name in names
 }
 MONTH_TOKEN = "|".join(sorted(MONTHS, key=len, reverse=True))
-ACTION_TERMS = (
+TERMINAL_ACTION_TERMS = (
     "completed the merger",
     "consummated the merger",
+    "merger became effective",
+    "mergers became effective",
     "transaction closed",
+    "completed the acquisition",
+    "acquisition was completed",
+    "completion of the acquisition",
     "ceased trading",
     "suspended from trading",
-    "delisted",
-    "became effective",
-    "changed its ticker",
+    "was delisted",
+    "were delisted",
+)
+SYMBOL_CHANGE_ACTION_TERMS = (
+    "ticker symbol will change",
+    "ticker symbol changed",
+    "change from",
+    "ceased trading under",
     "began trading under",
     "commenced trading under",
 )
+ACTION_TERMS = TERMINAL_ACTION_TERMS + SYMBOL_CHANGE_ACTION_TERMS
 POSTPONEMENT_TERMS = ("withdraw", "postpon", "rescinded", "cancelled", "canceled")
-PROSPECTIVE_TERMS = ("will", "expects to", "expected to", "intends to", "subject to")
+PROSPECTIVE_TERMS = (
+    "will",
+    "expects to",
+    "expected to",
+    "intends to",
+    "subject to",
+    "once ",
+    "may be",
+    "could be",
+    "would be",
+)
 SENTENCE_SCAN_LIMIT = 2_000
 CHANGE_PATTERNS = (
+    re.compile(
+        r"CEASED\s+TRADING\s+UNDER\s+(?:THE\s+)?(?:TICKER\s+)?SYMBOL\s+"
+        r"([A-Z0-9.^+=-]+)\s+AND\s+BEGAN\s+TRADING.*?UNDER\s+(?:THE\s+)?"
+        r"(?:NEW\s+)?(?:TICKER\s+)?SYMBOL\s+([A-Z0-9.^+=-]+)"
+    ),
     re.compile(
         r"(?:TICKER\s+)?SYMBOL\s+(?:WILL\s+)?CHANGE(?:D)?\s+FROM\s+([A-Z0-9.^+=-]+)\s+TO\s+([A-Z0-9.^+=-]+)"
     ),
@@ -152,7 +178,7 @@ def symbol_change_proof(
     event_date, snippet = semantic_action_date(
         announcement_text,
         announcement.get("boundary"),
-        (*ACTION_TERMS, "ticker symbol will change", "ticker symbol changed", "change from"),
+        SYMBOL_CHANGE_ACTION_TERMS,
     )
     same_cik = _clean_cik(announcement.get("subject_cik"))
     confirmed = [
@@ -160,7 +186,15 @@ def symbol_change_proof(
     ]
     prospective = any(term in snippet.lower() for term in PROSPECTIVE_TERMS)
     collision = bool(old and old != symbol.upper())
-    ready = bool(old == symbol.upper() and new and event_date and confirmed and not collision)
+    same_clause_symbols = _same_clause_symbol_date(snippet, old, new, event_date)
+    ready = bool(
+        old == symbol.upper()
+        and new
+        and event_date
+        and confirmed
+        and same_clause_symbols
+        and not collision
+    )
     if prospective and not confirmed:
         ready = False
     return _change_output(old, new, event_date, snippet, bool(confirmed), ready)
@@ -180,7 +214,10 @@ def _change_output(
         "event_date": event_date.isoformat() if event_date else "",
         "old_symbol": old,
         "new_symbol": new,
-        "flags": ["two_source_temporal_proof" if confirmed else "confirmation_missing"],
+        "flags": [
+            "two_source_temporal_proof" if confirmed else "confirmation_missing",
+            "same_clause_symbols" if ready else "symbol_clause_unproven",
+        ],
         "snippet": snippet[:1_000],
     }
 
@@ -218,8 +255,19 @@ def _parse_symbol_change(text: str) -> tuple[str, str]:
         if match := pattern.search(normalized):
             first, second = match.groups()
             first, second = first.strip("."), second.strip(".")
-            return (second, first) if index == 2 else (first, second)
+            return (second, first) if index == 3 else (first, second)
     return "", ""
+
+
+def _same_clause_symbol_date(snippet: str, old: str, new: str, event_date: date | None) -> bool:
+    if not event_date:
+        return False
+    for clause in re.split(r"(?<=[.!?])\s+", snippet):
+        tokens = {token.strip(".") for token in re.findall(r"[A-Z0-9.^+=-]+", clause.upper())}
+        dates = {item["date"] for item in date_candidates(clause)}
+        if old in tokens and new in tokens and event_date in dates:
+            return True
+    return False
 
 
 def _valid_confirmation(item: dict[str, Any], new: str, cik: str, event_date: date | None) -> bool:

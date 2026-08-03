@@ -1,11 +1,11 @@
 # Architecture
 
-## Dead Ticker Evidence-Delta V2
+## Dead Ticker Evidence-Delta V3
 
 - `resolution_v2_schema.py` defines deterministic fact IDs, evidence fingerprints, canonical
   paths, and independent status dimensions.
 - `resolution_v2_migration.py` normalizes V1 overrides, identity-only holds, ledger closures,
-  lifecycle attempts, and the stable 26,184-era cohort without mutating legacy sources.
+  lifecycle attempts, and the quarantined 25,622-era cohort without mutating legacy sources.
 - `resolution_v2_store.py` owns atomic, duplicate-free JSONL fact projections.
 - `resolution_v2_registry.py` is the shared SQLite request, negative-result, document-metadata,
   cumulative-metric, and resume registry. Filing bodies never enter it.
@@ -17,8 +17,11 @@
   as each row completes.
 - `resolution_v2_outputs.py` emits dimension-specific queues, complete-population reconciliation,
   and the verified identity-plus-event legacy projection.
-- `run_dead_ticker_resolution_program.py` is the only V2 composition root. Dry run builds a
-  deterministic stage; `--apply` promotes that stage with zero network calls.
+- `build_identity_verified_event_queue.py` joins independent V3 event gaps to the latest
+  verified canonical identity fact and era metadata; missing or mismatched joins abort.
+- `run_dead_ticker_resolution_program.py` is the only evidence-delta composition root. Dry run
+  builds a deterministic stage keyed by cohort, migrated fact IDs, resolver version, and mode;
+  `--apply` promotes only that exact stage with zero network calls.
 
 Data flow:
 
@@ -94,8 +97,8 @@ applicable hard gates; absence of evidence is never converted into event proof. 
 - The OpenFIGI cache is append-only JSONL under the selected report root, so repeated enrichment runs avoid duplicate API calls for the same ticker/exchange/market-sector request.
 - IEX entity snapshot enrichment is a current/listing-evidence layer, not historical identity proof. The local snapshot window currently runs from `2026-02-22` to `2026-06-26`; enriched rows include `iex_entity_confidence` so downstream analysis can distinguish direct snapshot overlap, current-symbol-only matches, removed-before-latest matches, changed issuer/status rows, and unmatched ticker eras.
 - SEC ticker/CIK enrichment is current-biased. It hydrated `10,262` symbol eras with a single current CIK match and found `3` multiple current matches; the remaining `27,163` eras are unmatched in the current SEC ticker directory. Intermittent eras remain keyed by `symbol_era_id` because current CIK evidence does not prove historical ticker identity.
-- The dead ticker review queue lives at `reports/dead-ticker-review/dead_ticker_review_queue.parquet`. It contains `26,184` non-stable ticker eras; `18,430` have no current SEC or IEX evidence and are marked `historical_identity_unresolved`, while `4` seed eras are `manual_verified_historical_identity` from `data/manual_overrides/historical_ticker_identities.csv`. Manual overrides are keyed by `symbol_era_id` so reused ticker symbols do not inherit stale issuer identity. The instrument heuristic audit is written to `reports/dead-ticker-review/instrument_heuristic_audit.csv` and `reports/dead-ticker-review/instrument_heuristic_audit_summary.json`; these labels are routing hints, not identity evidence.
-- The unresolved priority queue lives at `reports/dead-ticker-review/unresolved_priority_queue.parquet`. It currently ranks `18,430` unresolved eras; `12,567` are probable operating-company rows under the richer instrument type and `1,860` are delisted/acquired candidates. The default top-100 batch is entirely probable-operating delisted/acquired rows.
+- The dead ticker review queue lives at `reports/dead-ticker-review/dead_ticker_review_queue.parquet`. After the quarantined-era remap it contains `25,622` non-stable ticker eras: `17,677` remain `historical_identity_unresolved`, `364` are `manual_verified_historical_identity`, and `5,246` carry terminal workflow dispositions. Manual overrides remain keyed by `symbol_era_id` so reused symbols cannot inherit stale issuer identity. Instrument labels are routing hints, not identity evidence.
+- The unresolved priority queue lives at `reports/dead-ticker-review/unresolved_priority_queue.parquet`. It currently contains `12,431` needs-resolution eras; the top 2,500 are all probable operating-company SEC/event targets and cover `97.98%` of identity-unresolved trade volume. Resolution lanes and the impact-weighted workplan remain workflow products rather than issuer/event proof.
 - The manual dead-ticker resolution workflow is documented in `docs/DEAD_TICKER_RESOLUTION.md`. EDGAR lookups are treated as current-biased leads; verified overrides still require issuer/event evidence before being added to `data/manual_overrides/historical_ticker_identities.csv`.
 - The stable daily panel lives at `/media/tn/pq/derived/stable-daily-panel/stable_daily_panel.parquet`. It currently covers `2,874` stable ticker eras, `6,656,475` daily rows, and keeps quality flags in-row so analysis can filter out raw-price or volume/notional anomaly days without rescanning the quality-event parquet.
 - Stable daily panel validation passed with zero hard failures: no duplicate keys, no critical nulls, no invalid OHLC rows, no nonpositive price/volume/trade-count/notional rows, no timestamp-order violations, and no mismatch between in-panel quality flags and `quality_events.parquet`. Sparse `thin` symbols can still have low observed panel-day coverage because the panel contains confirmed-trade days only.

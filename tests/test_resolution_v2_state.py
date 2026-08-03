@@ -9,7 +9,12 @@ import pytest
 
 from src.framework.logging import JSONL_KEYS, enforce_dual_sinks, setup_logging
 from utils.resolution_v2_policy import BatchYield, StoppingPolicy, directory_cache_policy
-from utils.resolution_v2_program import ProgramConfig, _apply_kind, _metrics
+from utils.resolution_v2_program import (
+    ProgramConfig,
+    _apply_kind,
+    _metrics,
+    _migration_fingerprint,
+)
 from utils.resolution_v2_registry import CachePolicy, EvidenceRegistry, ResumeRegistry
 from utils.resolution_v2_schema import evidence_fingerprint, prepare_fact
 from utils.resolution_v2_store import CanonicalFactStore
@@ -100,6 +105,18 @@ def test_apply_replaces_decision_projection(tmp_path: Path) -> None:
     rows = store.load("decision")
     assert len(rows) == 1
     assert rows[0]["identity_status"] == "verified"
+
+
+def test_migration_fingerprint_tracks_fact_changes_not_timestamps() -> None:
+    migration = {
+        kind: [{"fact_id": f"{kind}:one", "created_at": "old"}]
+        for kind in ("identity", "event", "observation", "decision", "attempt")
+    }
+    original = _migration_fingerprint(migration)
+    migration["attempt"][0]["created_at"] = "new"
+    assert _migration_fingerprint(migration) == original
+    migration["attempt"].append({"fact_id": "attempt:two", "created_at": "new"})
+    assert _migration_fingerprint(migration) != original
 
 
 def test_metrics_use_actual_network_counter_for_legacy_attempt_sums(tmp_path: Path) -> None:

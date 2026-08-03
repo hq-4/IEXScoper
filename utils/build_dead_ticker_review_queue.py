@@ -24,6 +24,7 @@ from utils.dead_ticker_review_schema import (
     DEFAULT_SEC_ERAS_PATH,
     REVIEW_COLUMNS,
 )
+from utils.era_id_remap import DEFAULT_REMAP_PATH, load_era_id_remap, remap_frame
 from utils.instrument_classifier import (
     instrument_hint_expr,
     instrument_reason_expr,
@@ -48,6 +49,7 @@ class DeadTickerReviewConfig:
     manual_overrides_path: Path
     output_root: Path
     resolution_ledger_path: Path = DEFAULT_RESOLUTION_LEDGER_PATH
+    era_remap_path: Path | None = None
 
 
 def main() -> int:
@@ -57,13 +59,20 @@ def main() -> int:
     parser.add_argument("--manual-overrides-path", default=str(DEFAULT_MANUAL_OVERRIDES_PATH))
     parser.add_argument("--resolution-ledger-path", default=str(DEFAULT_RESOLUTION_LEDGER_PATH))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
+    parser.add_argument(
+        "--era-remap-path",
+        default=str(DEFAULT_REMAP_PATH),
+        help="Old-to-new era id remap CSV; applied to legacy override/ledger inputs when present.",
+    )
     args = parser.parse_args()
+    remap_path = Path(args.era_remap_path)
     config = DeadTickerReviewConfig(
         sec_eras_path=Path(args.sec_eras_path),
         iex_eras_path=Path(args.iex_eras_path),
         manual_overrides_path=Path(args.manual_overrides_path),
         output_root=Path(args.output_root),
         resolution_ledger_path=Path(args.resolution_ledger_path),
+        era_remap_path=remap_path if remap_path.exists() else None,
     )
     setup_logging(str(config.output_root / "dead_ticker_review.jsonl"))
     result = build_dead_ticker_review_queue(config)
@@ -87,14 +96,42 @@ def build_dead_ticker_review_queue(config: DeadTickerReviewConfig) -> dict[str, 
     )
     overrides = load_manual_overrides(config.manual_overrides_path)
     ledger = ledger_select_for_join(load_resolution_ledger(config.resolution_ledger_path))
+    remap_stats = apply_era_remap(config, overrides, ledger)
+    overrides, ledger = remap_stats["overrides_frame"], remap_stats["ledger_frame"]
     queue = build_queue(
         sec.join(iex, on="symbol_era_id", how="left")
         .join(overrides, on="symbol_era_id", how="left")
         .join(ledger, on="symbol_era_id", how="left")
     )
     summary = build_summary(config, queue)
+    summary["era_id_remap"] = remap_stats["summary"]
     write_outputs(config.output_root, summary, queue)
     return {"summary": summary, "rows": queue.to_dicts()}
+
+
+def apply_era_remap(
+    config: DeadTickerReviewConfig, overrides: pl.DataFrame, ledger: pl.DataFrame
+) -> dict[str, Any]:
+    """Translate legacy override/ledger era ids to the current era build. [KBT]"""
+    if not config.era_remap_path:
+        return {
+            "overrides_frame": overrides,
+            "ledger_frame": ledger,
+            "summary": {"applied": False},
+        }
+    mapping = load_era_id_remap(config.era_remap_path)
+    overrides, override_stats = remap_frame(overrides, mapping)
+    ledger, ledger_stats = remap_frame(ledger, mapping)
+    return {
+        "overrides_frame": overrides,
+        "ledger_frame": ledger,
+        "summary": {
+            "applied": True,
+            "remap_path": str(config.era_remap_path),
+            "overrides": override_stats,
+            "ledger": ledger_stats,
+        },
+    }
 
 
 def validate_inputs(config: DeadTickerReviewConfig) -> None:

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- feat: add a canonical identity-verified/event-unproven queue with deterministic volume ranking, identity fact/date joins, and mismatch gates; current queue is 676 eras / 267.6M trade rows and its top 200 covers 229.2M `[CA][IV][PA][CDiP]`
+- fix: include migrated fact IDs in V3 stage identity so changed workplans/evidence cannot silently reuse a completed stale stage `[REH][RM][KBT]`
+- fix: harden V3 endpoint-event gates after a rejected 2,000-request dry run: separate terminal and symbol-change vocabulary, reject prospective/generic-effective clauses, require same-clause old/new ticker and date proof, and block unconfirmed symbol changes from falling through as delistings `[IV][REH][SFT][KBT]`
+- docs: reconcile the quarantined-era Pareto queue, V3 local audit, rejected 26-event experiment, and 11 canonical-only V2 event records requiring review before apply `[CDiP][KBT][PA]`
+- feat: remigrate the V2 resolution fact store onto the quarantined era build via a
+  derived old→new `symbol_era_id` remap artifact (tiered exact/first-day/last-day
+  matching, ambiguity-abort); legacy overrides, ledger, holds, and workplan attempts are
+  translated at read time, rows on vanished eras drop with counts, and overrides on
+  vanished eras abort. Cohort 26,184→25,622 eras; 818 verified identities, 127 verified
+  events, 237 candidates, 454 holds preserved with zero loss; 448 weekend micro-era
+  ledger closures retired; V1 store archived to `data/resolution-v1-archive/` `[CA][IV][REH][KBT]`
+- fix: drop uncovered legacy era ids instead of passing them through on remap — a
+  vanished old id can collide with an unrelated same-symbol era in the new build and
+  misattach ledger closures (432 collisions avoided) `[REH][KBT]`
 - feat: add review-only symbol-change (rename) candidate lane pairing era boundaries by
   mutual-heaviest volume recapture; recovers all 8 seed renames (FB→META … COG→CTRA) in
   the top 47 of 334 candidates from 4.6M raw pairs; IEX/SEC enrichments regenerated
@@ -95,3 +109,6 @@
 - fix: add EDGAR full-text issuer alias fallback for historical ticker no-hit cases such as `XLNX` and `ZNGA` `[REH][KBT][PA][CDiP]`
 - fix: preserve runner exception details and classify parser short-buffer failures `[REH][CDiP]`
 - docs: record backfill parser RCA and recommend transport-aware parser replacement path `[REH][AS][CDiP]`
+- fix: repair four corrupt NAS TOPS days (`20201027`, `20220628`, `20240405`,
+  `20240515`) from IEX HIST PCAPs and force-rebuild their stale pre-quarantine daily
+  bars; bars coverage is now 2,393/2,393 days with zero failures `[REH][RM][KBT]`

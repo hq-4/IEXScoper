@@ -1,9 +1,9 @@
 # Dead Ticker Resolution Workflow
 
-## Evidence-Delta V2 Program
+## Evidence-Delta V3 Program
 
 The canonical workflow is now fact-oriented and dry-run first. It snapshots the complete
-`26,184`-era review population and stores identity, event, observation, resolver-attempt,
+`25,622`-era review population and stores identity, event, observation, resolver-attempt,
 and research-decision records independently under `data/resolution/`. A research closure
 never implies a verified identity or event, and no single resolved flag can hide a gap.
 
@@ -35,12 +35,11 @@ Canonical files:
 - `historical_ticker_identities_projection.csv`: backward-compatible rows only when both
   identity and event facts are verified.
 
-The initial migration preserves all `364` historical identities, splits their events into
-`127` verified facts and `237` candidates, promotes `454` SEC-verified identity-only holds,
-keeps `3,916` market-data artifacts plus `1,778` parent links as research closures, and marks
-all `5,659` lifecycle rows attempted under `lifecycle_v1`. Cached V2 semantic date rescoring
-currently adds `18` evidence-gated event facts without asserting events for the remaining
-known identities.
+The quarantined-era migration preserves all `364` historical identities, splits their events
+into `127` verified facts and `237` candidates, promotes `454` SEC-verified identity-only
+holds, keeps `5,246` terminal workflow dispositions separate from proof, and harvests `5,507`
+lifecycle attempts. Under the stricter V3 language gates, cached semantic rescoring admits
+`7` additional event facts; the remaining known identities stay unresolved.
 
 Evidence authority is deliberately bounded: exact date-scoped SEC `display_names` or
 Inline XBRL `dei:TradingSymbol`, FINRA Daily List, NasdaqTrader, NYSE notices, and issuer-hosted
@@ -58,19 +57,60 @@ both one verified fact per 1,000 requests and `0.01%` incremental lane trade imp
 Reports under `reports/dead-ticker-review/resolution-v2/` include independent identity,
 event, instrument, observation, and research-action queues plus a reconciliation summary.
 Legacy closures are omitted from the research-action queue but remain visible in fact-gap
-queues. Local reconciliation currently forms `128` parent-CIK/action-window derivative groups
+queues. Local reconciliation currently forms `126` parent-CIK/action-window derivative groups
 but imports no child without exact ticker/security-class evidence. If bounded public-primary
 coverage later plateaus, a licensed historical security master remains the explicit
 higher-coverage alternative. [CA][REH][SFT][PA][KBT][AS]
 
-Live run note: the SEC-backed dry run using the approved User-Agent stopped at the
-`network_transport_circuit_breaker` for SEC EFTS after `7,033` source requests and `10`
-cache hits. The completed stage was applied, adding 30 verified events and 2 verified
-identities. The applied canonical summary now reports `820` identities, `412` events,
-`26,184` observations, and `26,184` research decisions. A second unchanged dry run made
-zero new source requests and added no duplicate facts. [REH][RM][KBT]
+Current state: the applied quarantined-era canonical store contains `818` identity facts,
+`382` event records, and `25,622` observations/decisions. A later 2,000-request CIK event
+dry run attempted 360 eras and proposed 26 events / 15,265,414 trade rows, but it was not
+applied after false-positive review. V3 invalidates that stage and its local audit contains
+`371` event records with `131` latest verified event decisions. Eleven canonical V2 event
+records are not reproduced by V3; they require evidence review or explicit supersession
+before the canonical store can be called V3-clean. [REH][RM][KBT]
 
 This workflow turns the unresolved ticker-era queue into auditable manual identity overrides.
+
+## Identity-Verified Event Queue
+
+V3 stage IDs include a fingerprint of all migrated fact IDs, so a changed workplan or
+legacy evidence snapshot creates a fresh stage even when the cohort membership is unchanged.
+This prevents a completed stage from silently serving stale attempt or decision facts.
+
+Build the event-only cohort after a local V3 dry run:
+
+```bash
+uv run python utils/run_dead_ticker_resolution_program.py --local-only
+uv run python utils/build_identity_verified_event_queue.py \
+  --event-gap-path reports/dead-ticker-review/resolution-v2/dry-run/event_gap_queue.csv
+```
+
+The queue requires V3 identity status `verified`, non-verified event status, and active
+research. It joins the latest verified canonical identity fact plus era dates and rejects
+missing or symbol-mismatched joins. The 2026-07-29 queue contains `676` eras / `267,638,847`
+trade rows; its top 200 covers `229,208,099` trade rows.
+
+Resolve this cohort through the CIK-aware V3 composition root, not the older symbol-only
+terminal batch. Start with a bounded dry run:
+
+```bash
+SEC_USER_AGENT="IEXScoper research your-email@example.com" \
+uv run python utils/run_dead_ticker_resolution_program.py \
+  --network-budget 2000 \
+  --batch-size 100
+```
+
+Do not add `--apply` until generated event facts pass review and the canonical-only V2 facts
+have an explicit supersession path.
+
+The first V2 CIK event dry run on 2026-07-29 used a 2,000-request budget, attempted 360
+eras, and proposed 26 events covering 15,265,414 trade rows. Manual inspection rejected
+that stage for apply because generic `became effective` clauses, prospective delisting
+language, and unconfirmed ticker transitions could pass the terminal gate. Resolver
+`evidence_delta_v3` narrows terminal language, requires same-clause ticker/date proof, and
+prevents detected but unconfirmed symbol changes from falling through as delistings. The
+stage key includes the resolver version, so the rejected V2 stage cannot be reused by V3.
 
 ## Goal
 
@@ -288,8 +328,9 @@ This writes:
 The workplan ranks rows by descending `trade_rows`, adds cumulative impact fields,
 and routes work into high-impact operating SEC review, operating lifecycle search,
 parent/root security disposition, low-materiality bulk disposition, or manual hold.
-The latest local run covered `16,605` unresolved priority eras; the high-impact
-operating bucket has `1,992` eras and the low-materiality candidate file has `3,916`
+The latest local run, refreshed on 2026-07-29 after the quarantined-era V2 remap,
+covered `12,431` unresolved priority eras. The high-impact operating bucket has `1,991`
+eras / `536,972,325` trade rows, and the low-materiality candidate file has `135`
 dry-run-only ledger candidates.
 
 Low-materiality rows are workflow dispositions, not issuer identity overrides. Review
