@@ -5,8 +5,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from utils.resolution_v2_events import (
-    ACTION_TERMS,
     PROSPECTIVE_TERMS,
+    TERMINAL_ACTION_TERMS,
     normalize_filing_text,
     select_stratified_filings,
     semantic_action_date,
@@ -70,11 +70,16 @@ def _review_document(
         return None
     text = client.get_text("filing_document", url)
     boundary = _day(row.get("last_day"))
-    event_date, snippet = semantic_action_date(text, boundary)
-    client.registry.record_document(url, text, _document_metadata(filing, identity), [snippet])
-    change = _symbol_change(row, identity, filing, text, boundary)
+    change, change_detected = _symbol_change(row, identity, filing, text, boundary)
     if change:
+        client.registry.record_document(
+            url, text, _document_metadata(filing, identity), [change.get("snippet", "")]
+        )
         return change
+    if change_detected:
+        return None
+    event_date, snippet = semantic_action_date(text, boundary, TERMINAL_ACTION_TERMS)
+    client.registry.record_document(url, text, _document_metadata(filing, identity), [snippet])
     if not _terminal_gate(row, identity, filing, text, snippet, event_date, boundary):
         return None
     return _terminal_fact(row, identity, filing, event_date, snippet, url)
@@ -127,7 +132,7 @@ def _terminal_gate(
         "0"
     )
     near = bool(event_date and boundary and abs((event_date - boundary).days) <= 14)
-    actual = any(term.upper() in snippet.upper() for term in ACTION_TERMS)
+    actual = any(term.upper() in snippet.upper() for term in TERMINAL_ACTION_TERMS)
     prospective = any(term in snippet.lower() for term in PROSPECTIVE_TERMS)
     return bool(anchored and same_cik and near and actual and not prospective)
 
@@ -138,7 +143,7 @@ def _symbol_change(
     filing: dict[str, Any],
     text: str,
     boundary: date | None,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, bool]:
     confirmation = {
         "cik": identity.get("entity_id"),
         "tickers": identity.get("related_symbols", []),
@@ -150,9 +155,10 @@ def _symbol_change(
         {"subject_cik": identity["entity_id"], "boundary": boundary},
         [confirmation],
     )
+    detected = bool(result.get("old_symbol") or result.get("new_symbol"))
     if result["verification_state"] != VERIFIED:
-        return None
-    return _symbol_fact(row, identity, filing, result)
+        return None, detected
+    return _symbol_fact(row, identity, filing, result), True
 
 
 def _symbol_fact(
@@ -242,9 +248,10 @@ def _document_metadata(filing: dict[str, Any], identity: dict[str, Any]) -> dict
 
 def _terminal_type(snippet: str) -> str:
     normalized = snippet.upper()
+    transaction_terms = ("MERGER", "ACQUISITION", "TRANSACTION CLOSED")
     return (
         "merger_or_acquisition_terminal"
-        if "MERGER" in normalized
+        if any(term in normalized for term in transaction_terms)
         else "delisting_or_registration_termination"
     )
 

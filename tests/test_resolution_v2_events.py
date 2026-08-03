@@ -100,6 +100,31 @@ def test_stratified_filing_selection_uses_quotas_exhibits_and_deduplication() ->
     assert len({(row["accession_no"], row["document_url"]) for row in selected}) == len(selected)
 
 
+def test_ceased_old_and_began_new_symbol_change_requires_same_clause_date() -> None:
+    text = (
+        "On August 25, 2025, the common stock ceased trading under the ticker symbol OLD "
+        "and began trading under the new ticker symbol NEW."
+    )
+    announcement = {"subject_cik": "1", "boundary": "20250825"}
+    confirmation = {"cik": "1", "tickers": ["NEW"], "filing_date": "2025-08-26"}
+    result = symbol_change_proof("OLD", text, announcement, [confirmation])
+    assert result["verification_state"] == "verified"
+    assert result["event_date"] == "2025-08-25"
+    assert result["new_symbol"] == "NEW"
+
+
+def test_symbol_change_rejects_unrelated_effective_date() -> None:
+    text = (
+        "An employment agreement became effective on September 1, 2025. "
+        "The stock ceased trading under ticker symbol OLD and began trading under symbol NEW."
+    )
+    announcement = {"subject_cik": "1", "boundary": "20250901"}
+    confirmation = {"cik": "1", "tickers": ["NEW"], "filing_date": "2025-09-02"}
+    result = symbol_change_proof("OLD", text, announcement, [confirmation])
+    assert result["verification_state"] == "event_candidate"
+    assert "symbol_clause_unproven" in result["flags"]
+
+
 def test_prospective_symbol_change_needs_post_effective_same_cik_confirmation() -> None:
     text = "Effective January 5, 2024, the ticker symbol will change from OLD to NEW."
     announcement = {"subject_cik": "1", "boundary": "20240105"}

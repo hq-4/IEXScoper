@@ -1,5 +1,11 @@
 # Task List
 
+- V2 CIK event dry run attempted `360` eras with `2,000` SEC requests and proposed `26` verified events / `15,265,414` trade rows, but review found generic-effective, prospective-delisting, and ticker-change fallthrough false positives. Resolver `evidence_delta_v3` now separates terminal and symbol-change vocabularies, requires same-clause old/new symbols plus date, blocks unconfirmed symbol changes from falling through as delistings, and invalidates the unsafe dry-run stage. A conservative stored-snippet audit retained 20 terminal candidates and held/reclassified 6; all require a corrected V3 dry run before apply. `[CA][IV][REH][RM][PA][KBT][CDiP]`
+
+- Phase 2 event-only resolution queue is ready: fixed completed-stage reuse by keying stages to the migrated fact-ID snapshot, then rebuilt a fresh local stage with `5,507` attempts. Added a canonical identity-verified/event-unproven queue with identity/date join gates: `676` action-required eras / `267,638,847` trade rows (`237` event candidates, `439` unresolved); the generated top-200 terminal window covers `229,208,099` trade rows. The first CIK network dry run completed but was rejected for apply; V3 rerun and canonical supersession review remain open. `[CA][IV][REH][RM][PA][SFT][KBT][CDiP]`
+
+- Pareto top-2200 local continuation refreshed after the quarantined-era V2 remap: the current identity-unresolved population is `17,677` eras / `560,616,350` trade rows, with volume cutoffs now at rank `260` (50%), `778` (80%), `1,731` (95%), and `3,309` (99%). Rebuilt the unresolved priority queue with `--top-n 2500`; the top 2,500 covers `97.98%` of unresolved volume and is entirely probable operating-company SEC/event route. Regenerated resolution lanes/workplan: `12,431` unresolved priority eras, `1,991` high-impact operating rows / `536,972,325` trade rows, `5,625` operating lifecycle rows / `10,651,120`, `3,879` derivative/parent rows / `6,695,683`, `135` low-materiality dry-run ledger candidates / `811`, and `801` manual holds / `5,013,608`. `[CA][REH][PA][KBT][CDiP]`
+
 - External code review triaged and mostly confirmed. Fixed: the dead `CANCEL`/
   `CORRECTION` sale-condition regex (unmatchable; cancels are Trade Break messages the
   CSV path does not carry) replaced with documented default odd-lot exclusion
@@ -58,11 +64,9 @@
   era `first_day` within a few trading days, emitting review-only candidates; and a manual
   review sprint over the top 200 unknown eras by volume. [KBT][CA][CDiP]
 
-- Evidence-delta ticker resolution V2 implemented and applied for the stable `26,184`-era
-  cohort. The live SEC dry run using the approved User-Agent staged and applied 32 verified
-  facts before the SEC EFTS transport circuit breaker stopped identity recovery: canonical
-  totals now reconcile to `820` verified identity facts, `412` event records, `26,184`
-  observations/decisions, and `5,659` V1 lifecycle attempts. [CA][REH][PA][KBT]
+- Historical pre-quarantine V2 milestone: the original `26,184`-era cohort applied 32
+  verified facts before the SEC EFTS circuit breaker. These counts were superseded by the
+  quarantined-era remigration and are retained here only as run history. [CA][REH][PA][KBT]
 - Independent queues generated for identity, event, instrument, observation, and research
   action. All `5,694` legacy closures remain outside research action without being promoted to
   identity or event proof; local reconciliation formed 128 derivative parent/action groups and
@@ -70,8 +74,8 @@
 - Dry-run/apply idempotency verified after the live stage: unchanged rerun issued zero new
   requests, request metrics stayed at `7,033` source requests and `10` cache hits, and
   decision facts remained one row per review era. Full repository tests pass. [RM][REH][CDiP]
-- Operational next step: resume the same network command after SEC EFTS recovers; the registry
-  will skip completed evidence fingerprints and continue from the circuit-breaker checkpoint.
+- The former V2 checkpoint is historical. Current work resumes only through a V3 dry run;
+  V2 attempts remain versioned in the registry and cannot suppress V3 evidence evaluation.
   [SFT][KBT][RM]
 
 - Standalone IEX parser parity benchmark harness landed under `utils/`. `[CA][PA]`

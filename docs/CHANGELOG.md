@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- feat: add a canonical identity-verified/event-unproven queue with deterministic volume ranking, identity fact/date joins, and mismatch gates; current queue is 676 eras / 267.6M trade rows and its top 200 covers 229.2M `[CA][IV][PA][CDiP]`
+- fix: include migrated fact IDs in V3 stage identity so changed workplans/evidence cannot silently reuse a completed stale stage `[REH][RM][KBT]`
+- fix: harden V3 endpoint-event gates after a rejected 2,000-request dry run: separate terminal and symbol-change vocabulary, reject prospective/generic-effective clauses, require same-clause old/new ticker and date proof, and block unconfirmed symbol changes from falling through as delistings `[IV][REH][SFT][KBT]`
+- docs: reconcile the quarantined-era Pareto queue, V3 local audit, rejected 26-event experiment, and 11 canonical-only V2 event records requiring review before apply `[CDiP][KBT][PA]`
 - feat: remigrate the V2 resolution fact store onto the quarantined era build via a
   derived old→new `symbol_era_id` remap artifact (tiered exact/first-day/last-day
   matching, ambiguity-abort); legacy overrides, ledger, holds, and workplan attempts are

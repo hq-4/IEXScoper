@@ -19,8 +19,8 @@ snapshots, with verified facts stored as canonical JSONL.
   large multi-year backfills
 - **Derived research datasets**: symbol eras, daily trade bars, stable-universe panel, and
   stable returns tables
-- **Dead-ticker identity resolution (V2)**: an evidence-delta program over the stable
-  26,184-era cohort. Canonical identity, event, observation, attempt, and research-decision
+- **Dead-ticker identity resolution (V3)**: an evidence-delta program over the stable
+  25,622-era cohort. Canonical identity, event, observation, attempt, and research-decision
   facts with deterministic IDs live as JSONL under `data/resolution/`, backed by a shared
   SQLite request/resume registry. Identity and event proof stay separate; eligibility
   requires hard gates, and absence of evidence is never promoted to proof. Dry runs stage

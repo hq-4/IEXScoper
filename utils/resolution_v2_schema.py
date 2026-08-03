@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-RESOLVER_VERSION = "evidence_delta_v2"
+RESOLVER_VERSION = "evidence_delta_v3"
 DEFAULT_FACT_ROOT = Path("data/resolution")
 DEFAULT_REPORT_ROOT = Path("reports/dead-ticker-review/resolution-v2")
 DEFAULT_REVIEW_PATH = Path("reports/dead-ticker-review/dead_ticker_review_queue.csv")
