@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- feat: apply OpenFIGI era-binding facts into the canonical store as confidence tiers (`corroborated` 1,580, `openfigi_asserted` 14,179 with 1,323 `contested` quarantines) plus 363 Form 25 event candidates; dry-run-first idempotent apply tool, SEC-verified facts untouched `[CA][IV][REH][SFT][KBT]`
+
+- feat: stage OpenFIGI era-binding identity candidates (15,759 eras, 89% of the unresolved baseline, corroboration-tiered) plus 363 Form 25 event candidates as review-only V3 facts; nothing auto-applies `[CA][IV][SFT][KBT]`
+- feat: add keyed OpenFIGI full-universe identity enrichment (`includeUnlistedEquities` recall unlock, 67.5% symbol match) with authoritative instrument census — fund_etf is 29.35% of eras, ~4.5× the regex estimate `[CA][IV][KBT]`
+- feat: add SEC Form 25 event-catalog probe (9,691 filings, display-name/issuer/security-name ticker binding) with per-class era coverage reporting `[CA][IV][KBT]`
+
+- docs: persist the revised entity-resolution methodology (OpenFIGI keyed identity pillar + evidence-first event catalog) in `docs/EVENT_CATALOG_RESOLUTION_PLAN.md`, with pointers from the dead-ticker workflow doc; OpenFIGI full-universe enrichment approved as Phase 1 `[CDiP][KBT][AS]`
+
 - feat: add a canonical identity-verified/event-unproven queue with deterministic volume ranking, identity fact/date joins, and mismatch gates; current queue is 676 eras / 267.6M trade rows and its top 200 covers 229.2M `[CA][IV][PA][CDiP]`
 - fix: include migrated fact IDs in V3 stage identity so changed workplans/evidence cannot silently reuse a completed stale stage `[REH][RM][KBT]`
 - fix: harden V3 endpoint-event gates after a rejected 2,000-request dry run: separate terminal and symbol-change vocabulary, reject prospective/generic-effective clauses, require same-clause old/new ticker and date proof, and block unconfirmed symbol changes from falling through as delistings `[IV][REH][SFT][KBT]`

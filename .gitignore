@@ -168,3 +168,7 @@ PLANS/
 
 # V1 fact store archive (pre-quarantine era ids)
 data/resolution-v1-archive/
+
+# OpenFIGI/event-catalog network caches (re-derivable; see docs/SECURITY.md)
+data/openfigi/
+data/event_catalog/

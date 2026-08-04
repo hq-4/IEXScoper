@@ -62,13 +62,37 @@ but imports no child without exact ticker/security-class evidence. If bounded pu
 coverage later plateaus, a licensed historical security master remains the explicit
 higher-coverage alternative. [CA][REH][SFT][PA][KBT][AS]
 
-Current state: the applied quarantined-era canonical store contains `818` identity facts,
-`382` event records, and `25,622` observations/decisions. A later 2,000-request CIK event
+Current state: the canonical store is confidence-tiered since the 2026-08-04 OpenFIGI
+apply: `818` SEC-grade `verified` identity facts (unchanged), plus `1,580`
+`corroborated` and `14,179` `openfigi_asserted` OpenFIGI identity facts (1,323 of them
+flagged `contested` and excluded from default joins), and `600` event records
+(`145` verified, `455` candidates). The OpenFIGI tiers are coverage aids, not SEC-grade
+proof: measured entity agreement against verified ground truth is ~74% exact/high
+with hard errors concentrated in reused tickers, so downstream queries must select
+their assurance tier explicitly. Details: `docs/EVENT_CATALOG_RESOLUTION_PLAN.md`. A later 2,000-request CIK event
 dry run attempted 360 eras and proposed 26 events / 15,265,414 trade rows, but it was not
 applied after false-positive review. V3 invalidates that stage and its local audit contains
 `371` event records with `131` latest verified event decisions. Eleven canonical V2 event
 records are not reproduced by V3; they require evidence review or explicit supersession
 before the canonical store can be called V3-clean. [REH][RM][KBT]
+
+## Next Methodology: OpenFIGI Identity Pillar + Event Catalog
+
+As of 2026-08-03 the narrative-first SEC lanes are assessed as plateaued at ~1% yield.
+The approved next stage (full plan: `docs/EVENT_CATALOG_RESOLUTION_PLAN.md`) adds two
+pillars that feed the V3 staging flow as review-only candidates:
+
+1. **OpenFIGI keyed enrichment** (in progress): dead FIGIs remain queryable, so a
+   full-universe `/v3/mapping` pass over all cohort symbols attaches named, typed
+   identity candidates and produces an authoritative instrument reclassification
+   (including the first real fund/ETF census). OpenFIGI has no validity dates, so it
+   identifies *what* a ticker was, not *when*.
+2. **Evidence-first event catalog** (pending Phase 1 review gate): enumerate
+   authoritative delisting artifacts (SEC Form 25, NasdaqTrader delisted file, fund
+   N-8F deregistrations) and join to eras on ticker+date, supplying the *when*.
+
+Nothing auto-applies: all output lands in `data/resolution/staged/<stage_id>/` and
+follows the same dry-run-first, review-gated apply discipline as every V3 stage.
 
 This workflow turns the unresolved ticker-era queue into auditable manual identity overrides.
 
