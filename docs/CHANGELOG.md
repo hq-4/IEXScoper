@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: add era×identity enriched product joining tiered identity/event facts onto all 36,866 symbol eras with a default-usable view (verified+corroborated+non-contested asserted: 15,254 eras / 790.2M trade rows) and derived era spans `[CA][KBT]`
+
 - feat: apply OpenFIGI era-binding facts into the canonical store as confidence tiers (`corroborated` 1,580, `openfigi_asserted` 14,179 with 1,323 `contested` quarantines) plus 363 Form 25 event candidates; dry-run-first idempotent apply tool, SEC-verified facts untouched `[CA][IV][REH][SFT][KBT]`
 
 - feat: stage OpenFIGI era-binding identity candidates (15,759 eras, 89% of the unresolved baseline, corroboration-tiered) plus 363 Form 25 event candidates as review-only V3 facts; nothing auto-applies `[CA][IV][SFT][KBT]`
