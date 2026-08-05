@@ -1,5 +1,20 @@
 # Task List
 
+- 2026-08-05: SIC/sector classification, Phase 4 (name-matching precision pass). Followed up on
+  "what else is next" by checking whether the remaining ~6,777-row googleable-name pool (post
+  Phase 3) was genuinely unfindable or just a name-matching gap. Found `identity_issuer` often
+  carries a trailing Bloomberg/OpenFIGI security-descriptor suffix (`-CW23`, `-ADR`, `W/I`,
+  `-CLASS A`, …) that blocks an otherwise-exact match against SEC's current company-name list.
+  Added `utils.sec_name_cik_lookup.strip_security_descriptors` as a second, still-exact fallback
+  pass in `match_by_name` — recovers 180 additional unique-name matches (299 era rows / 35.8M
+  trade rows), zero new ambiguity risk. Also evaluated and explicitly **rejected** a
+  token-subset/fuzzy matcher: on real data it matched "1895 Bancorp of Wisconsin" to an unrelated
+  company simply named "Bancorp" (a single generic token satisfying a naive subset check) — a real
+  wrong-company risk, so it was not built. Live re-run (43 new network requests, zero errors):
+  worklist 16,181 -> **15,882 eras**, 528M -> **492M trade rows**, `sic_and_sector` coverage rose
+  to 8,716 eras (23.6% of the universe). 410 tests pass (was 399); ruff and bandit clean.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-05: SIC/sector classification, Phase 3 (shrinking the manual-research pool). The user
   pushed back on the 29,597-era manual-research worklist ("how am I expected to manually hit 30k
   manual tickers") — rightly: the top of that list was dominated by huge ETFs (IWM, XLF, XLE, GDX,

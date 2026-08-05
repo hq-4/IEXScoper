@@ -8,6 +8,7 @@ from utils.sec_name_cik_lookup import (
     match_by_name,
     normalize_name,
     require_columns,
+    strip_security_descriptors,
 )
 
 
@@ -92,6 +93,57 @@ def test_match_by_name_no_match_for_unknown_issuer() -> None:
     matched = match_by_name(era_identity, index)
 
     assert matched["name_matched_cik"][0] is None
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("ABB LTD-SPON ADR", "ABB LTD"),
+        ("ABEONA THERAPEUTICS INC-CW19", "ABEONA THERAPEUTICS INC"),
+        ("ADEIA INC-W/I", "ADEIA INC"),
+        ("ALITHYA GROUP INC-CLASS A", "ALITHYA GROUP INC"),
+        ("ALKERMES PLC-WI", "ALKERMES PLC"),
+        ("APEX TREASURY CORP-CL A", "APEX TREASURY CORP"),
+        ("ATOUR LIFESTYLE HOLDINGS-ADR", "ATOUR LIFESTYLE HOLDINGS"),
+        # No descriptor suffix present -> unchanged.
+        ("Agilent Technologies, Inc.", "Agilent Technologies, Inc."),
+        (None, ""),
+    ],
+)
+def test_strip_security_descriptors(raw: str | None, expected: str) -> None:
+    assert strip_security_descriptors(raw) == expected
+
+
+def test_match_by_name_falls_back_to_descriptor_stripped_name() -> None:
+    """The exact case that motivated the fallback: OpenFIGI's `name` field carries a
+    ticker-level descriptor suffix ("-SPON ADR") that isn't part of the real legal
+    name and blocks a plain exact match, but the descriptor-stripped name matches
+    SEC's current company list exactly."""
+    sec_tickers = pl.DataFrame(
+        {"sec_cik": ["0000313216"], "sec_name": ["ABB Ltd"], "sec_ticker": ["ABB"]}
+    )
+    index = build_name_cik_index(sec_tickers)
+    era_identity = pl.DataFrame(
+        {"symbol_era_id": ["ABB#001"], "identity_issuer": ["ABB LTD-SPON ADR"]}
+    )
+
+    matched = match_by_name(era_identity, index)
+
+    assert matched["name_matched_cik"][0] == "313216"
+
+
+def test_match_by_name_plain_match_wins_over_stripped() -> None:
+    """When the plain name already matches exactly, the fallback pass shouldn't need
+    to run at all — same result either way, but plain takes priority."""
+    sec_tickers = pl.DataFrame(
+        {"sec_cik": ["0000000001"], "sec_name": ["Example Co"], "sec_ticker": ["EX"]}
+    )
+    index = build_name_cik_index(sec_tickers)
+    era_identity = pl.DataFrame({"symbol_era_id": ["EX#001"], "identity_issuer": ["Example Co"]})
+
+    matched = match_by_name(era_identity, index)
+
+    assert matched["name_matched_cik"][0] == "1"
 
 
 def test_require_columns_raises_on_missing() -> None:

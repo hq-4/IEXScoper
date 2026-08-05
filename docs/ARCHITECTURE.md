@@ -127,22 +127,29 @@ name but no automatic path to a CIK:
   Ambiguous names (two distinct CIKs normalizing identically) are dropped rather than guessed.
   This is `utils/sector_cik_reconcile.py`'s new **Tier D**: unlike Tier C (current-ticker-match),
   a name match applies to *any* class including dead-ticker ones, since a company keeps roughly
-  the same name even after its old ticker gets reused by someone else.
+  the same name even after its old ticker gets reused by someone else. `match_by_name` also tries
+  a second exact match after stripping trailing Bloomberg/OpenFIGI security-descriptor suffixes
+  (`-CW23`, `-ADR`, `W/I`, `-CLASS A`, …, folded into OpenFIGI's `name` field but not part of the
+  real legal name) — still a strict exact match against the same unambiguous index, not fuzzy. A
+  broader token-subset/fuzzy matcher was evaluated and **rejected**: on real data it matched
+  "1895 Bancorp of Wisconsin" to an unrelated company simply named "Bancorp" (a single generic
+  token satisfying a naive subset check) — exactly the wrong-company risk this module exists to
+  avoid, so it was not built.
 - `utils/sector_enrichment_inputs.py` wires both into `build_era_sector_enriched.py`: the stable
   OpenFIGI classification feeds a new `instrument_class` column (COALESCE of `identity_instrument`
   and the stable-universe class) and a new `sic_coverage_status=fund_no_sic_needed` value, and Tier
   D adds to CIK reconciliation. Both inputs degrade gracefully (skipped, not an error) if their
   source file doesn't exist yet.
 
-**Live run results, before -> after the two automation passes** (zero errors either run):
+**Live run results, before -> after all automation passes** (zero errors, any run):
 
 | | Before | After |
 |---|---:|---:|
-| Distinct CIKs resolved | 6,087 | 6,562 |
-| Eras with real SIC + sector | 6,836 (18.5%) | 8,417 (22.8%) |
+| Distinct CIKs resolved | 6,087 | 6,605 |
+| Eras with real SIC + sector | 6,836 (18.5%) | 8,716 (23.6%) |
 | Eras correctly excluded as funds/ETFs | 0 | 11,767 |
-| **Manual-research worklist size** | 29,597 eras / 1.12B trade rows | **16,181 eras / 528M trade rows** |
-| Worklist top-500 volume concentration | 64.7% | 72.9% |
+| **Manual-research worklist size** | 29,597 eras / 1.12B trade rows | **15,882 eras / 492M trade rows** |
+| Worklist top-500 volume concentration | 64.7% | 72.5% |
 
 `stable_candidate`'s `no_cik` count alone dropped from 542 to 13 — virtually every stable ticker
 now either has a real SIC/sector or is correctly identified as a fund. [CA][IV][REH][CDiP][KBT]

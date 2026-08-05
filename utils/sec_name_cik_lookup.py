@@ -7,7 +7,18 @@ reused by someone else, so a name match doesn't carry the same "wrong company" r
 current-ticker match does. Only unambiguous exact-normalized-name matches are ever
 returned; a name that normalizes to more than one distinct CIK is treated as no match
 rather than guessed — aggressive normalization is safe here precisely because ambiguity
-falls back to "no match," never a wrong pick. [CA][IV][KBT]
+falls back to "no match," never a wrong pick.
+
+`match_by_name` tries two exact matches against the same unambiguous index, not a fuzzy
+one: the plain normalized `identity_issuer`, and — if that misses — the same name with
+trailing Bloomberg/OpenFIGI security-descriptor tokens stripped first (`-CW23`, `-ADR`,
+`W/I`, `-CLASS A`, …; ticker-level metadata OpenFIGI folds into its `name` field, not
+part of the real legal name). Measured on the live worklist: this alone recovers 180
+additional exact matches (299 era rows) with zero new ambiguity risk. A broader
+token-subset/fuzzy matcher was evaluated and rejected — on real data it matched names
+like "1895 Bancorp of Wisconsin" to an unrelated company simply named "Bancorp" (a
+single generic token satisfying a naive subset check), which is exactly the kind of
+wrong-company risk this module exists to avoid. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -44,6 +55,24 @@ LEGAL_SUFFIXES = frozenset(
 )
 NON_ALNUM = re.compile(r"[^A-Z0-9 ]+")
 
+# Bloomberg/OpenFIGI appends these to a security's `name` field to distinguish share
+# classes, warrants, ADRs, and when-issued lines — they're ticker/security metadata,
+# never part of the issuer's actual legal name, so stripping them before matching is
+# safe (unlike guessing at genuine name variation).
+DESCRIPTOR_PATTERNS = (
+    re.compile(r"-CW\d+$", re.IGNORECASE),
+    re.compile(r"-SPON ADR$", re.IGNORECASE),
+    re.compile(r"-ADR$", re.IGNORECASE),
+    re.compile(r"[-\s]*W/I$", re.IGNORECASE),
+    re.compile(r"-CL [A-Z]$", re.IGNORECASE),
+    re.compile(r"-CLASS [A-Z]$", re.IGNORECASE),
+    re.compile(r"-NEW$", re.IGNORECASE),
+    re.compile(r"-WI$", re.IGNORECASE),
+    re.compile(r"-WTS?$", re.IGNORECASE),
+    re.compile(r"-RTS$", re.IGNORECASE),
+    re.compile(r"-UNITS?$", re.IGNORECASE),
+)
+
 
 def normalize_name(value: str | None) -> str:
     """Uppercase, strip punctuation, and drop trailing legal-entity suffix tokens
@@ -53,6 +82,15 @@ def normalize_name(value: str | None) -> str:
     while tokens and tokens[-1] in LEGAL_SUFFIXES:
         tokens.pop()
     return " ".join(tokens)
+
+
+def strip_security_descriptors(value: str | None) -> str:
+    """Remove trailing OpenFIGI/Bloomberg security-descriptor suffixes (see
+    `DESCRIPTOR_PATTERNS`) before normalization, e.g. "ABB LTD-SPON ADR" -> "ABB LTD"."""
+    text = str(value or "")
+    for pattern in DESCRIPTOR_PATTERNS:
+        text = pattern.sub("", text)
+    return text
 
 
 def build_name_cik_index(sec_tickers: pl.DataFrame) -> pl.DataFrame:
@@ -80,10 +118,33 @@ def build_name_cik_index(sec_tickers: pl.DataFrame) -> pl.DataFrame:
 
 def match_by_name(era_identity: pl.DataFrame, name_index: pl.DataFrame) -> pl.DataFrame:
     """era_identity needs `symbol_era_id`, `identity_issuer`. Returns one row per era:
-    `symbol_era_id`, `name_matched_cik` (unpadded, null when no unambiguous match)."""
+    `symbol_era_id`, `name_matched_cik` (unpadded, null when neither the plain nor the
+    descriptor-stripped normalized name has an unambiguous match)."""
     require_columns(era_identity, ("symbol_era_id", "identity_issuer"))
-    normalized = era_identity.select("symbol_era_id", "identity_issuer").with_columns(
+    base = era_identity.select("symbol_era_id", "identity_issuer")
+    plain_cik = _match_one_pass(base, name_index, "identity_issuer").rename(
+        {"name_matched_cik": "cik_plain"}
+    )
+    stripped = base.with_columns(
         pl.col("identity_issuer")
+        .map_elements(strip_security_descriptors, return_dtype=pl.String)
+        .alias("stripped_issuer")
+    )
+    stripped_cik = _match_one_pass(stripped, name_index, "stripped_issuer").rename(
+        {"name_matched_cik": "cik_stripped"}
+    )
+    return (
+        plain_cik.join(stripped_cik, on="symbol_era_id", how="left")
+        .with_columns(pl.coalesce(["cik_plain", "cik_stripped"]).alias("name_matched_cik"))
+        .select("symbol_era_id", "name_matched_cik")
+    )
+
+
+def _match_one_pass(
+    frame: pl.DataFrame, name_index: pl.DataFrame, name_column: str
+) -> pl.DataFrame:
+    normalized = frame.select("symbol_era_id", name_column).with_columns(
+        pl.col(name_column)
         .map_elements(normalize_name, return_dtype=pl.String)
         .alias("normalized_name")
     )
