@@ -67,3 +67,11 @@ or contact-header contents. [REH][SFT][RM]
   - `openfigi_enrichment_complete`
 - OpenFIGI logs include whether an API key was present as a boolean only; the key value is never logged.
 - OpenFIGI response details are stored in `openfigi_cache.jsonl` under the selected report root for request de-duplication and later audit.
+
+## OpenFIGI Identity Pillar, Event Catalog & Era-Identity Enrichment
+
+- Keyed OpenFIGI identity enrichment logs to `reports/openfigi-identity/openfigi_identity.jsonl` with `openfigi_identity_start`, `openfigi_identity_no_api_key` (missing-key warning, not an abort), `openfigi_identity_cache_resolved`, `openfigi_identity_batch_complete`, and `openfigi_identity_complete` events; the cache lives at `data/openfigi/identity_cache.jsonl`.
+- Event catalog coverage probes log to `reports/event-catalog-probe/event_catalog_probe.jsonl` with `event_catalog_probe_start`/`event_catalog_probe_complete`, and fetch/parse caches to `data/event_catalog/cache/`.
+- Era-binding staging and the confidence-tiered apply step both log to the default `logs/app.jsonl` dual-sink path rather than a dedicated report-root sink.
+- Era×identity enrichment logs to `reports/era-identity/era_identity_enriched.jsonl` with a single `era_identity_enriched` completion event carrying the full coverage summary (tier breakdown, usable-default counts, fund/ETF median span) as `detail`; the summary is also persisted separately as `reports/era-identity/summary.json`.
+- As with all resolution-store apply tools, no OpenFIGI key value or SEC filing body ever enters these logs — only booleans, counts, and bounded metadata. [SFT]

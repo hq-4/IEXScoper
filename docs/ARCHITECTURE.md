@@ -31,6 +31,47 @@ The primary invariant is that workflow closure, local observation, heuristic ins
 verified identity, and verified endpoint event are different facts. Eligibility requires the
 applicable hard gates; absence of evidence is never converted into event proof. [CA][REH][PA]
 
+## OpenFIGI Identity Pillar, Event Catalog & Era-Identity Enrichment
+
+A second identity source layered on top of the V3 evidence-delta store — coverage-first
+rather than SEC-grade proof-first, feeding V3 as confidence-tiered facts rather than
+replacing its gates. Plan and phase-by-phase status: `docs/EVENT_CATALOG_RESOLUTION_PLAN.md`.
+
+- `openfigi_identity_core.py` is the keyed `/v3/mapping` client (`includeUnlistedEquities=true`
+  recall unlock, batch 100, backoff on 429/5xx, single-job fallback), with a resume-safe
+  JSONL cache at `data/openfigi/identity_cache.jsonl` retaining ALL FIGI matches per symbol
+  (unlike the older `openfigi_enrichment_core.py`, which keeps only `data[0]`).
+- `build_openfigi_symbol_identities.py` runs the keyed enrichment over every symbol in
+  `observation_facts.jsonl` and writes `reports/openfigi-identity/` (`symbol_figi_map.parquet`,
+  `era_classes.parquet`, `summary.json`) with the authoritative instrument census.
+- `openfigi_recall_experiment.py`, `openfigi_recall_full_pass.py`, and
+  `openfigi_recall_metrics.py` measured the `includeUnlistedEquities` recall unlock against
+  verified-dead ground truth before the full-universe pass was approved.
+- `event_catalog_sources.py`, `event_catalog_fetch.py`, and `event_catalog_join.py` fetch and
+  ticker-bind the SEC Form 25 corpus (display-name, issuer-name, and security-name binding)
+  into a normalized event catalog under `data/event_catalog/cache/`.
+- `probe_event_catalog_coverage.py` measures per-instrument-class era join yield before the
+  catalog is trusted as an event source.
+- `openfigi_era_binding.py` stages OpenFIGI identity candidates and Form 25 event candidates
+  as V3 facts (`verification_state=candidate`), corroboration-tiered against Form 25 and SEC
+  current names; nothing applies at this stage.
+- `build_openfigi_identity_candidates.py` is the staging CLI; `apply_openfigi_identity_candidates.py`
+  is the dry-run-first, idempotent apply step that writes confidence-tiered facts
+  (`corroborated`, `openfigi_asserted` with `contested` conflict flags) into the canonical
+  `identity_facts.jsonl`/`event_facts.jsonl` store. It never overwrites `verified` (SEC-grade)
+  facts and skips eras that already have one.
+- `build_era_identity_enriched.py` is the read-side product: it joins the best-tier identity
+  (`verified` > `corroborated` > `openfigi_asserted`, `contested` excluded from the
+  default-usable view) and best event fact onto every `symbol_era_id` in `symbol_eras.parquet`,
+  deriving `era_span_days`, and writes `reports/era-identity/eras_identity_enriched.parquet`.
+  It is the first single table joining identity/event assurance tiers onto the full era
+  universe rather than requiring callers to join `data/resolution/*.jsonl` by hand.
+
+Confidence-tier invariant: `verified` facts are SEC-grade and never rewritten by OpenFIGI
+tooling; `corroborated` and `openfigi_asserted` are coverage aids with measured ~68-74%
+ground-truth agreement, so any downstream join must choose its assurance tier explicitly
+rather than treating all `identity_facts.jsonl` rows as equally trustworthy. [CA][IV][SFT][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.
