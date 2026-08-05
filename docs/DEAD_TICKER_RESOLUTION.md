@@ -76,23 +76,51 @@ applied after false-positive review. V3 invalidates that stage and its local aud
 records are not reproduced by V3; they require evidence review or explicit supersession
 before the canonical store can be called V3-clean. [REH][RM][KBT]
 
-## Next Methodology: OpenFIGI Identity Pillar + Event Catalog
+## OpenFIGI Identity Pillar + Event Catalog (done, applied 2026-08-04)
 
-As of 2026-08-03 the narrative-first SEC lanes are assessed as plateaued at ~1% yield.
-The approved next stage (full plan: `docs/EVENT_CATALOG_RESOLUTION_PLAN.md`) adds two
-pillars that feed the V3 staging flow as review-only candidates:
+As of 2026-08-03 the narrative-first SEC lanes were assessed as plateaued at ~1% yield.
+The approved next stage (full plan and phase-by-phase status: `docs/EVENT_CATALOG_RESOLUTION_PLAN.md`)
+added two pillars that fed the V3 staging flow as review-only candidates and have since
+been tiered-applied into the canonical store:
 
-1. **OpenFIGI keyed enrichment** (in progress): dead FIGIs remain queryable, so a
-   full-universe `/v3/mapping` pass over all cohort symbols attaches named, typed
-   identity candidates and produces an authoritative instrument reclassification
-   (including the first real fund/ETF census). OpenFIGI has no validity dates, so it
-   identifies *what* a ticker was, not *when*.
-2. **Evidence-first event catalog** (pending Phase 1 review gate): enumerate
-   authoritative delisting artifacts (SEC Form 25, NasdaqTrader delisted file, fund
-   N-8F deregistrations) and join to eras on ticker+date, supplying the *when*.
+1. **OpenFIGI keyed enrichment** (done): dead FIGIs remain queryable, so a keyed
+   full-universe `/v3/mapping` pass (`includeUnlistedEquities=true`) over all `~13k`
+   cohort symbols matched `67.5%` and produced an authoritative instrument
+   reclassification — `fund_etf` is `29.35%` of eras, ~4.5× the prior regex estimate.
+   OpenFIGI has no validity dates, so it identifies *what* a ticker was, not *when*.
+2. **Evidence-first event catalog** (done): the full SEC Form 25 corpus (9,691
+   filings, 2016–2026) was fetched and ticker-bound, yielding 356 era matches (1.9% of
+   the unresolved baseline) — high precision but structurally small, since most
+   unresolved eras are intermittent/thin symbols rather than delistings.
+3. **Tiered apply** (done, zero manual review per user decision): `identity_facts.jsonl`
+   is now confidence-tiered — `verified` `818` (SEC-grade, unchanged), `corroborated`
+   `1,580` (OpenFIGI agrees with Form 25 or SEC current name), `openfigi_asserted`
+   `14,179` (`1,323` flagged `contested`, excluded from default joins) — plus `600`
+   event facts (`145` verified, `455` `event_candidate`). Ground-truth measurement vs
+   the 818 SEC-verified identities showed 68% exact / 74% high-similarity entity
+   agreement, so the tiers are coverage aids, not SEC-grade proof; downstream queries
+   must select their assurance tier explicitly. Apply tool:
+   `utils/apply_openfigi_identity_candidates.py` (dry-run default, idempotent, skips
+   eras with verified identity).
 
-Nothing auto-applies: all output lands in `data/resolution/staged/<stage_id>/` and
-follows the same dry-run-first, review-gated apply discipline as every V3 stage.
+### Era×Identity Enriched Product (done 2026-08-04)
+
+`utils/build_era_identity_enriched.py` joins the best-tier identity (verified >
+corroborated > openfigi_asserted, `contested` excluded from the default-usable view)
+and best event fact onto **all** `36,866` symbol eras (stable and non-stable), and
+derives `era_span_days` from `first_day`/`last_day`. This is the first single table
+that answers "what was this ticker era and when did it exist" without joining the
+raw fact stores by hand.
+
+```bash
+uv run python utils/build_era_identity_enriched.py
+```
+
+Output: `reports/era-identity/eras_identity_enriched.parquet` (+ `summary.json`).
+Coverage: `15,254` default-usable eras / `790.2M` trade rows; `20,289` eras remain
+identity-less (mostly stable candidates outside the resolution cohort). First payoff
+stat: `fund_etf` median era span is **34 days**, making the launch→spin-down ETF
+cohort directly queryable for the first time.
 
 This workflow turns the unresolved ticker-era queue into auditable manual identity overrides.
 

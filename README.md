@@ -19,12 +19,20 @@ snapshots, with verified facts stored as canonical JSONL.
   large multi-year backfills
 - **Derived research datasets**: symbol eras, daily trade bars, stable-universe panel, and
   stable returns tables
-- **Dead-ticker identity resolution (V3)**: an evidence-delta program over the stable
+- **Dead-ticker identity resolution (V3)**: an evidence-delta program over the quarantined
   25,622-era cohort. Canonical identity, event, observation, attempt, and research-decision
   facts with deterministic IDs live as JSONL under `data/resolution/`, backed by a shared
   SQLite request/resume registry. Identity and event proof stay separate; eligibility
   requires hard gates, and absence of evidence is never promoted to proof. Dry runs stage
   deterministically; `--apply` promotes with zero network calls
+- **OpenFIGI identity pillar + SEC Form 25 event catalog**: a coverage-first identity source
+  layered on top of V3 evidence. Canonical `identity_facts.jsonl` is confidence-tiered
+  (`verified` 818 SEC-grade, `corroborated` 1,580, `openfigi_asserted` 14,179 with 1,323
+  `contested` conflicts excluded from default joins) via a dry-run-first, idempotent apply
+  tool that never rewrites `verified` facts
+- **Era×identity enriched product**: joins the best-tier identity and event fact onto all
+  36,866 symbol eras with derived era spans — 15,254 default-usable eras / 790.2M trade rows
+  in one queryable table (`reports/era-identity/eras_identity_enriched.parquet`)
 - **Identity-first SEC resolution**: resumable workflows for high-impact, lifecycle, and
   terminal eras — unique date-scoped CIK anchoring, overlapping historical submissions shards,
   bounded snippet scoring, and conservative import gates
@@ -80,6 +88,7 @@ snapshots, with verified facts stored as canonical JSONL.
    | `DISPLAY_TZ` | Display timezone | `America/New_York` |
    | `LOG_JSONL_PATH` | Structured log file | `logs/app.jsonl` |
    | `DATABASE_URL` | Optional Postgres metadata store | — |
+   | `OPENFIGI_API_KEY` | Optional OpenFIGI key (keyed enrichment; unset falls back to unkeyed rate limits) | — |
 
    Backfills assume large local NVMe scratch (guarded by `--min-scratch-free-gb`, typically
    120–200 GB) and a publish target such as a NAS mount.
@@ -184,7 +193,8 @@ Some `utils/` workflows call external APIs and require polite configuration:
 
 - **IEX HIST** (`https://iextrading.com/api/1.0/hist`) — PCAP capture downloads
 - **SEC EDGAR** — ticker/submissions APIs and full-text search (custom User-Agent required)
-- **OpenFIGI** — instrument mapping (rate-limited, responses cached)
+- **OpenFIGI** — instrument mapping (rate-limited, responses cached; `OPENFIGI_API_KEY` raises
+  throughput from ~10 jobs/request at 25 req/min to ~100 jobs/request at ~25k jobs/min)
 
 ## License
 

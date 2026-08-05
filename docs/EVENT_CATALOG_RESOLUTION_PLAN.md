@@ -50,6 +50,15 @@ updated as phases complete. [CDiP]
   `utils/apply_openfigi_identity_candidates.py` (dry-run default, idempotent, skips
   eras with verified identity; `--apply` to write). Downstream queries choose their
   assurance tier; nothing was overwritten or deleted.
+- **Era×identity enriched product: done** (2026-08-04). `utils/build_era_identity_enriched.py`
+  joins best-tier identity (`verified` > `corroborated` > `openfigi_asserted`, `contested`
+  excluded from the default-usable view) and best event fact onto all `36,866` symbol eras,
+  with derived `era_span_days`. Coverage: `15,254` default-usable eras / `790.2M` trade rows;
+  `20,289` eras remain identity-less (mostly stable candidates outside the resolution
+  cohort). First payoff stat: `fund_etf` median era span is **34 days**, making the
+  launch→spin-down ETF cohort directly queryable. Output:
+  `reports/era-identity/eras_identity_enriched.parquet`. This closes the loop from
+  "identity/event facts exist" to "one table answers what-and-when per era."
 
 ## Assessment
 
@@ -97,7 +106,7 @@ replaces the regex estimate with an authoritative fund/ETF count.
   *what* a ticker was, not *when*. Era binding still needs date evidence — exactly
   what the event catalog (Phase 2+) provides. The pillars compose.
 
-## Phase 1 — OpenFIGI keyed full-universe enrichment (in progress)
+## Phase 1 — OpenFIGI keyed full-universe enrichment (design spec; done — see Status above)
 
 - **Key plumbing**: new CLI calls `load_dotenv()` before reading `OPENFIGI_API_KEY`
   (the existing `utils/enrich_symbol_stability_openfigi.py` does not load `.env`;
@@ -123,16 +132,20 @@ replaces the regex estimate with an authoritative fund/ETF count.
 - Tests in `tests/test_openfigi_identity.py` with recorded responses (no live
   network): multi-match retention, cache resume, classification, era join.
 
-## Phases 2+ — evidence-first event catalog (pending Phase 1 review gate)
+## Phases 2+ — evidence-first event catalog (design spec; Form 25 done — see Status above)
 
 Rationale unchanged: delistings/deregistrations/fund closures are structured facts
 published by authoritative sources; enumerate catalogs and join to eras on
 ticker+date instead of crawling filings per ticker.
 
 1. **SEC Form 25 / 25-NSE** (EFTS, 2016–2026): exchange-filed delisting notice;
-   ticker + effective date. Tier: authoritative. **Probe status: running.**
+   ticker + effective date. Tier: authoritative. **Probe status: done** (9,691
+   filings fetched and parsed; see Phase 2 in Status above). Form 25 parser work
+   stopped here on diminishing returns; N-8F below was not pursued.
 2. **SEC N-8F / N-8F-NTC**: fund deregistration; trust CIK + series names. The
-   ETF-tail killer. Tier: authoritative. **Added after Form 25 probe numbers land.**
+   ETF-tail killer. Tier: authoritative. **Not pursued** — deprioritized after Form 25
+   yield came in structurally small (1.9% of unresolved eras); would need its own
+   yield case to justify before starting.
 3. ~~NasdaqTrader `nasdaqdelisted.txt`~~ — **discontinued** (verified 2026-08-04:
    302→404; FTP mirror dead). Only current-listing files survive; dropped as a source.
 4. ~~Wikipedia defunct-ETF list~~ — **does not exist** (verified 2026-08-04; was an
