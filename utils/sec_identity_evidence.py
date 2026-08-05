@@ -9,6 +9,7 @@ IDENTITY_BEFORE_DAYS = 45
 IDENTITY_AFTER_DAYS = 90
 CIK_PATTERN = re.compile(r"\(\s*CIK\s+0*([0-9]+)\s*\)\s*$", re.IGNORECASE)
 TICKER_PATTERN = re.compile(r"\(([^()]*)\)\s*\(\s*CIK\s+[0-9]+\s*\)\s*$", re.IGNORECASE)
+ARCHIVE_CIK_PATTERN = re.compile(r"/Archives/edgar/data/(\d+)/")
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,18 @@ def parse_display_name(
     )
     issuer = re.sub(r"\s+", " ", value[:cutoff]).strip(" ,")
     return IdentityEvidence(issuer, cik, tickers, filing_date, accession_no, document_url, source)
+
+
+def parse_cik_from_archive_url(url: str) -> str:
+    """Recover a CIK from an EDGAR archive document URL
+    (`https://www.sec.gov/Archives/edgar/data/<CIK>/...`) when a fact's structured CIK
+    field is empty but its `source` URL still is one. Used for the 364
+    `legacy_historical_override` verified identity facts, whose `entity_id` was migrated
+    empty (flag `migrated_without_entity_id`) but whose `source` is still a real EDGAR
+    URL for 361/364 of them. Returns `""` (not `None`) when no CIK is recoverable, to
+    match `parse_display_name`'s `IdentityEvidence.cik` convention above. [CDiP]"""
+    match = ARCHIVE_CIK_PATTERN.search(url or "")
+    return match.group(1) if match else ""
 
 
 def parse_tickers(value: str) -> tuple[str, ...]:
