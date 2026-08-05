@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- feat: add a descriptor-stripping fallback to `utils.sec_name_cik_lookup.match_by_name` — strips
+  trailing Bloomberg/OpenFIGI security-descriptor suffixes (`-CW23`, `-ADR`, `W/I`, `-CLASS A`, …)
+  before a second exact-match attempt against SEC's current company-name list; still strict exact
+  matching, no fuzziness added. Recovers 299 more era rows (35.8M trade rows). A token-subset/fuzzy
+  matcher was evaluated and rejected after it produced a real wrong-company match on live data.
+  Manual-research worklist: 16,181 -> 15,882 eras, 528M -> 492M trade rows `[CA][IV][REH][CDiP][KBT]`
+
 - feat: shrink the sector manual-research worklist by automating what didn't need to be manual —
   `utils/build_openfigi_stable_universe.py` extends OpenFIGI classification to the
   `stable_candidate`/`ipo_or_new_listing_candidate` universe (11,244 eras, 43.3% funds/ETFs), and
