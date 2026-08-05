@@ -4,7 +4,10 @@ automatic SIC/sector), for manual per-ticker research. Mirrors
 `trade_rows` descending so research time goes to the highest-impact tickers first;
 `has_googleable_name` flags rows that at least carry an OpenFIGI-asserted issuer name
 (easier to search for) versus the fully identity-less tail (just a ticker symbol).
-[CA][CDiP]
+
+Rows tagged `sic_coverage_status=fund_no_sic_needed` (a fund/ETF per the OpenFIGI
+instrument classification) are excluded entirely — those aren't research targets, they
+need "this is a fund," not a SIC industry lookup a human has to go find. [CA][CDiP]
 """
 
 from __future__ import annotations
@@ -39,8 +42,10 @@ REQUIRED_COLUMNS = (
     "identity_tier",
     "identity_issuer",
     "identity_instrument",
+    "instrument_class",
     "cik_source",
     "resolved_cik",
+    "sic_coverage_status",
 )
 WORKLIST_COLUMNS = [
     "priority_rank",
@@ -52,10 +57,11 @@ WORKLIST_COLUMNS = [
     "last_day",
     "identity_tier",
     "identity_issuer",
-    "identity_instrument",
+    "instrument_class",
     "has_googleable_name",
     "cik_source",
 ]
+FUND_NO_SIC_NEEDED = "fund_no_sic_needed"
 MANUAL_COLUMNS = ("manual_cik", "manual_sic", "manual_notes")
 
 
@@ -87,7 +93,7 @@ def build_sector_worklist(config: SectorWorklistConfig) -> dict[str, Any]:
     config.output_root.mkdir(parents=True, exist_ok=True)
     frame = load_eras_sector_enriched(config.eras_sector_enriched_path)
     worklist = prioritize_no_cik(frame)
-    summary = build_summary(config, worklist)
+    summary = build_summary(config, worklist, count_excluded_funds(frame))
     write_outputs(config.output_root, worklist, summary, config.top_n)
     return {"summary": summary, "rows": worklist.head(config.top_n).to_dicts()}
 
@@ -111,8 +117,9 @@ def load_eras_sector_enriched(path: Path) -> pl.DataFrame:
 
 
 def prioritize_no_cik(frame: pl.DataFrame) -> pl.DataFrame:
+    is_fund = (pl.col("sic_coverage_status") == FUND_NO_SIC_NEEDED).fill_null(False)
     return (
-        frame.filter(pl.col("resolved_cik").is_null())
+        frame.filter(pl.col("resolved_cik").is_null() & ~is_fund)
         .with_columns(pl.col("identity_issuer").is_not_null().alias("has_googleable_name"))
         .sort("trade_rows", descending=True)
         .with_row_index("priority_rank", offset=1)
@@ -121,13 +128,24 @@ def prioritize_no_cik(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def build_summary(config: SectorWorklistConfig, worklist: pl.DataFrame) -> dict[str, Any]:
+def count_excluded_funds(frame: pl.DataFrame) -> int:
+    """Eras excluded from the worklist because they're a fund/ETF, not because they're
+    resolved — surfaced in the summary so the exclusion is visible, not silent."""
+    is_fund = (pl.col("sic_coverage_status") == FUND_NO_SIC_NEEDED).fill_null(False)
+    return frame.filter(pl.col("resolved_cik").is_null() & is_fund).height
+
+
+def build_summary(
+    config: SectorWorklistConfig, worklist: pl.DataFrame, excluded_fund_count: int
+) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "method": "eras with no resolved CIK, ranked by trade_rows for manual sector research",
+        "method": "eras with no resolved CIK, ranked by trade_rows for manual sector research; "
+        "funds/ETFs excluded (they don't need a SIC industry lookup)",
         "eras_sector_enriched_path": str(config.eras_sector_enriched_path),
         "worklist_era_count": worklist.height,
         "worklist_trade_rows": int(worklist["trade_rows"].sum() or 0),
+        "excluded_fund_count": excluded_fund_count,
         "top_n": min(config.top_n, worklist.height),
         "has_googleable_name_count": int(worklist["has_googleable_name"].sum()),
         "classification_counts": count_by(worklist, "source_classification"),
@@ -138,6 +156,8 @@ def build_summary(config: SectorWorklistConfig, worklist: pl.DataFrame) -> dict[
             "proof of identity and may itself be wrong for a reused ticker.",
             "manual_cik/manual_sic/manual_notes are blank by design, for the researcher's own "
             "findings; there is no re-import tool for this file yet.",
+            f"{excluded_fund_count} no-CIK eras were excluded entirely as funds/ETFs "
+            "(sic_coverage_status=fund_no_sic_needed) rather than left as research targets.",
         ],
     }
 
@@ -163,9 +183,11 @@ def write_markdown(path: Path, top_rows: pl.DataFrame, summary: dict[str, Any]) 
         "# Sector Manual Research Worklist",
         "",
         "Eras with no automatically-resolved CIK (and therefore no automatic SIC/sector),",
-        "ranked by trade volume for manual per-ticker research.",
+        "ranked by trade volume for manual per-ticker research. Funds/ETFs are excluded —",
+        "they don't need a SIC industry lookup.",
         "",
         f"- Worklist eras: `{summary['worklist_era_count']}`",
+        f"- Excluded as funds/ETFs (not research targets): `{summary['excluded_fund_count']}`",
         f"- Worklist trade rows: `{summary['worklist_trade_rows']}`",
         f"- Rows with a googleable issuer name already asserted: `{summary['has_googleable_name_count']}`",
         f"- Top rows shown: `{summary['top_n']}`",

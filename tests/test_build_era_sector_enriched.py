@@ -73,6 +73,8 @@ def test_build_era_sector_enriched_skip_fetch(tmp_path: Path) -> None:
         SectorConfig(
             era_identity_path=era_identity_path,
             sec_ticker_cik_path=sec_path,
+            stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
+            sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
             output_root=output_root,
             registry_path=tmp_path / "registry.sqlite",
             skip_fetch=True,
@@ -127,6 +129,8 @@ def test_build_era_sector_enriched_with_fetch(tmp_path: Path, monkeypatch: Any) 
         SectorConfig(
             era_identity_path=era_identity_path,
             sec_ticker_cik_path=sec_path,
+            stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
+            sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
             output_root=output_root,
             registry_path=tmp_path / "registry.sqlite",
             user_agent="test test@example.test",
@@ -145,3 +149,112 @@ def test_build_era_sector_enriched_with_fetch(tmp_path: Path, monkeypatch: Any) 
     assert rows["DDD#001"]["sic_coverage_status"] == "no_cik"
     assert result["summary"]["network_requests"] == 2
     assert result["summary"]["cache_hits"] == 0
+
+
+def test_fund_reclassification_from_stable_openfigi_universe(tmp_path: Path) -> None:
+    """BBB is stable_candidate with no resolved SIC path; if the stable-universe
+    OpenFIGI classification says it's a fund, it should read fund_no_sic_needed, not
+    no_cik — an ETF doesn't need manual sector research, it needs "this is a fund"."""
+    era_identity_path, sec_path = _write_inputs(tmp_path)
+    stable_path = tmp_path / "stable_era_classes.parquet"
+    pl.DataFrame({"symbol_era_id": ["BBB#001"], "openfigi_class": ["fund_etf"]}).write_parquet(
+        stable_path
+    )
+    output_root = tmp_path / "out"
+
+    build_era_sector_enriched(
+        SectorConfig(
+            era_identity_path=era_identity_path,
+            sec_ticker_cik_path=sec_path,
+            stable_openfigi_path=stable_path,
+            sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
+            output_root=output_root,
+            registry_path=tmp_path / "registry.sqlite",
+            skip_fetch=True,
+        )
+    )
+
+    enriched = pl.read_parquet(output_root / "eras_sector_enriched.parquet")
+    rows = {row["symbol_era_id"]: row for row in enriched.iter_rows(named=True)}
+    # BBB already resolves a CIK via Tier C in this fixture, so it stays cik_no_sic —
+    # the fund reclassification only matters once no CIK/SIC resolved at all.
+    assert rows["BBB#001"]["instrument_class"] == "fund_etf"
+    # CCC has no CIK (dead-review class, Tier C doesn't apply) and no OpenFIGI class at
+    # all in this fixture, so it's still genuinely unresolved.
+    assert rows["CCC#001"]["sic_coverage_status"] == "no_cik"
+
+
+def test_fund_no_sic_needed_when_no_cik_and_no_sic(tmp_path: Path) -> None:
+    era_identity_path, sec_path = _write_inputs(tmp_path)
+    stable_path = tmp_path / "stable_era_classes.parquet"
+    # CCC has no automatic CIK path (dead-review class); mark it as a fund.
+    pl.DataFrame({"symbol_era_id": ["CCC#001"], "openfigi_class": ["fund_etf"]}).write_parquet(
+        stable_path
+    )
+    output_root = tmp_path / "out"
+
+    build_era_sector_enriched(
+        SectorConfig(
+            era_identity_path=era_identity_path,
+            sec_ticker_cik_path=sec_path,
+            stable_openfigi_path=stable_path,
+            sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
+            output_root=output_root,
+            registry_path=tmp_path / "registry.sqlite",
+            skip_fetch=True,
+        )
+    )
+
+    enriched = pl.read_parquet(output_root / "eras_sector_enriched.parquet")
+    rows = {row["symbol_era_id"]: row for row in enriched.iter_rows(named=True)}
+    assert rows["CCC#001"]["sic_coverage_status"] == "fund_no_sic_needed"
+
+
+def test_tier_d_name_match_resolves_a_cik_end_to_end(tmp_path: Path) -> None:
+    """EEE has an OpenFIGI-asserted issuer name (FIGI in identity_entity_id, no CIK
+    path via Tiers A-C) — Tier D should still resolve it by matching that name against
+    SEC's current company list."""
+    era_identity_path = tmp_path / "eras_identity_enriched.parquet"
+    sec_path = tmp_path / "symbol_eras_sec_enriched.parquet"
+    pl.DataFrame(
+        {
+            "symbol": ["EEE"],
+            "symbol_era_id": ["EEE#001"],
+            "source_classification": ["delisted_or_acquired_candidate"],
+            "trade_rows": [500],
+            "identity_tier": ["openfigi_asserted"],
+            "identity_issuer": ["Atlantic American Corp"],
+            "identity_entity_id": ["BBG000BLNNH6"],
+            "identity_method": ["openfigi_symbol_identity"],
+            "identity_instrument": ["equity_common"],
+            "identity_source_url": [None],
+        },
+        schema=ERA_IDENTITY_SCHEMA,
+    ).write_parquet(era_identity_path)
+    pl.DataFrame(
+        {"symbol_era_id": ["EEE#001"], "sec_cik": [None], "sec_current_confidence": [None]},
+        schema=SEC_TICKER_CIK_SCHEMA,
+    ).write_parquet(sec_path)
+    sec_names_path = tmp_path / "sec_company_tickers_exchange.parquet"
+    pl.DataFrame(
+        {"sec_cik": ["0000008177"], "sec_name": ["Atlantic American Corp"], "sec_ticker": ["AAME"]}
+    ).write_parquet(sec_names_path)
+    output_root = tmp_path / "out"
+
+    build_era_sector_enriched(
+        SectorConfig(
+            era_identity_path=era_identity_path,
+            sec_ticker_cik_path=sec_path,
+            stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
+            sec_company_tickers_path=sec_names_path,
+            output_root=output_root,
+            registry_path=tmp_path / "registry.sqlite",
+            skip_fetch=True,
+        )
+    )
+
+    enriched = pl.read_parquet(output_root / "eras_sector_enriched.parquet")
+    row = enriched.filter(pl.col("symbol_era_id") == "EEE#001").to_dicts()[0]
+    assert row["resolved_cik"] == "8177"
+    assert row["cik_source"] == "sec_name_matched"
+    assert row["cik_tier"] == "D"

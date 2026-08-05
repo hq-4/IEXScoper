@@ -28,10 +28,15 @@ from utils.resolution_v2_network import CachedPrimaryClient, NetworkConfig
 from utils.resolution_v2_registry import EvidenceRegistry
 from utils.sec_sic_client import fetch_many
 from utils.sector_cik_reconcile import distinct_ciks, reconcile_cik
+from utils.sector_enrichment_inputs import load_name_matches, load_stable_classes
 from utils.sic_division_table import sic_division_code_expr, sic_division_name_expr
 
 DEFAULT_ERA_IDENTITY_PATH = Path("reports/era-identity/eras_identity_enriched.parquet")
 DEFAULT_SEC_TICKER_CIK_PATH = Path("reports/sec-ticker-cik/symbol_eras_sec_enriched.parquet")
+DEFAULT_STABLE_OPENFIGI_PATH = Path("reports/openfigi-identity-stable/era_classes.parquet")
+DEFAULT_SEC_COMPANY_TICKERS_PATH = Path(
+    "reports/sec-ticker-cik/sec_company_tickers_exchange.parquet"
+)
 DEFAULT_OUTPUT_ROOT = Path("reports/era-identity")
 DEFAULT_REGISTRY_PATH = Path("data/resolution/evidence_registry.sqlite")
 DEFAULT_USER_AGENT = "IEXScoper research contact@example.com"
@@ -39,6 +44,7 @@ DEFAULT_DELAY_SECONDS = 0.3  # ~3.3 req/sec, comfortably under SEC's 10 req/sec 
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_RETRIES = 3
 DEFAULT_MAX_AGE_DAYS = 90
+FUND_INSTRUMENT_CLASS = "fund_etf"
 
 SIC_LOOKUP_SCHEMA = {
     "cik": pl.String,
@@ -54,6 +60,8 @@ SIC_LOOKUP_SCHEMA = {
 class SectorConfig:
     era_identity_path: Path = DEFAULT_ERA_IDENTITY_PATH
     sec_ticker_cik_path: Path = DEFAULT_SEC_TICKER_CIK_PATH
+    stable_openfigi_path: Path = DEFAULT_STABLE_OPENFIGI_PATH
+    sec_company_tickers_path: Path = DEFAULT_SEC_COMPANY_TICKERS_PATH
     output_root: Path = DEFAULT_OUTPUT_ROOT
     registry_path: Path = DEFAULT_REGISTRY_PATH
     user_agent: str = ""
@@ -71,6 +79,8 @@ def main() -> int:
     config = SectorConfig(
         era_identity_path=Path(args.era_identity_path),
         sec_ticker_cik_path=Path(args.sec_ticker_cik_path),
+        stable_openfigi_path=Path(args.stable_openfigi_path),
+        sec_company_tickers_path=Path(args.sec_company_tickers_path),
         output_root=Path(args.output_root),
         registry_path=Path(args.registry_path),
         user_agent=args.user_agent or os.getenv("SEC_USER_AGENT") or DEFAULT_USER_AGENT,
@@ -97,12 +107,14 @@ def build_era_sector_enriched(config: SectorConfig) -> dict[str, Any]:
     config.output_root.mkdir(parents=True, exist_ok=True)
     era_identity = pl.read_parquet(config.era_identity_path)
     sec_ticker_cik = pl.read_parquet(config.sec_ticker_cik_path)
-    cik_table = reconcile_cik(era_identity, sec_ticker_cik)
+    name_matches = load_name_matches(config.sec_company_tickers_path, era_identity)
+    cik_table = reconcile_cik(era_identity, sec_ticker_cik, name_matches)
     ciks = distinct_ciks(cik_table)
     fetch_ciks = ciks[: config.limit_ciks] if config.limit_ciks is not None else ciks
     sic_rows = [] if config.skip_fetch else _fetch_sic(config, fetch_ciks)
     sic_lookup = _sic_lookup_frame(sic_rows)
-    enriched = _build_enriched(era_identity, cik_table, sic_lookup)
+    stable_classes = load_stable_classes(config.stable_openfigi_path)
+    enriched = _build_enriched(era_identity, cik_table, sic_lookup, stable_classes)
     summary = build_summary(enriched, sic_lookup, len(ciks), len(sic_rows))
     write_outputs(config.output_root, enriched, sic_lookup, summary)
     return {"summary": summary}
@@ -144,13 +156,23 @@ def _sic_lookup_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
 
 
 def _build_enriched(
-    era_identity: pl.DataFrame, cik_table: pl.DataFrame, sic_lookup: pl.DataFrame
+    era_identity: pl.DataFrame,
+    cik_table: pl.DataFrame,
+    sic_lookup: pl.DataFrame,
+    stable_classes: pl.DataFrame,
 ) -> pl.DataFrame:
-    joined = era_identity.join(cik_table, on="symbol_era_id", how="left").join(
-        sic_lookup.select("cik", "sic", "sic_description", "entity_name", "fetch_status"),
-        left_on="resolved_cik",
-        right_on="cik",
-        how="left",
+    joined = (
+        era_identity.join(cik_table, on="symbol_era_id", how="left")
+        .join(
+            sic_lookup.select("cik", "sic", "sic_description", "entity_name", "fetch_status"),
+            left_on="resolved_cik",
+            right_on="cik",
+            how="left",
+        )
+        .join(stable_classes, on="symbol_era_id", how="left")
+    )
+    joined = joined.with_columns(
+        pl.coalesce(["identity_instrument", "stable_openfigi_class"]).alias("instrument_class")
     )
     return joined.with_columns(
         sic_division_code_expr("sic").alias("sector_code"),
@@ -159,11 +181,14 @@ def _build_enriched(
 
 
 def _coverage_status_expr() -> pl.Expr:
+    is_fund = (pl.col("instrument_class") == FUND_INSTRUMENT_CLASS).fill_null(False)
     return (
         pl.when(pl.col("sic").is_not_null())
         .then(pl.lit("sic_and_sector"))
         .when(pl.col("resolved_cik").is_not_null())
         .then(pl.lit("cik_no_sic"))
+        .when(is_fund)
+        .then(pl.lit("fund_no_sic_needed"))
         .otherwise(pl.lit("no_cik"))
     )
 
@@ -248,6 +273,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--era-identity-path", default=str(DEFAULT_ERA_IDENTITY_PATH))
     parser.add_argument("--sec-ticker-cik-path", default=str(DEFAULT_SEC_TICKER_CIK_PATH))
+    parser.add_argument("--stable-openfigi-path", default=str(DEFAULT_STABLE_OPENFIGI_PATH))
+    parser.add_argument("--sec-company-tickers-path", default=str(DEFAULT_SEC_COMPANY_TICKERS_PATH))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--registry-path", default=str(DEFAULT_REGISTRY_PATH))
     parser.add_argument("--user-agent", default="")

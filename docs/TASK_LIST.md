@@ -1,5 +1,27 @@
 # Task List
 
+- 2026-08-05: SIC/sector classification, Phase 3 (shrinking the manual-research pool). The user
+  pushed back on the 29,597-era manual-research worklist ("how am I expected to manually hit 30k
+  manual tickers") — rightly: the top of that list was dominated by huge ETFs (IWM, XLF, XLE, GDX,
+  HYG, …) that had never gone through OpenFIGI classification at all, and by dead-ticker eras
+  (META, ATVI, SMCI, SNOW, …) that already had a googleable OpenFIGI-asserted issuer name but no
+  automatic path to a CIK. Both are automatable, not manual work. Landed: (1)
+  `utils/build_openfigi_stable_universe.py` derives an OpenFIGI input for the
+  `stable_candidate`/`ipo_or_new_listing_candidate` universe (~11,244 eras, never covered because
+  the original OpenFIGI pass was scoped to the dead-ticker review cohort only) — run for real,
+  92.5% matched, 43.3% are `fund_etf`. (2) `utils/sec_name_cik_lookup.py` matches an era's
+  OpenFIGI-asserted issuer name against SEC's already-fetched current company-name list (zero new
+  network calls), rejecting ambiguous normalized-name collisions rather than guessing — wired into
+  `sector_cik_reconcile.py` as a new Tier D that, unlike Tier C, safely applies to dead-ticker
+  classes too (a name persists even after a ticker gets reused, unlike a ticker match). Both feed
+  `build_era_sector_enriched.py` via a new `utils/sector_enrichment_inputs.py` module. Re-ran the
+  full live pass (6,562 distinct CIKs, ~4 minutes thanks to heavy cache reuse from the Phase 2 run,
+  zero errors): eras with a real SIC+sector rose from 6,836 to **8,417** (22.8% of the universe),
+  and — the actual goal — the manual-research worklist dropped from **29,597 eras / 1.12B trade
+  rows to 16,181 eras / 528M trade rows (a 45% reduction)**, with 11,767 eras now correctly
+  excluded as funds/ETFs rather than sitting in the research queue.
+  `stable_candidate`'s unresolved count alone fell from 542 to 13. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-05: SIC/sector classification, Phase 2 (live run). `utils/build_era_sector_enriched.py`
   and `utils/build_sector_manual_research_worklist.py` landed and ran for real against SEC's
   submissions endpoint: 6,087 distinct CIKs, rate-limited to ~3.3 req/sec (well under SEC's

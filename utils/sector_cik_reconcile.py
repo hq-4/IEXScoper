@@ -1,8 +1,8 @@
-"""Reconcile the three unreconciled CIK sources in this repo into one best-CIK-per-era
+"""Reconcile the unreconciled CIK sources in this repo into one best-CIK-per-era
 table, confidence-tiered, with strict scoping so a current-listing ticker match is never
 used as a stand-in for historical identity on a dead ticker.
 
-The three sources, highest confidence first:
+The sources, highest confidence first:
 
 - **Tier A** — `data/resolution/identity_facts.jsonl` rows with `verification_state=
   verified` and `evidence_method=sec_date_scoped_display_names`: a real, date-scoped
@@ -16,11 +16,17 @@ The three sources, highest confidence first:
   `stable_candidate`/`ipo_or_new_listing_candidate` and never applied to the four
   dead-ticker review classes, where a "current" match is very likely a *different*
   company that reused the symbol.
+- **Tier D** — `utils.sec_name_cik_lookup`: an unambiguous exact-normalized-name match
+  between an era's `identity_issuer` (from a `corroborated`/`openfigi_asserted` identity
+  fact — Tiers A-C never touch these, since their `identity_entity_id` is a Bloomberg
+  FIGI, not a CIK) and SEC's current company-name list. Unlike Tier C this applies to
+  *any* class, dead-ticker ones included: a company keeps roughly the same name even
+  after its old ticker gets reused by someone else, so a name match doesn't carry the
+  same "wrong company" risk a current-ticker match does. Ambiguous names (two distinct
+  CIKs normalizing the same) are excluded upstream in `sec_name_cik_lookup`, so this
+  tier never guesses between candidates.
 
-Every fact-derived identity fact carries no CIK at all past these three sources (the
-bulk of the OpenFIGI pillar's dead-ticker coverage — `corroborated`/`openfigi_asserted`
-identity facts — has a Bloomberg FIGI in `identity_entity_id`, not a CIK), so an era with
-none of Tiers A/B/C resolves to no CIK rather than a fuzzy name-based guess. [CA][IV][KBT]
+An era with none of Tiers A-D resolves to no CIK rather than a further guess. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -34,12 +40,14 @@ ACTIVE_CLASSES = ("stable_candidate", "ipo_or_new_listing_candidate")
 CIK_SOURCE_SEC_DATE_SCOPED = "sec_date_scoped_display_names"
 CIK_SOURCE_LEGACY_URL = "legacy_historical_override_url_derived"
 CIK_SOURCE_CURRENT_MATCH = "sec_current_ticker_match"
+CIK_SOURCE_NAME_MATCHED = "sec_name_matched"
 CIK_SOURCE_NONE = "no_cik_available"
 
 CIK_TIER = {
     CIK_SOURCE_SEC_DATE_SCOPED: "A",
     CIK_SOURCE_LEGACY_URL: "B",
     CIK_SOURCE_CURRENT_MATCH: "C",
+    CIK_SOURCE_NAME_MATCHED: "D",
 }
 
 REQUIRED_IDENTITY_COLUMNS = (
@@ -53,10 +61,16 @@ REQUIRED_IDENTITY_COLUMNS = (
 REQUIRED_SEC_COLUMNS = ("symbol_era_id", "sec_cik", "sec_current_confidence")
 
 
-def reconcile_cik(era_identity: pl.DataFrame, sec_ticker_cik: pl.DataFrame) -> pl.DataFrame:
+def reconcile_cik(
+    era_identity: pl.DataFrame,
+    sec_ticker_cik: pl.DataFrame,
+    name_matches: pl.DataFrame | None = None,
+) -> pl.DataFrame:
     """One row per era: `symbol_era_id, resolved_cik, cik_source, cik_tier`. Both CIK
     representations (unpadded `identity_entity_id`, zero-padded `sec_cik`) are
-    normalized to unpadded strings before comparison."""
+    normalized to unpadded strings before comparison. `name_matches` is optional
+    (`symbol_era_id`, `name_matched_cik`) — see `utils.sec_name_cik_lookup.match_by_name`;
+    omitting it just means Tier D never fires."""
     require_columns(era_identity, REQUIRED_IDENTITY_COLUMNS)
     require_columns(sec_ticker_cik, REQUIRED_SEC_COLUMNS)
     # Cast defensively: a caller-built frame with an all-null column (e.g. an empty or
@@ -72,6 +86,7 @@ def reconcile_cik(era_identity: pl.DataFrame, sec_ticker_cik: pl.DataFrame) -> p
             on="symbol_era_id",
             how="left",
         )
+        .join(_name_matches_or_empty(name_matches), on="symbol_era_id", how="left")
     )
     joined = joined.with_columns(_legacy_url_cik_expr().alias("_legacy_cik"))
     resolved = joined.with_columns(_resolved_cik_expr().alias("resolved_cik")).with_columns(
@@ -83,6 +98,15 @@ def reconcile_cik(era_identity: pl.DataFrame, sec_ticker_cik: pl.DataFrame) -> p
         .alias("cik_tier")
     )
     return resolved.select("symbol_era_id", "resolved_cik", "cik_source", "cik_tier")
+
+
+def _name_matches_or_empty(name_matches: pl.DataFrame | None) -> pl.DataFrame:
+    if name_matches is None or not name_matches.height:
+        return pl.DataFrame(schema={"symbol_era_id": pl.String, "name_matched_cik": pl.String})
+    require_columns(name_matches, ("symbol_era_id", "name_matched_cik"))
+    return name_matches.select("symbol_era_id", "name_matched_cik").cast(
+        {"name_matched_cik": pl.String}
+    )
 
 
 def distinct_ciks(reconciled: pl.DataFrame) -> list[str]:
@@ -130,6 +154,10 @@ def _tier_c_expr() -> pl.Expr:
     )
 
 
+def _tier_d_expr() -> pl.Expr:
+    return pl.col("name_matched_cik").is_not_null()
+
+
 def _resolved_cik_expr() -> pl.Expr:
     return (
         pl.when(_tier_a_expr())
@@ -138,6 +166,8 @@ def _resolved_cik_expr() -> pl.Expr:
         .then(pl.col("_legacy_cik"))
         .when(_tier_c_expr())
         .then(pl.col("sec_cik").str.strip_chars_start("0"))
+        .when(_tier_d_expr())
+        .then(pl.col("name_matched_cik"))
         .otherwise(None)
     )
 
@@ -150,5 +180,7 @@ def _cik_source_expr() -> pl.Expr:
         .then(pl.lit(CIK_SOURCE_LEGACY_URL))
         .when(_tier_c_expr())
         .then(pl.lit(CIK_SOURCE_CURRENT_MATCH))
+        .when(_tier_d_expr())
+        .then(pl.lit(CIK_SOURCE_NAME_MATCHED))
         .otherwise(pl.lit(CIK_SOURCE_NONE))
     )

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- feat: shrink the sector manual-research worklist by automating what didn't need to be manual —
+  `utils/build_openfigi_stable_universe.py` extends OpenFIGI classification to the
+  `stable_candidate`/`ipo_or_new_listing_candidate` universe (11,244 eras, 43.3% funds/ETFs), and
+  `utils/sec_name_cik_lookup.py` adds a new confidence tier (`sector_cik_reconcile.py` Tier D)
+  matching an era's OpenFIGI-asserted issuer name against SEC's already-fetched company-name list
+  with zero new network calls, rejecting ambiguous matches rather than guessing. Live re-run (6,562
+  distinct CIKs, zero errors): eras with a real SIC+sector rose 6,836 -> 8,417; the manual-research
+  worklist dropped 29,597 eras/1.12B trade rows -> 16,181 eras/528M trade rows (45% reduction), with
+  11,767 eras now correctly excluded as funds rather than treated as research targets
+  `[CA][IV][REH][CDiP][KBT]`
+
 - feat: land SIC/sector classification's live fetch orchestration (`utils/build_era_sector_enriched.py`)
   and the no-CIK manual-research worklist (`utils/build_sector_manual_research_worklist.py`), and run
   both for real — 6,087 distinct CIKs fetched from SEC's submissions endpoint at ~3.3 req/sec with

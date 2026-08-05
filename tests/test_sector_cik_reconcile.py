@@ -6,6 +6,7 @@ import pytest
 from utils.sector_cik_reconcile import (
     CIK_SOURCE_CURRENT_MATCH,
     CIK_SOURCE_LEGACY_URL,
+    CIK_SOURCE_NAME_MATCHED,
     CIK_SOURCE_NONE,
     CIK_SOURCE_SEC_DATE_SCOPED,
     distinct_ciks,
@@ -52,8 +53,17 @@ def _sec_ticker_cik(**overrides) -> pl.DataFrame:
     return pl.DataFrame(base, schema=SEC_TICKER_CIK_SCHEMA)
 
 
-def _resolve_one(era_identity: pl.DataFrame, sec: pl.DataFrame) -> dict:
-    return reconcile_cik(era_identity, sec).to_dicts()[0]
+def _resolve_one(
+    era_identity: pl.DataFrame, sec: pl.DataFrame, name_matches: pl.DataFrame | None = None
+) -> dict:
+    return reconcile_cik(era_identity, sec, name_matches).to_dicts()[0]
+
+
+def _name_matches(cik: str, symbol_era_id: str = "X#001") -> pl.DataFrame:
+    return pl.DataFrame(
+        {"symbol_era_id": [symbol_era_id], "name_matched_cik": [cik]},
+        schema={"symbol_era_id": pl.String, "name_matched_cik": pl.String},
+    )
 
 
 def test_tier_a_sec_date_scoped_verified_wins() -> None:
@@ -203,3 +213,68 @@ def test_distinct_ciks_dedupes_and_sorts() -> None:
 def test_require_columns_raises_on_missing() -> None:
     with pytest.raises(ValueError, match="missing required columns"):
         require_columns(pl.DataFrame({"symbol_era_id": ["A#001"]}), ("symbol_era_id", "sec_cik"))
+
+
+@pytest.mark.parametrize(
+    "dead_class",
+    [
+        "delisted_or_acquired_candidate",
+        "intermittent_or_reused_candidate",
+        "intermittent_full_window_candidate",
+        "partial_window_candidate",
+        "stable_candidate",
+    ],
+)
+def test_tier_d_name_match_applies_to_any_class(dead_class: str) -> None:
+    """Unlike Tier C, a name match doesn't carry the reused-ticker risk, so it applies
+    to dead-ticker classes too — this is the whole point of adding it."""
+    row = _resolve_one(
+        _era_identity(
+            source_classification=[dead_class],
+            identity_tier=["openfigi_asserted"],
+            identity_method=["openfigi_symbol_identity"],
+            identity_entity_id=["BBG000BLNNH6"],
+        ),
+        _sec_ticker_cik(),
+        _name_matches("8177"),
+    )
+    assert row["resolved_cik"] == "8177"
+    assert row["cik_source"] == CIK_SOURCE_NAME_MATCHED
+    assert row["cik_tier"] == "D"
+
+
+def test_tier_a_still_wins_over_tier_d() -> None:
+    row = _resolve_one(
+        _era_identity(
+            identity_tier=["verified"],
+            identity_method=["sec_date_scoped_display_names"],
+            identity_entity_id=["123456"],
+        ),
+        _sec_ticker_cik(),
+        _name_matches("999999"),
+    )
+    assert row["resolved_cik"] == "123456"
+    assert row["cik_source"] == CIK_SOURCE_SEC_DATE_SCOPED
+
+
+def test_tier_c_still_wins_over_tier_d() -> None:
+    row = _resolve_one(
+        _era_identity(source_classification=["stable_candidate"]),
+        _sec_ticker_cik(sec_cik=["0000555555"], sec_current_confidence=["sec_current_match"]),
+        _name_matches("999999"),
+    )
+    assert row["resolved_cik"] == "555555"
+    assert row["cik_source"] == CIK_SOURCE_CURRENT_MATCH
+
+
+def test_reconcile_cik_without_name_matches_argument_is_unaffected() -> None:
+    """Backward compatible: omitting name_matches entirely just means Tier D never fires."""
+    row = _resolve_one(_era_identity(), _sec_ticker_cik())
+    assert row["resolved_cik"] is None
+    assert row["cik_source"] == CIK_SOURCE_NONE
+
+
+def test_reconcile_cik_with_empty_name_matches_frame() -> None:
+    empty = pl.DataFrame(schema={"symbol_era_id": pl.String, "name_matched_cik": pl.String})
+    row = _resolve_one(_era_identity(), _sec_ticker_cik(), empty)
+    assert row["resolved_cik"] is None
