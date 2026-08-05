@@ -14,27 +14,49 @@ from utils.build_sector_manual_research_worklist import (
 def _write_enriched(path: Path) -> None:
     pl.DataFrame(
         {
-            "symbol": ["ZZZ", "YYY", "XXX", "DONE"],
-            "symbol_era_id": ["ZZZ#001", "YYY#001", "XXX#001", "DONE#001"],
+            "symbol": ["ZZZ", "YYY", "XXX", "DONE", "FUND"],
+            "symbol_era_id": ["ZZZ#001", "YYY#001", "XXX#001", "DONE#001", "FUND#001"],
             "source_classification": [
                 "delisted_or_acquired_candidate",
                 "intermittent_or_reused_candidate",
                 "delisted_or_acquired_candidate",
                 "stable_candidate",
+                "stable_candidate",
             ],
-            "trade_rows": [100, 300, 200, 9999],
-            "first_day": ["20170103", "20180103", "20190103", "20200103"],
-            "last_day": ["20171229", "20181231", "20191231", "20260101"],
-            "identity_tier": [None, "openfigi_asserted", None, "verified"],
-            "identity_issuer": [None, "Some Fund Trust", None, "Done Corp"],
-            "identity_instrument": [None, "fund_etf", None, "probable_operating_company"],
+            "trade_rows": [100, 300, 200, 9999, 50000],
+            "first_day": ["20170103", "20180103", "20190103", "20200103", "20161212"],
+            "last_day": ["20171229", "20181231", "20191231", "20260101", "20260622"],
+            "identity_tier": [None, "openfigi_asserted", None, "verified", None],
+            "identity_issuer": [None, "Some Reused Co", None, "Done Corp", None],
+            "identity_instrument": [
+                None,
+                "equity_common",
+                None,
+                "probable_operating_company",
+                None,
+            ],
+            "instrument_class": [
+                None,
+                "equity_common",
+                None,
+                "probable_operating_company",
+                "fund_etf",
+            ],
             "cik_source": [
                 "no_cik_available",
                 "no_cik_available",
                 "no_cik_available",
                 "sec_current_ticker_match",
+                "no_cik_available",
             ],
-            "resolved_cik": [None, None, None, "123456"],
+            "resolved_cik": [None, None, None, "123456", None],
+            "sic_coverage_status": [
+                "no_cik",
+                "no_cik",
+                "no_cik",
+                "cik_no_sic",
+                "fund_no_sic_needed",
+            ],
         }
     ).write_parquet(path)
 
@@ -51,8 +73,10 @@ def test_build_sector_worklist_ranks_by_trade_rows_and_excludes_resolved(tmp_pat
     )
 
     rows = pl.read_parquet(output_root / "sector_research_worklist.parquet").to_dicts()
-    assert [row["symbol"] for row in rows] == ["YYY", "XXX", "ZZZ"]
-    assert "DONE" not in [row["symbol"] for row in rows]  # already has a resolved CIK
+    symbols = [row["symbol"] for row in rows]
+    assert symbols == ["YYY", "XXX", "ZZZ"]
+    assert "DONE" not in symbols  # already has a resolved CIK
+    assert "FUND" not in symbols  # fund/ETF, excluded regardless of CIK status
     assert rows[0]["priority_rank"] == 1
     assert rows[0]["has_googleable_name"] is True  # YYY has an OpenFIGI-asserted issuer
     assert rows[1]["has_googleable_name"] is False  # XXX has nothing to google by
@@ -60,6 +84,7 @@ def test_build_sector_worklist_ranks_by_trade_rows_and_excludes_resolved(tmp_pat
         assert rows[0][column] is None
 
     assert result["summary"]["worklist_era_count"] == 3
+    assert result["summary"]["excluded_fund_count"] == 1
     assert result["summary"]["has_googleable_name_count"] == 1
     assert result["summary"]["top_n"] == 2
     assert (output_root / "sector_research_worklist_report.md").exists()
