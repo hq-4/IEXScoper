@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- feat: add the offline groundwork for SIC/sector classification — `utils/sic_division_table.py`
+  (the standard public 10-division SIC rollup), `utils/sector_cik_reconcile.py` (reconciles the
+  three previously-unreconciled CIK sources into one confidence-tiered best-CIK-per-era table,
+  strictly scoped so a current-listing ticker match is never applied to a dead-ticker review
+  class), and `utils/sec_sic_client.py` (a thin SIC/`sicDescription` fetcher reusing
+  `resolution_v2_network.CachedPrimaryClient`'s existing cache/retry/rate-limit machinery with
+  the identical cache-key shape `resolution_v2_sec.py` already uses, so any CIK the live SEC-lane
+  resolver already fetched is a free cache hit). `canonical_identity_join.py` gained an additive
+  `identity_source_url` column to recover CIKs embedded in `legacy_historical_override` facts'
+  archive URLs. Verified against real production data: reconciled Tier-C coverage matches the
+  independently-confirmed ground truth almost exactly (stable_candidate 2,330/2,872, `ipo_or_new_
+  listing_candidate` 4,124/8,372 exactly); ~6,087 distinct CIKs identified for the fetch step.
+  No live SEC fetch/join orchestration yet — that, the manual-research worklist, and docs with
+  real (not estimated) coverage numbers land in a follow-up PR. `[CA][IV][REH][CDiP][KBT]`
 - feat: wire the canonical confidence-tiered identity/event store into `dead_ticker_review_queue.parquet` and `unresolved_priority_queue.parquet` via a shared `utils/canonical_identity_join.py` helper, fixing both reports' ~10-day drift from the OpenFIGI pillar (legacy columns still showed the pre-OpenFIGI 364 manually-verified / 1,686-era regex fund count while the canonical store already held 818/1,580/14,179 tiered facts and a 7,395-era authoritative fund census); the priority queue now excludes 10,277 eras a usable canonical fact already covers, dropping its true unresolved count from a legacy-only 12,431 to 4,929 `[CA][REH][CDiP][KBT]`
 - feat: add `utils/build_truly_missing_eras_by_year.py`, a year-by-year (by `first_day`) breakdown of the 10,368 ticker eras with no usable canonical identity fact (244.1M trade rows), with a top-10-by-volume sample per year and an explicit left-censoring caveat for the TOPS capture floor (2016-12-12) `[CA][CDiP][KBT]`
 - chore: archive the narrative-first SEC resolution lane (46 files: three iteration runners plus EDGAR/SEC evidence, workplan, and text-scoring stage modules) to `utils/legacy/`, decided by parsing actual import/subprocess references rather than guessing — it plateaued at ~1% yield per `docs/EVENT_CATALOG_RESOLUTION_PLAN.md` but still produced all 818 SEC-grade `verified` facts and remains fully runnable at its new path; one real cross-boundary dependency (`derivative_identity_resolution.py` needed two generic helpers from the archived `sec_terminal_text_evidence.py`) was resolved by moving those helpers into the shared `sec_identity_evidence.py` module instead of keeping the whole lane at the top level `[CA][CSD][CDiP][KBT]`

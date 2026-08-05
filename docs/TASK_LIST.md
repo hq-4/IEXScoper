@@ -1,5 +1,27 @@
 # Task List
 
+- 2026-08-05: SIC/sector classification, Phase 1 (offline, no live SEC calls yet). A repo-review
+  concluded this codebase is a reasonable DIY security-master foundation but has no sector/industry
+  classification anywhere — OpenFIGI's `marketSector` is a coarse asset-class bucket (`"Equity"` or
+  `null`), not an industry. Two Explore passes confirmed SIC/`sicDescription` live only in SEC's
+  `data.sec.gov/submissions/CIK*.json` endpoint (already called in 3 places, never read), and found
+  CIK coverage fragmented across three unreconciled sources with very different confidence: 454
+  `verified`/`sec_date_scoped_display_names` facts (a real date-scoped CIK), 364
+  `legacy_historical_override` facts (CIK recoverable from the source URL for 361), and a
+  current-listing-biased ticker match (`sec_cik`, 81% coverage on `stable_candidate`, 49% on
+  `ipo_or_new_listing_candidate`, as low as 1.8% on `delisted_or_acquired_candidate` — confirming
+  dead-ticker sector coverage really is structurally harder, per the user's own instinct). Landed
+  this pass: `utils/sic_division_table.py` (standard 10-division SIC rollup),
+  `utils/sector_cik_reconcile.py` (tiered CIK reconciliation, strictly scoped so a current-ticker
+  match never applies to a dead-ticker review class — verified against real data: reconciled counts
+  match the independently-confirmed ground truth almost exactly, ~6,087 distinct CIKs identified),
+  and `utils/sec_sic_client.py` (SIC fetcher reusing `resolution_v2_network.CachedPrimaryClient`'s
+  cache/retry machinery with the exact cache-key shape `resolution_v2_sec.py` already uses, so
+  fetches piggyback on the live resolver's existing cache for free). Next: the live fetch+join
+  orchestration tool, the no-CIK manual-research worklist, and a real (not estimated) coverage
+  report — deferred to a follow-up PR since it means ~6,000+ live requests against a government
+  API. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-05: `utils/` reorganized after a full codebase review flagged two stale report artifacts and 127 flat files in `utils/`. (1) `reports/dead-ticker-review/dead_ticker_review_queue.parquet` and `unresolved_priority_queue.parquet` were regenerated with a new shared `utils/canonical_identity_join.py` join onto the confidence-tiered `data/resolution/identity_facts.jsonl`/`event_facts.jsonl` store — they previously only saw the pre-OpenFIGI legacy CSV (364 verified, 1,686-era regex fund count) even though the canonical store had moved to 818/1,580/14,179 tiered facts and a 7,395-era authoritative fund census 10 days earlier; the priority queue's true unresolved count drops from a legacy-only 12,431 to 4,929 once eras a usable canonical fact already covers are excluded. (2) The narrative-first SEC resolution lane (46 files: `run_sec_high_impact_identity_resolution_iterations.py`, `run_sec_lifecycle_resolution_iterations.py`, `run_sec_terminal_resolution_iterations.py`, and every EDGAR/SEC evidence, workplan, and text-scoring module behind them) moved to `utils/legacy/` — decided by parsing real import/subprocess references rather than by name, since it turned out to still be fully wired to a documented, runnable entrypoint and is the source of all 818 SEC-grade `verified` facts; it moved because `docs/EVENT_CATALOG_RESOLUTION_PLAN.md` measured it at a ~1% yield plateau, not because it stopped working. One real cross-boundary dependency surfaced (`derivative_identity_resolution.py`, a live V3 evidence gate, needed two generic date/text helpers from the archived `sec_terminal_text_evidence.py`) and was fixed by moving those two functions into the shared `sec_identity_evidence.py` module. (3) A new `utils/build_truly_missing_eras_by_year.py` answers "how many eras have zero usable canonical identity, by year": 10,368 eras / 244.1M trade rows, with the earliest-year bucket flagged as left-censored at the 2016-12-12 TOPS capture floor. All 301 tests and ruff pass; see `utils/legacy/README.md` for the full inventory. `[CA][CSD][REH][CDiP][KBT]`
 
 - 2026-08-04: Era×identity enriched product built (`utils/build_era_identity_enriched.py` → `reports/era-identity/eras_identity_enriched.parquet`): all 36,866 eras joined to best-tier identity (verified > corroborated > openfigi_asserted, contested excluded from the default-usable view) plus best event fact and derived era spans. Coverage: 15,254 default-usable eras / 790.2M trade rows; 20,289 eras identity-less (mostly stable candidates outside the resolution cohort). First payoff stat: fund_etf median era span is **34 days** — the launch→spin-down cohort is now directly queryable. `[CA][KBT][CDiP]`
