@@ -72,7 +72,7 @@ tooling; `corroborated` and `openfigi_asserted` are coverage aids with measured 
 ground-truth agreement, so any downstream join must choose its assurance tier explicitly
 rather than treating all `identity_facts.jsonl` rows as equally trustworthy. [CA][IV][SFT][KBT]
 
-## Sector/Industry (SIC) Classification — offline groundwork landed, live run pending
+## Sector/Industry (SIC) Classification
 
 No sector/industry classification existed anywhere before this; OpenFIGI's `marketSector` is a
 coarse asset-class bucket (`"Equity"`/`null`), not an industry field. SIC/`sicDescription` live
@@ -95,16 +95,29 @@ but never read for those fields.
   `resolution_v2_network.CachedPrimaryClient` (not a new client) with the identical
   `source="sec_submissions"` / `request={"url": ..., "params": {}}` cache-key shape
   `resolution_v2_sec.py` already uses, so any CIK the live SEC-lane resolver has already fetched
-  is a free cache hit.
+  is a free cache hit. Rate-limited to ~3.3 req/sec by default (comfortably under SEC's 10 req/sec
+  guidance).
 - `canonical_identity_join.py` gained an additive `identity_source_url` column (the raw fact's
   `source` URL) so `sector_cik_reconcile.py` can recover CIKs from `legacy_historical_override`
   facts whose `entity_id` was migrated empty.
+- `utils/build_era_sector_enriched.py` is the orchestration CLI: reconciles CIKs, fetches SIC for
+  the distinct resolved CIKs, joins the division rollup, and writes
+  `reports/era-identity/eras_sector_enriched.parquet` (a strict superset of
+  `eras_identity_enriched.parquet`) plus `cik_sic_lookup.parquet` and a coverage report. No
+  dry-run/apply gate — it only reads external SEC data and writes regenerable `reports/` output,
+  nothing is applied to the tracked canonical store.
+- `utils/build_sector_manual_research_worklist.py` ranks every era with no resolved CIK by trade
+  volume for manual per-ticker research, flagging rows that at least carry a googleable
+  OpenFIGI-asserted issuer name.
 
-Verified against real production data (not just unit tests): reconciled Tier-C coverage matches
-independently-confirmed ground truth almost exactly. Still pending: the fetch+join orchestration
-tool (`eras_sector_enriched.parquet`), a no-CIK manual-research worklist, and a real coverage
-report — deferred to a follow-up change since running it means several thousand live requests
-against a government API. [CA][IV][REH][CDiP][KBT]
+**Live run results** (full pass, 6,087 distinct CIKs, ~39 minutes at the rate-limited default,
+zero errors): 6,836 eras (18.5% of the full 36,866-era universe) got a real SIC and sector — a
+93.9% SIC fill rate on the 6,087 resolved CIKs (369 blank, mostly funds/ETF trusts, as expected).
+Coverage is exactly as structurally uneven as anticipated: `stable_candidate` 2,134/2,872 (74%),
+`ipo_or_new_listing_candidate` 3,934/8,372 (47%), but the four dead-ticker review classes combined
+only 768/25,622 (3%) — `intermittent_full_window_candidate` got zero automatic coverage. The
+29,597-era remainder (1.12B trade rows) is the manual-research worklist; 15,762 of those rows
+already carry a googleable OpenFIGI-asserted issuer name even without a CIK. [CA][IV][REH][CDiP][KBT]
 
 ## Benchmark Utilities
 

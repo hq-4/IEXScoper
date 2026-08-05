@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- feat: land SIC/sector classification's live fetch orchestration (`utils/build_era_sector_enriched.py`)
+  and the no-CIK manual-research worklist (`utils/build_sector_manual_research_worklist.py`), and run
+  both for real — 6,087 distinct CIKs fetched from SEC's submissions endpoint at ~3.3 req/sec with
+  zero errors in ~39 minutes, yielding 6,836 eras (18.5% of the 36,866-era universe) with a real SIC
+  and sector at a 93.9% fill rate on resolved CIKs; the 29,597-era no-CIK remainder is now a ranked
+  manual-research worklist, 15,762 rows of which already carry a googleable OpenFIGI-asserted issuer
+  name `[CA][IV][REH][CDiP][KBT]`
+
 - feat: add the offline groundwork for SIC/sector classification — `utils/sic_division_table.py`
   (the standard public 10-division SIC rollup), `utils/sector_cik_reconcile.py` (reconciles the
   three previously-unreconciled CIK sources into one confidence-tiered best-CIK-per-era table,

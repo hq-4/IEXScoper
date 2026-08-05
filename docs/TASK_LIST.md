@@ -1,5 +1,22 @@
 # Task List
 
+- 2026-08-05: SIC/sector classification, Phase 2 (live run). `utils/build_era_sector_enriched.py`
+  and `utils/build_sector_manual_research_worklist.py` landed and ran for real against SEC's
+  submissions endpoint: 6,087 distinct CIKs, rate-limited to ~3.3 req/sec (well under SEC's
+  10 req/sec guidance), ~39 minutes wall-clock, **zero errors** (no `fetch_error`, no unexpected
+  404s — every resolved CIK was a real SEC filer). Results landed almost exactly on the Phase 1
+  estimates: 6,836 eras (18.5% of the full 36,866-era universe) got a real SIC + sector, a 93.9%
+  SIC fill rate on resolved CIKs (369 blank, virtually all funds/ETF trusts — e.g. SPDR Dow Jones
+  Industrial Average, a shell fund CIK — exactly the "no SIC on record" case the plan predicted).
+  Coverage is exactly as structurally uneven as the CIK-provenance analysis anticipated:
+  `stable_candidate` 2,134/2,872 (74%), `ipo_or_new_listing_candidate` 3,934/8,372 (47%), the four
+  dead-ticker review classes combined only 768/25,622 (3%) —
+  `intermittent_full_window_candidate` got zero automatic coverage at all. The 29,597-era, 1.12B
+  trade-row remainder is the manual-research worklist (`reports/sector-research-worklist/`);
+  15,762 of those rows already carry a googleable OpenFIGI-asserted issuer name (e.g. META, FB,
+  ATVI, SNOW, SMCI) even without a resolved CIK — confirming those are FIGI-tier identity facts,
+  not gaps in the reconciliation logic. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-05: SIC/sector classification, Phase 1 (offline, no live SEC calls yet). A repo-review
   concluded this codebase is a reasonable DIY security-master foundation but has no sector/industry
   classification anywhere — OpenFIGI's `marketSector` is a coarse asset-class bucket (`"Equity"` or
