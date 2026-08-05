@@ -15,7 +15,19 @@ def test_build_truly_missing_by_year(tmp_path: Path) -> None:
             "symbol": ["AAA", "BBB", "CCC", "DDD"],
             "symbol_era_id": ["AAA#001", "BBB#001", "CCC#001", "DDD#001"],
             "source_classification": ["delisted_or_acquired_candidate"] * 4,
-            "instrument_type": ["probable_operating_company"] * 4,
+            "instrument_type": [
+                "probable_operating_company",
+                "probable_fund_or_trust",
+                "probable_operating_company",
+                "probable_operating_company",
+            ],
+            "research_route": [
+                "operating_company_sec_event",
+                "fund_or_trust_closure",
+                "operating_company_sec_event",
+                "operating_company_sec_event",
+            ],
+            "recommended_evidence": ["8-K/merger evidence"] * 4,
             "trade_rows": [100, 200, 300, 400],
             "first_day": ["20170101", "20170601", "20180101", "20190101"],
             "last_day": ["20170601", "20171201", "20180601", "20190601"],
@@ -36,7 +48,20 @@ def test_build_truly_missing_by_year(tmp_path: Path) -> None:
     assert years["2019"]["eras"] == 1
     assert "2018" not in years
 
+    clusters = {(row["first_year"], row["research_route"]): row for row in result["clusters"]}
+    assert clusters[("2017", "operating_company_sec_event")]["eras"] == 1
+    assert clusters[("2017", "fund_or_trust_closure")]["eras"] == 1
+    assert clusters[("2019", "operating_company_sec_event")]["trade_rows"] == 400
+
+    route_totals = {
+        row["research_route"]: row for row in result["summary"]["research_route_totals"]
+    }
+    assert route_totals["operating_company_sec_event"]["eras"] == 2
+
     detail = pl.read_csv(output_root / "truly_missing_eras_by_year.csv")
     assert set(detail["symbol_era_id"]) == {"AAA#001", "BBB#001", "DDD#001"}
+    assert "research_route" in detail.columns
+    cluster_csv = pl.read_csv(output_root / "truly_missing_eras_clusters.csv")
+    assert cluster_csv.height == 3
     assert (output_root / "truly_missing_eras_by_year_report.md").exists()
     assert (output_root / "truly_missing_eras_by_year_summary.json").exists()

@@ -31,10 +31,12 @@ from utils.dead_ticker_review_schema import DEFAULT_OUTPUT_ROOT
 DEFAULT_REVIEW_QUEUE_PATH = DEFAULT_OUTPUT_ROOT / "dead_ticker_review_queue.parquet"
 DETAIL_COLUMNS = [
     "first_year",
+    "research_route",
     "symbol",
     "symbol_era_id",
     "source_classification",
     "instrument_type",
+    "recommended_evidence",
     "trade_rows",
     "first_day",
     "last_day",
@@ -78,9 +80,10 @@ def build_truly_missing_by_year(config: TrulyMissingConfig) -> dict[str, Any]:
         ~pl.col("canonical_identity_usable_default").fill_null(False)
     ).with_columns(pl.col("first_day").str.slice(0, 4).alias("first_year"))
     by_year = year_summary(missing)
-    summary = build_summary(missing, by_year)
-    write_outputs(config.output_root, missing, by_year, summary)
-    return {"summary": summary, "by_year": by_year.to_dicts()}
+    clusters = cluster_summary(missing)
+    summary = build_summary(missing, by_year, clusters)
+    write_outputs(config.output_root, missing, by_year, clusters, summary)
+    return {"summary": summary, "by_year": by_year.to_dicts(), "clusters": clusters.to_dicts()}
 
 
 def year_summary(missing: pl.DataFrame) -> pl.DataFrame:
@@ -100,15 +103,38 @@ def year_summary(missing: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def build_summary(missing: pl.DataFrame, by_year: pl.DataFrame) -> dict[str, Any]:
+def cluster_summary(missing: pl.DataFrame) -> pl.DataFrame:
+    """Year x research_route breakdown. `research_route` is the same field the review
+    queue already uses to point manual/SEC research at the right evidence type
+    (operating-company SEC/event, fund/trust closure, preferred redemption, warrant/
+    unit/right action, share-class action, or manual syntax review), so clustering on
+    it groups eras by what kind of research the next step actually is. [CDiP]"""
+    return (
+        missing.group_by(["first_year", "research_route"])
+        .agg(pl.len().alias("eras"), pl.col("trade_rows").sum().alias("trade_rows"))
+        .sort(["first_year", "trade_rows"], descending=[False, True])
+    )
+
+
+def build_summary(
+    missing: pl.DataFrame, by_year: pl.DataFrame, clusters: pl.DataFrame
+) -> dict[str, Any]:
     floor_day = missing["first_day"].min()
     at_floor = missing.filter(pl.col("first_day") == floor_day).height
+    route_totals = (
+        missing.group_by("research_route")
+        .agg(pl.len().alias("eras"), pl.col("trade_rows").sum().alias("trade_rows"))
+        .sort("trade_rows", descending=True)
+    )
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "method": "eras with no usable canonical identity fact, grouped by first_day year",
+        "method": "eras with no usable canonical identity fact, grouped by first_day year "
+        "and by research_route cluster",
         "total_truly_missing_eras": missing.height,
         "total_trade_rows": int(missing["trade_rows"].sum() or 0),
         "years": by_year.to_dicts(),
+        "research_route_totals": route_totals.to_dicts(),
+        "clusters": clusters.to_dicts(),
         "caveats": [
             "'truly missing' means canonical_identity_usable_default is not True: no "
             "verified/corroborated fact and no non-contested openfigi_asserted fact.",
@@ -122,12 +148,17 @@ def build_summary(missing: pl.DataFrame, by_year: pl.DataFrame) -> dict[str, Any
 
 
 def write_outputs(
-    root: Path, missing: pl.DataFrame, by_year: pl.DataFrame, summary: dict[str, Any]
+    root: Path,
+    missing: pl.DataFrame,
+    by_year: pl.DataFrame,
+    clusters: pl.DataFrame,
+    summary: dict[str, Any],
 ) -> None:
     detail = missing.select(DETAIL_COLUMNS).sort(
-        ["first_year", "trade_rows"], descending=[False, True]
+        ["first_year", "research_route", "trade_rows"], descending=[False, False, True]
     )
     detail.write_csv(root / "truly_missing_eras_by_year.csv")
+    clusters.write_csv(root / "truly_missing_eras_clusters.csv")
     (root / "truly_missing_eras_by_year_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -151,23 +182,34 @@ def write_markdown(path: Path, detail: pl.DataFrame, summary: dict[str, Any]) ->
             "| {first_year} | {eras} | {trade_rows} | {probable_operating_company} | "
             "{delisted_or_acquired} |".format(**row)
         )
-    lines.extend(["", "## Top 10 By Year (highest trade_rows)", ""])
-    for year in sorted({row["first_year"] for row in summary["years"]}):
-        year_rows = detail.filter(pl.col("first_year") == year).head(10)
-        if year_rows.height == 0:
+    lines.extend(["", "## By Research-Route Cluster (all years)", ""])
+    lines.extend(["| Route | Eras | Trade Rows |", "|---|---:|---:|"])
+    for row in summary["research_route_totals"]:
+        lines.append("| {research_route} | {eras} | {trade_rows} |".format(**row))
+    lines.extend(["", "## Year x Route Clusters", ""])
+    lines.extend(["| Year | Route | Eras | Trade Rows |", "|---|---|---:|---:|"])
+    for row in summary["clusters"]:
+        lines.append("| {first_year} | {research_route} | {eras} | {trade_rows} |".format(**row))
+    lines.extend(["", "## Top 10 By Year x Route (highest trade_rows)", ""])
+    for row in summary["clusters"]:
+        year, route = row["first_year"], row["research_route"]
+        cluster_rows = detail.filter(
+            (pl.col("first_year") == year) & (pl.col("research_route") == route)
+        ).head(10)
+        if cluster_rows.height == 0:
             continue
         lines.extend(
             [
-                f"### {year}",
+                f"### {year} — {route}",
                 "",
                 "| Symbol | Era | Type | Trade Rows | First | Last |",
                 "|---|---|---|---:|---|---|",
             ]
         )
-        for row in year_rows.to_dicts():
+        for detail_row in cluster_rows.to_dicts():
             lines.append(
                 "| {symbol} | {symbol_era_id} | {instrument_type} | {trade_rows} | "
-                "{first_day} | {last_day} |".format(**row)
+                "{first_day} | {last_day} |".format(**detail_row)
             )
         lines.append("")
     lines.extend(["## Caveats", ""])
