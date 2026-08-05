@@ -137,12 +137,16 @@ uv run python utils/run_dead_ticker_resolution_program.py           # dry run
 uv run python utils/run_dead_ticker_resolution_program.py --apply   # promote staged facts
 ```
 
-Supporting workflows (all resumable, all requiring an SEC User-Agent for network access):
+Supporting workflows (all resumable, all requiring an SEC User-Agent for network access).
+These are the archived narrative-first SEC lane (`utils/legacy/`, see
+`utils/legacy/README.md`) — still runnable and the source of every SEC-grade `verified`
+identity fact, but superseded as the default coverage strategy by the OpenFIGI identity
+pillar above:
 
 ```bash
-uv run python utils/run_sec_high_impact_identity_resolution_iterations.py --help
-uv run python utils/run_sec_lifecycle_resolution_iterations.py --help
-uv run python utils/run_sec_terminal_resolution_iterations.py --help
+uv run python utils/legacy/run_sec_high_impact_identity_resolution_iterations.py --help
+uv run python utils/legacy/run_sec_lifecycle_resolution_iterations.py --help
+uv run python utils/legacy/run_sec_terminal_resolution_iterations.py --help
 ```
 
 See `docs/DEAD_TICKER_RESOLUTION.md` for the full program reference and `docs/ARCHITECTURE.md`

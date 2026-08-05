@@ -5,9 +5,9 @@ import polars as pl
 import pytest
 import requests
 
-from utils.edgar_full_text_targets import load_aliases
-from utils.search_edgar_full_text_types import EdgarFullTextConfig
-from utils.search_edgar_full_text import search_edgar_full_text
+from utils.legacy.edgar_full_text_targets import load_aliases
+from utils.legacy.search_edgar_full_text_types import EdgarFullTextConfig
+from utils.legacy.search_edgar_full_text import search_edgar_full_text
 
 
 def test_search_edgar_full_text_tries_alias_after_zero_ticker_hits(
@@ -28,7 +28,7 @@ def test_search_edgar_full_text_tries_alias_after_zero_ticker_hits(
             return FakeResponse(_hit_payload())
         return FakeResponse(_empty_payload())
 
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
         _config(
@@ -60,7 +60,7 @@ def test_search_edgar_full_text_omits_form_filter_by_default(
         calls.append(params)
         return FakeResponse(_empty_payload())
 
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.edgar_full_text_client.requests.get", fake_get)
 
     search_edgar_full_text(
         _config(template_path=template_path, output_root=output_root, symbols=("AAA",))

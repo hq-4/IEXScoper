@@ -111,11 +111,21 @@ rather than treating all `identity_facts.jsonl` rows as equally trustworthy. [CA
 - `utils/build_dead_ticker_priority_queue.py` derives the first manual-review worklist from the dead ticker review queue. It filters `historical_identity_unresolved` rows, ranks `probable_operating_company` eras ahead of non-common instruments when `instrument_type` is present, ranks delisted/acquired candidates ahead of other unresolved classes, and then sorts by `trade_rows` descending.
 - `utils/build_dead_ticker_resolution_template.py` turns the priority queue into a fillable manual research CSV with proposed override/source columns.
 - `utils/import_dead_ticker_manual_overrides.py` validates completed research-template rows and appends only `research_status=verified` rows into the manual override CSV, rejecting missing evidence and duplicate `symbol_era_id` values.
-- `utils/lookup_edgar_tickers.py` performs a bounded EDGAR lead lookup with an explicit custom SEC User-Agent. It can map template symbols through the current SEC ticker directory and optionally fetch recent `data.sec.gov/submissions` metadata for current CIK matches.
-- `utils/search_edgar_full_text.py` performs a broader SEC EFTS lead search over the manual-resolution template when current ticker lookup misses dead symbols. Its companion modules keep endpoint constants, output writing, and config types separate.
-- `utils/run_sec_high_impact_identity_resolution_iterations.py` is the identity-first SEC composition root. It snapshots and hashes its input, harvests local EFTS payloads, resumes row state, anchors a unique date-scoped CIK, queries that CIK's recent and overlapping historical submissions shards, scores bounded event snippets, and invokes the existing override importer once. Transport, parsing/scoring, state, outputs, and runtime side effects live in separate `sec_*` modules under the 300-SLOC gate.
+
+**The rest of this list is the archived narrative-first SEC lane** (`utils/legacy/`, ~46
+files: three iteration runners plus their EDGAR/SEC evidence, workplan, and text-scoring
+stage modules). It is what months of dead-ticker RCA/retry work in `docs/TASK_LIST.md`
+actually built, it produced all `818` SEC-grade `verified` identity facts and the terminal
+workflow ledger, and it still runs — but it plateaued at ~1% yield per era attempted (see
+`docs/EVENT_CATALOG_RESOLUTION_PLAN.md`) and is no longer the primary resolution path; the
+OpenFIGI pillar above superseded it as the default coverage strategy. See
+`utils/legacy/README.md` for the full inventory and why each piece moved. [CDiP][KBT]
+
+- `utils/legacy/lookup_edgar_tickers.py` performs a bounded EDGAR lead lookup with an explicit custom SEC User-Agent. It can map template symbols through the current SEC ticker directory and optionally fetch recent `data.sec.gov/submissions` metadata for current CIK matches.
+- `utils/legacy/search_edgar_full_text.py` performs a broader SEC EFTS lead search over the manual-resolution template when current ticker lookup misses dead symbols. Its companion modules keep endpoint constants, output writing, and config types separate.
+- `utils/legacy/run_sec_high_impact_identity_resolution_iterations.py` is the identity-first SEC composition root. It snapshots and hashes its input, harvests local EFTS payloads, resumes row state, anchors a unique date-scoped CIK, queries that CIK's recent and overlapping historical submissions shards, scores bounded event snippets, and invokes the existing override importer once. Transport, parsing/scoring, state, outputs, and runtime side effects live in separate `sec_*` modules under the 300-SLOC gate.
 - Historical identity and event resolution remain separate facts. Exact filer-ticker/date/CIK evidence admits identity; only anchored-CIK actual terminal or symbol-change evidence admits import. Active/data-gap, identity-only, collision, no-evidence, and fetch-error rows remain non-importable.
-- `utils/dead_ticker_workplan_automation.py` joins resumable workflow state into workplan reports. `automation_exhausted` suppresses misleading repeated automation while preserving `historical_identity_unresolved` until real evidence is imported.
+- `utils/legacy/dead_ticker_workplan_automation.py` joins resumable workflow state into workplan reports. `automation_exhausted` suppresses misleading repeated automation while preserving `historical_identity_unresolved` until real evidence is imported.
 - `utils/derivative_identity_resolution.py` enforces instrument-specific derivative gates. Share classes require exact child ticker, same CIK, and a near parent action; warrants, units, rights, and preferreds require explicit child/class action language and a near date. Parent-root syntax by itself is never a disposition.
 
 ## Parquet Repair Mode

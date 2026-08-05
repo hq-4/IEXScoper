@@ -6,13 +6,13 @@ from typing import Any
 import polars as pl
 import pytest
 
-from utils.verify_sec_override_candidates import (
+from utils.legacy.verify_sec_override_candidates import (
     bucket_for_score,
     evidence_flags,
     resolve_user_agent,
     verify_sec_override_candidates,
 )
-from utils.sec_candidate_verifier_schema import VerifyConfig
+from utils.legacy.sec_candidate_verifier_schema import VerifyConfig
 
 
 def test_verify_sec_override_candidates_scores_strong_text(
@@ -45,7 +45,7 @@ def test_verify_sec_override_candidates_scores_strong_text(
             "<html>AAA Corp completed the merger and the transaction closed.</html>"
         )
 
-    monkeypatch.setattr("utils.verify_sec_override_candidates.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.verify_sec_override_candidates.requests.get", fake_get)
 
     result = verify_sec_override_candidates(
         VerifyConfig(
@@ -76,7 +76,7 @@ def test_verify_sec_override_candidates_records_fetch_error(
     def fake_get(url: str, *, headers: dict[str, str], timeout: float) -> FakeResponse:
         return FakeResponse({}, status_code=503)
 
-    monkeypatch.setattr("utils.verify_sec_override_candidates.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.verify_sec_override_candidates.requests.get", fake_get)
 
     result = verify_sec_override_candidates(
         VerifyConfig(
@@ -108,7 +108,7 @@ def test_verify_sec_override_candidates_handles_late_fetch_error(
             return FakeResponse({"directory": {"item": [{"name": "primary-document.htm"}]}})
         return FakeResponse("<html>AAA Corp completed the merger and transaction closed.</html>")
 
-    monkeypatch.setattr("utils.verify_sec_override_candidates.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.verify_sec_override_candidates.requests.get", fake_get)
 
     result = verify_sec_override_candidates(
         VerifyConfig(

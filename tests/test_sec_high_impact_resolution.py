@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from utils.sec_high_impact_resolution import resolve_event_text, symbol_change_result
-from utils.sec_high_impact_events import active_current_evidence
-from utils.sec_high_impact_outputs import import_candidates
+from utils.legacy.sec_high_impact_resolution import resolve_event_text, symbol_change_result
+from utils.legacy.sec_high_impact_events import active_current_evidence
+from utils.legacy.sec_high_impact_outputs import import_candidates
 
 ROW = {
     "symbol": "OLD",

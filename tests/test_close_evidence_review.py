@@ -4,7 +4,7 @@ from pathlib import Path
 
 import polars as pl
 
-from utils.build_close_evidence_review import (
+from utils.legacy.build_close_evidence_review import (
     CloseEvidenceReviewConfig,
     build_close_evidence_review,
 )

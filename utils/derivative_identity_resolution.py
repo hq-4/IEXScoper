@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any
 
 from utils.sec_identity_evidence import parse_day
-from utils.sec_terminal_text_evidence import extract_date, normalize
+from utils.sec_identity_evidence import extract_date, normalize
 
 ACTION_TERMS = (
     "redemption",

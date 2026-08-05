@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import polars as pl
@@ -15,11 +16,13 @@ def test_build_dead_ticker_review_queue_classifies_evidence_and_hints(tmp_path: 
     iex_path = tmp_path / "iex.parquet"
     overrides_path = tmp_path / "overrides.csv"
     ledger_path = tmp_path / "ledger.csv"
+    fact_root = tmp_path / "facts"
     output_root = tmp_path / "out"
     _write_sec(sec_path)
     _write_iex(iex_path)
     _write_overrides(overrides_path)
     _write_ledger(ledger_path)
+    _write_canonical_facts(fact_root)
 
     result = build_dead_ticker_review_queue(
         DeadTickerReviewConfig(
@@ -28,6 +31,7 @@ def test_build_dead_ticker_review_queue_classifies_evidence_and_hints(tmp_path: 
             manual_overrides_path=overrides_path,
             output_root=output_root,
             resolution_ledger_path=ledger_path,
+            fact_root=fact_root,
         )
     )
 
@@ -57,6 +61,35 @@ def test_build_dead_ticker_review_queue_classifies_evidence_and_hints(tmp_path: 
     assert (output_root / "dead_ticker_review_report.md").exists()
     assert (output_root / "instrument_heuristic_audit.csv").exists()
     assert (output_root / "instrument_heuristic_audit_summary.json").exists()
+
+    # Canonical V3 store columns: present even for eras the legacy CSV never covered.
+    assert rows["AACIU#001"]["canonical_identity_tier"] == "openfigi_asserted"
+    assert rows["AACIU#001"]["canonical_identity_instrument"] == "fund_etf"
+    assert rows["AACIU#001"]["canonical_identity_usable_default"] is True
+    assert rows["AACIW#001"]["canonical_identity_tier"] is None
+    # No canonical fact at all (vs. a present-but-unusable one) leaves this null, not False.
+    assert rows["AACIW#001"]["canonical_identity_usable_default"] is None
+    assert result["summary"]["canonical_identity_usable_default_count"] == 1
+    assert result["summary"]["canonical_identity_tier_counts"]["openfigi_asserted"] == 1
+
+
+def _write_canonical_facts(fact_root: Path) -> None:
+    fact_root.mkdir(parents=True, exist_ok=True)
+    identity_facts = [
+        {
+            "symbol_era_id": "AACIU#001",
+            "verification_state": "openfigi_asserted",
+            "issuer": "Some Fund Trust",
+            "entity_id": "F42",
+            "evidence_method": "openfigi_symbol_identity",
+            "instrument": "fund_etf",
+            "flags": [],
+        }
+    ]
+    (fact_root / "identity_facts.jsonl").write_text(
+        "".join(json.dumps(f) + "\n" for f in identity_facts)
+    )
+    (fact_root / "event_facts.jsonl").write_text("")
 
 
 def _write_sec(path: Path) -> None:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import polars as pl
 
-from utils.build_strict_terminal_review import (
+from utils.legacy.build_strict_terminal_review import (
     StrictTerminalReviewConfig,
     build_strict_terminal_review,
 )

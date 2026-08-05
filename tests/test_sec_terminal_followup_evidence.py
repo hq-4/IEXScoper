@@ -5,7 +5,7 @@ from typing import Any
 
 import polars as pl
 
-from utils.build_sec_terminal_followup_evidence import (
+from utils.legacy.build_sec_terminal_followup_evidence import (
     FollowupEvidenceConfig,
     build_sec_terminal_followup_evidence,
 )
@@ -38,8 +38,8 @@ def test_followup_evidence_fetches_submissions_and_scores_document(
         assert url.endswith("/000000000124000001/close.htm")
         return "On January 5, 2024, AAA Corp ticker AAA completed the merger."
 
-    monkeypatch.setattr("utils.sec_terminal_followup_sources.requests.get", fake_get)
-    monkeypatch.setattr("utils.build_sec_terminal_followup_evidence.fetch_text", fake_fetch_text)
+    monkeypatch.setattr("utils.legacy.sec_terminal_followup_sources.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.build_sec_terminal_followup_evidence.fetch_text", fake_fetch_text)
 
     result = build_sec_terminal_followup_evidence(
         FollowupEvidenceConfig(

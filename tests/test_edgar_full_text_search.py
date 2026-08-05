@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 import requests
 
-from utils.search_edgar_full_text import (
+from utils.legacy.search_edgar_full_text import (
     EdgarFullTextConfig,
     DEFAULT_EVENT_TERMS,
     query_for_symbol,
@@ -37,7 +37,7 @@ def test_search_edgar_full_text_writes_hit_and_no_hit_rows(
             return FakeResponse(_hit_payload())
         return FakeResponse(_empty_payload())
 
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
         _config(template_path=template_path, output_root=output_root, use_form_filter=True)
@@ -71,7 +71,7 @@ def test_search_edgar_full_text_continues_after_symbol_error(
             raise RuntimeError("SEC 500")
         return FakeResponse(_empty_payload())
 
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(_config(template_path=template_path, output_root=output_root))
 
@@ -97,7 +97,7 @@ def test_search_edgar_full_text_retries_transient_500(
             return FakeResponse({"message": "Internal server error"}, status_code=500)
         return FakeResponse(_empty_payload())
 
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
         _config(template_path=template_path, output_root=output_root, symbols=("AAA",), retries=2)
@@ -125,7 +125,7 @@ def test_search_edgar_full_text_retries_transport_error(
             raise requests.Timeout("SEC timeout")
         return FakeResponse(_empty_payload())
 
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
         _config(template_path=template_path, output_root=output_root, symbols=("AAA",), retries=2)
@@ -153,7 +153,7 @@ def test_search_edgar_full_text_falls_back_without_forms(
             return FakeResponse({"message": "Internal server error"}, status_code=500)
         return FakeResponse(_empty_payload())
 
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
         _config(
@@ -186,7 +186,7 @@ def test_search_edgar_full_text_records_request_error_without_traceback(
         calls.append(params)
         return FakeResponse({"message": "Internal server error"}, status_code=500)
 
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.edgar_full_text_client.requests.get", fake_get)
 
     result = search_edgar_full_text(
         _config(

@@ -4,12 +4,12 @@ from pathlib import Path
 import pytest
 import requests
 
-from utils.edgar_full_text_client import (
+from utils.legacy.edgar_full_text_client import (
     request_with_retries,
     search_param_variants,
     ticker_and_query,
 )
-from utils.search_edgar_full_text_types import EdgarFullTextConfig
+from utils.legacy.search_edgar_full_text_types import EdgarFullTextConfig
 
 
 def test_search_param_variants_drop_brittle_filters_and_dates() -> None:
@@ -95,7 +95,7 @@ def test_request_retries_do_not_emit_info_noise(
         status = 500 if len(calls) == 1 else 200
         return FakeResponse(status)
 
-    monkeypatch.setattr("utils.edgar_full_text_client.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.edgar_full_text_client.requests.get", fake_get)
 
     request_with_retries(_config(use_form_filter=False, retries=2), {"q": "merger"})
 

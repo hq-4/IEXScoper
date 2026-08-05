@@ -4,7 +4,7 @@ from pathlib import Path
 
 import polars as pl
 
-from utils.build_dead_ticker_resolution_lanes import (
+from utils.legacy.build_dead_ticker_resolution_lanes import (
     ResolutionLaneConfig,
     build_resolution_lanes,
 )

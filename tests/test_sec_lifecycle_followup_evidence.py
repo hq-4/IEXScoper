@@ -5,7 +5,7 @@ from typing import Any
 
 import polars as pl
 
-from utils.build_sec_lifecycle_followup_evidence import (
+from utils.legacy.build_sec_lifecycle_followup_evidence import (
     LifecycleFollowupEvidenceConfig,
     build_sec_lifecycle_followup_evidence,
 )
@@ -38,8 +38,8 @@ def test_lifecycle_followup_recovers_missing_date_evidence(
         assert url.endswith("/000000000124000001/start.htm")
         return "On January 5, 2024, AAA Corp common stock began trading under the symbol AAA."
 
-    monkeypatch.setattr("utils.sec_terminal_followup_sources.requests.get", fake_get)
-    monkeypatch.setattr("utils.build_sec_lifecycle_followup_evidence.fetch_text", fake_fetch_text)
+    monkeypatch.setattr("utils.legacy.sec_terminal_followup_sources.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.build_sec_lifecycle_followup_evidence.fetch_text", fake_fetch_text)
 
     result = build_sec_lifecycle_followup_evidence(
         LifecycleFollowupEvidenceConfig(
@@ -123,8 +123,8 @@ def test_lifecycle_followup_handles_mixed_empty_and_date_values(
             return "BBB Corp common stock began trading under the symbol BBB."
         return "On January 5, 2024, AAA Corp common stock began trading under the symbol AAA."
 
-    monkeypatch.setattr("utils.sec_terminal_followup_sources.requests.get", fake_get)
-    monkeypatch.setattr("utils.build_sec_lifecycle_followup_evidence.fetch_text", fake_fetch_text)
+    monkeypatch.setattr("utils.legacy.sec_terminal_followup_sources.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.build_sec_lifecycle_followup_evidence.fetch_text", fake_fetch_text)
 
     result = build_sec_lifecycle_followup_evidence(
         LifecycleFollowupEvidenceConfig(
