@@ -5,7 +5,7 @@ from typing import Any
 
 import polars as pl
 
-from utils.build_sec_terminal_text_evidence import (
+from utils.legacy.build_sec_terminal_text_evidence import (
     TerminalTextEvidenceConfig,
     build_sec_terminal_text_evidence,
 )
@@ -23,7 +23,7 @@ def test_terminal_text_evidence_conservative_buckets(
             raise RuntimeError("503 error")
         return _document_texts()[url.rsplit("/", maxsplit=1)[-1]]
 
-    monkeypatch.setattr("utils.build_sec_terminal_text_evidence.fetch_text", fake_fetch_text)
+    monkeypatch.setattr("utils.legacy.build_sec_terminal_text_evidence.fetch_text", fake_fetch_text)
 
     result = build_sec_terminal_text_evidence(
         TerminalTextEvidenceConfig(
@@ -70,11 +70,11 @@ def test_terminal_text_evidence_uses_archive_fallback(
         return "https://www.sec.gov/archive/AAA/fallback.htm"
 
     monkeypatch.setattr(
-        "utils.build_sec_terminal_text_evidence.resolve_document_url",
+        "utils.legacy.build_sec_terminal_text_evidence.resolve_document_url",
         fake_resolve_document_url,
     )
     monkeypatch.setattr(
-        "utils.build_sec_terminal_text_evidence.fetch_text",
+        "utils.legacy.build_sec_terminal_text_evidence.fetch_text",
         lambda url, config: _document_texts()["aaa.htm"],
     )
 

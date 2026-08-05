@@ -4,7 +4,7 @@ from pathlib import Path
 
 import polars as pl
 
-from utils.build_parent_security_resolution_candidates import (
+from utils.legacy.build_parent_security_resolution_candidates import (
     ParentSecurityResolutionConfig,
     build_parent_security_resolution_candidates,
 )

@@ -7,7 +7,7 @@ from typing import Any
 
 from utils.import_dead_ticker_manual_overrides import OVERRIDE_COLUMNS
 from utils.sec_identity_sources import SecTransportError
-from utils.sec_high_impact_workflow import HighImpactConfig, run_high_impact_workflow
+from utils.legacy.sec_high_impact_workflow import HighImpactConfig, run_high_impact_workflow
 
 
 def test_resume_performs_zero_network_work_for_completed_row(tmp_path: Path) -> None:

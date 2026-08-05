@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from utils.sec_terminal_followup_sources import SecRequestConfig, SecSubmissionsClient
+from utils.legacy.sec_terminal_followup_sources import SecRequestConfig, SecSubmissionsClient
 
 
 def test_historical_shards_are_date_selected_and_accessions_deduplicated(monkeypatch: Any) -> None:
@@ -32,7 +32,7 @@ def test_historical_shards_are_date_selected_and_accessions_deduplicated(monkeyp
             )
         return FakeResponse(recent(["2020-06-01"], ["0000000001-24-000001"]))
 
-    monkeypatch.setattr("utils.sec_terminal_followup_sources.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.sec_terminal_followup_sources.requests.get", fake_get)
     client = SecSubmissionsClient(SecRequestConfig("test test@example.test", 2, 0))
 
     filings = client.filings("1", lower="2020-01-01", upper="2020-12-31")

@@ -222,20 +222,29 @@ Current route meanings:
 
 ## EDGAR Lookup Lead
 
+**Everything from here through the resolution ledger/workplan/terminal-window sections below
+is the narrative-first SEC lane, archived to `utils/legacy/` on 2026-08-05** (see
+`utils/legacy/README.md`). It still runs exactly as documented — only the path changed — but
+it plateaued at ~1% yield per era attempted and is no longer the primary path; the OpenFIGI
+identity pillar above (`OpenFIGI Identity Pillar + Event Catalog`) covers ~89% of the
+unresolved baseline in one pass instead. This lane remains the source of all `818` SEC-grade
+`verified` identity facts, so it is still worth running for cases that need SEC-grade proof
+rather than OpenFIGI's coverage-first tiers.
+
 Use EDGAR as a lead source, not as final proof. The SEC ticker directory is current-biased, so it can miss dead tickers or point at a reused ticker.
 
 Run a current ticker/CIK lookup for the template symbols:
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/lookup_edgar_tickers.py
+uv run python utils/legacy/lookup_edgar_tickers.py
 ```
 
 To include recent filing metadata for current CIK matches:
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/lookup_edgar_tickers.py --fetch-submissions
+uv run python utils/legacy/lookup_edgar_tickers.py --fetch-submissions
 ```
 
 Outputs:
@@ -250,7 +259,7 @@ If the current ticker directory misses the batch, run the broader EDGAR full-tex
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/search_edgar_full_text.py
+uv run python utils/legacy/search_edgar_full_text.py
 ```
 
 This writes:
@@ -271,13 +280,13 @@ The default full-text pass uses `q=merger` only. Avoid broad `OR` queries across
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/search_edgar_full_text.py --event-terms acquisition --output-root reports/dead-ticker-review/edgar-full-text-acquisition
+uv run python utils/legacy/search_edgar_full_text.py --event-terms acquisition --output-root reports/dead-ticker-review/edgar-full-text-acquisition
 ```
 
 After full-text collection, reduce the noisy raw hit set into a compact local triage file:
 
 ```bash
-uv run python utils/edgar_full_text_triage.py
+uv run python utils/legacy/edgar_full_text_triage.py
 ```
 
 This writes:
@@ -291,7 +300,7 @@ The triage reducer is local-only. It ranks hit rows by filing form strength, fil
 For separate event-term runs, pass explicit paths:
 
 ```bash
-uv run python utils/edgar_full_text_triage.py \
+uv run python utils/legacy/edgar_full_text_triage.py \
   --leads-path reports/dead-ticker-review/edgar-full-text-acquisition/edgar_full_text_leads.parquet \
   --output-csv reports/dead-ticker-review/edgar-full-text-acquisition/edgar_full_text_triage.csv \
   --output-parquet reports/dead-ticker-review/edgar-full-text-acquisition/edgar_full_text_triage.parquet \
@@ -301,7 +310,7 @@ uv run python utils/edgar_full_text_triage.py \
 To turn top-ranked triage rows into a review-ready override candidate file:
 
 ```bash
-uv run python utils/build_dead_ticker_override_candidates.py
+uv run python utils/legacy/build_dead_ticker_override_candidates.py
 ```
 
 This writes `reports/dead-ticker-review/sec_override_candidates.csv`. Rows are intentionally marked `research_status=candidate_needs_review`, not `verified`, so `utils/import_dead_ticker_manual_overrides.py` will not append them until the SEC filing has been reviewed and the row has been completed. The candidate file pre-fills issuer, event-lead type, event date, SEC archive URL, and the triage reason so review can focus on confirming issuer/CIK, final event, successor, and delisting or closing evidence.
@@ -318,7 +327,7 @@ To fetch each candidate filing and score stronger text evidence without importin
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/verify_sec_override_candidates.py
+uv run python utils/legacy/verify_sec_override_candidates.py
 ```
 
 This writes:
@@ -331,7 +340,7 @@ The verifier fetches the SEC archive index, chooses a filing HTML document, and 
 Build a focused review batch from the verifier output:
 
 ```bash
-uv run python utils/build_sec_verified_review_batch.py
+uv run python utils/legacy/build_sec_verified_review_batch.py
 ```
 
 This writes `reports/dead-ticker-review/sec_strong_review_batch.csv`, containing only `strong_review_candidate` rows sorted by verifier score and priority rank. Use `--min-bucket moderate_review_candidate --output-path reports/dead-ticker-review/sec_strong_plus_moderate_review_batch.csv` when the strong batch is exhausted. Batch rows retain `research_status=candidate_needs_review`; dry-run import should report zero verified rows until a reviewer updates completed rows.
@@ -350,7 +359,7 @@ Ledger file:
 Build route-specific lane files and backlog profiles:
 
 ```bash
-uv run python utils/build_dead_ticker_resolution_lanes.py
+uv run python utils/legacy/build_dead_ticker_resolution_lanes.py
 ```
 
 This writes:
@@ -363,7 +372,7 @@ This writes:
 Build the impact-weighted workplan from the lane file:
 
 ```bash
-uv run python utils/build_dead_ticker_resolution_workplan.py
+uv run python utils/legacy/build_dead_ticker_resolution_workplan.py
 ```
 
 This writes:
@@ -389,7 +398,7 @@ Low-materiality rows are workflow dispositions, not issuer identity overrides. R
 and import them through the ledger importer only after dry-run validation:
 
 ```bash
-uv run python utils/import_ticker_era_resolution_ledger.py \
+uv run python utils/legacy/import_ticker_era_resolution_ledger.py \
   --candidates-path reports/dead-ticker-review/resolution-workplan/workplan_low_materiality_ledger_candidates.csv \
   --summary-path reports/dead-ticker-review/resolution-workplan/workplan_low_materiality_ledger_import_dry_run_summary.json \
   --dry-run
@@ -404,7 +413,7 @@ Build local parent/root security disposition candidates for preferreds, warrants
 rights, and share classes:
 
 ```bash
-uv run python utils/build_parent_security_resolution_candidates.py
+uv run python utils/legacy/build_parent_security_resolution_candidates.py
 ```
 
 This writes:
@@ -415,8 +424,8 @@ This writes:
 Dry-run and import ledger candidates:
 
 ```bash
-uv run python utils/import_ticker_era_resolution_ledger.py --dry-run
-uv run python utils/import_ticker_era_resolution_ledger.py
+uv run python utils/legacy/import_ticker_era_resolution_ledger.py --dry-run
+uv run python utils/legacy/import_ticker_era_resolution_ledger.py
 ```
 
 Then regenerate review artifacts:
@@ -438,7 +447,7 @@ spans many years. Full-era searches can match old mergers for reused or ambiguou
 symbols. Build a terminal-window search batch around `last_day` instead:
 
 ```bash
-uv run python utils/build_terminal_event_search_batch.py \
+uv run python utils/legacy/build_terminal_event_search_batch.py \
   --input-path reports/dead-ticker-review/resolution-lanes/operating_terminal_event.csv \
   --output-path reports/dead-ticker-review/resolution-lanes/operating_terminal_event_top250_terminal_window.csv \
   --summary-path reports/dead-ticker-review/resolution-lanes/operating_terminal_event_top250_terminal_window_summary.json \
@@ -449,7 +458,7 @@ Run SEC full-text with strict date bounds so every fallback keeps the terminal w
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/search_edgar_full_text.py \
+uv run python utils/legacy/search_edgar_full_text.py \
   --template-path reports/dead-ticker-review/resolution-lanes/operating_terminal_event_top250_terminal_window.csv \
   --output-root reports/dead-ticker-review/edgar-operating-terminal-top250-terminal-window \
   --event-terms merger \
@@ -459,7 +468,7 @@ uv run python utils/search_edgar_full_text.py \
 After triage, candidate building, and SEC verifier scoring, run strict terminal review:
 
 ```bash
-uv run python utils/build_strict_terminal_review.py \
+uv run python utils/legacy/build_strict_terminal_review.py \
   --verifier-path reports/dead-ticker-review/edgar-operating-terminal-top250-terminal-window/sec_override_candidates_verified_triage.csv \
   --output-path reports/dead-ticker-review/edgar-operating-terminal-top250-terminal-window/strict_terminal_review.csv \
   --auto-verified-path reports/dead-ticker-review/edgar-operating-terminal-top250-terminal-window/strict_terminal_auto_verified.csv \
@@ -498,7 +507,7 @@ PY
 Then run the close-evidence second pass:
 
 ```bash
-uv run python utils/build_close_evidence_review.py \
+uv run python utils/legacy/build_close_evidence_review.py \
   --input-path reports/dead-ticker-review/edgar-operating-terminal-top250-terminal-window/strong_needs_close_review.csv \
   --output-path reports/dead-ticker-review/edgar-operating-terminal-top250-terminal-window/close_evidence_review.csv \
   --auto-verified-path reports/dead-ticker-review/edgar-operating-terminal-top250-terminal-window/close_evidence_auto_verified.csv \
@@ -516,7 +525,7 @@ the exact SEC document URL captured by the verifier:
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/build_sec_terminal_text_evidence.py \
+uv run python utils/legacy/build_sec_terminal_text_evidence.py \
   --verifier-path reports/dead-ticker-review/edgar-high-impact-terminal-window-top250-closing/sec_override_candidates_verified_triage.csv \
   --output-dir reports/dead-ticker-review/edgar-high-impact-terminal-window-top250-closing
 ```
@@ -537,7 +546,7 @@ auto-ready terminal text/date evidence:
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/build_sec_terminal_followup_evidence.py \
+uv run python utils/legacy/build_sec_terminal_followup_evidence.py \
   --input-path reports/dead-ticker-review/edgar-high-impact-terminal-window-top250-closing/terminal_text_high_signal_missing_date_review.csv \
   --output-dir reports/dead-ticker-review/edgar-high-impact-terminal-window-top250-closing
 ```
@@ -554,7 +563,7 @@ manual override import dry-run:
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/run_sec_terminal_resolution_batch.py \
+uv run python utils/legacy/run_sec_terminal_resolution_batch.py \
   --limit 500 \
   --output-root reports/dead-ticker-review/sec-terminal-batch/top500
 ```
@@ -571,7 +580,7 @@ successful imports:
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/run_sec_terminal_resolution_iterations.py \
+uv run python utils/legacy/run_sec_terminal_resolution_iterations.py \
   --batch-size 500 \
   --max-iterations 10 \
   --output-root reports/dead-ticker-review/sec-terminal-iterations/run-001 \
@@ -591,7 +600,7 @@ evidence and a last-day window for terminal or delisting evidence.
 
 ```bash
 SEC_USER_AGENT="IEXScoper research your-email@example.com" \
-uv run python utils/run_sec_lifecycle_resolution_iterations.py \
+uv run python utils/legacy/run_sec_lifecycle_resolution_iterations.py \
   --batch-size 250 \
   --max-iterations 10 \
   --output-root reports/dead-ticker-review/sec-lifecycle-iterations/run-001 \
@@ -631,7 +640,7 @@ The high-impact operating lane now has one resumable command:
 
 ```bash
 SEC_USER_AGENT="IEXScoper research admin@example.com" \
-uv run python utils/run_sec_high_impact_identity_resolution_iterations.py
+uv run python utils/legacy/run_sec_high_impact_identity_resolution_iterations.py
 ```
 
 The default is a dry run. Add `--apply-import` only after reviewing

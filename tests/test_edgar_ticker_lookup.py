@@ -6,7 +6,7 @@ from typing import Any
 import polars as pl
 import pytest
 
-from utils.lookup_edgar_tickers import (
+from utils.legacy.lookup_edgar_tickers import (
     EdgarLookupConfig,
     lookup_edgar_tickers,
     resolve_user_agent,
@@ -25,7 +25,7 @@ def test_lookup_edgar_tickers_uses_custom_user_agent(
         assert timeout == 3
         return FakeResponse(_sec_payload())
 
-    monkeypatch.setattr("utils.lookup_edgar_tickers.requests.get", fake_get)
+    monkeypatch.setattr("utils.legacy.lookup_edgar_tickers.requests.get", fake_get)
 
     result = lookup_edgar_tickers(
         EdgarLookupConfig(

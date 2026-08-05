@@ -47,7 +47,26 @@ def test_build_priority_queue_excludes_terminal_ledger_dispositions(tmp_path: Pa
     assert result["summary"]["unresolved_era_count"] == 2
 
 
-def _write_review_queue(path: Path, terminal_workflow: bool = False) -> None:
+def test_build_priority_queue_excludes_canonically_resolved_eras(tmp_path: Path) -> None:
+    review_path = tmp_path / "review.parquet"
+    output_root = tmp_path / "priority"
+    _write_review_queue(review_path, canonical_resolve_zzz=True)
+
+    result = build_priority_queue(
+        PriorityQueueConfig(review_queue_path=review_path, output_root=output_root, top_n=10)
+    )
+
+    rows = pl.read_parquet(output_root / "unresolved_priority_queue.parquet").to_dicts()
+    # ZZZ still reads "historical_identity_unresolved" on the legacy column, but a
+    # usable canonical OpenFIGI fact means it should drop out of the manual queue.
+    assert "ZZZ" not in [row["symbol"] for row in rows]
+    assert result["summary"]["unresolved_era_count"] == 2
+    assert result["summary"]["canonically_resolved_excluded_count"] == 1
+
+
+def _write_review_queue(
+    path: Path, terminal_workflow: bool = False, canonical_resolve_zzz: bool = False
+) -> None:
     workflow = [
         "ledger_terminal_disposition" if terminal_workflow else "needs_resolution",
         "needs_resolution",
@@ -112,5 +131,8 @@ def _write_review_queue(path: Path, terminal_workflow: bool = False) -> None:
                 "operating_company_sec_event",
                 "operating_company_sec_event",
             ],
+            "canonical_identity_usable_default": (
+                [True, False, False, False] if canonical_resolve_zzz else [None, None, None, None]
+            ),
         }
     ).write_parquet(path)

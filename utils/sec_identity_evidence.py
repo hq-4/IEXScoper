@@ -156,3 +156,52 @@ def parse_day(value: Any) -> date | None:
         except ValueError:
             continue
     return None
+
+
+# Shared with utils/derivative_identity_resolution.py (a core V3 evidence gate) and
+# utils/legacy/sec_terminal_text_evidence.py (the narrative-first terminal-lane text
+# scorer). Kept here rather than in the terminal-lane module so the core evidence-delta
+# program does not depend on the archived narrative-lane cluster. [CA][CSD]
+MONTHS = {
+    name.upper(): index
+    for index, name in enumerate(
+        (
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ),
+        start=1,
+    )
+}
+
+
+def normalize(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
+
+
+def extract_date(snippet: str) -> date | None:
+    pattern = r"\b([A-Z]+)\s+([0-9]{1,2}),?\s+([0-9]{4})\b"
+    for match in re.finditer(pattern, normalize(snippet)):
+        month = MONTHS.get(match.group(1))
+        if not month:
+            continue
+        try:
+            return date(int(match.group(3)), month, int(match.group(2)))
+        except ValueError:
+            continue
+    numeric = re.search(r"\b([0-9]{4})[ -]([0-9]{2})[ -]([0-9]{2})\b", normalize(snippet))
+    if numeric:
+        try:
+            return date(int(numeric.group(1)), int(numeric.group(2)), int(numeric.group(3)))
+        except ValueError:
+            return None
+    return None

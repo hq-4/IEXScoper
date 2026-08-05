@@ -4,12 +4,12 @@ from pathlib import Path
 
 import polars as pl
 
-from utils.edgar_full_text_triage import (
+from utils.legacy.edgar_full_text_triage import (
     confidence_bucket,
     score_entity,
     triage_edgar_full_text_leads,
 )
-from utils.edgar_full_text_triage_schema import TriageConfig
+from utils.legacy.edgar_full_text_triage_schema import TriageConfig
 
 
 def test_triage_ranks_deal_form_entity_match_before_broad_8k(tmp_path: Path) -> None:

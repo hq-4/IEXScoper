@@ -15,8 +15,10 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.framework.logging import get_logger, setup_logging
+from utils.canonical_identity_join import load_canonical_facts_for_review
 from utils.dead_ticker_review_schema import (
     DEAD_REVIEW_CLASSES,
+    DEFAULT_FACT_ROOT,
     DEFAULT_IEX_ERAS_PATH,
     DEFAULT_MANUAL_OVERRIDES_PATH,
     DEFAULT_OUTPUT_ROOT,
@@ -49,6 +51,7 @@ class DeadTickerReviewConfig:
     manual_overrides_path: Path
     output_root: Path
     resolution_ledger_path: Path = DEFAULT_RESOLUTION_LEDGER_PATH
+    fact_root: Path = DEFAULT_FACT_ROOT
     era_remap_path: Path | None = None
 
 
@@ -58,6 +61,7 @@ def main() -> int:
     parser.add_argument("--iex-eras-path", default=str(DEFAULT_IEX_ERAS_PATH))
     parser.add_argument("--manual-overrides-path", default=str(DEFAULT_MANUAL_OVERRIDES_PATH))
     parser.add_argument("--resolution-ledger-path", default=str(DEFAULT_RESOLUTION_LEDGER_PATH))
+    parser.add_argument("--fact-root", default=str(DEFAULT_FACT_ROOT))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument(
         "--era-remap-path",
@@ -72,6 +76,7 @@ def main() -> int:
         manual_overrides_path=Path(args.manual_overrides_path),
         output_root=Path(args.output_root),
         resolution_ledger_path=Path(args.resolution_ledger_path),
+        fact_root=Path(args.fact_root),
         era_remap_path=remap_path if remap_path.exists() else None,
     )
     setup_logging(str(config.output_root / "dead_ticker_review.jsonl"))
@@ -98,10 +103,12 @@ def build_dead_ticker_review_queue(config: DeadTickerReviewConfig) -> dict[str, 
     ledger = ledger_select_for_join(load_resolution_ledger(config.resolution_ledger_path))
     remap_stats = apply_era_remap(config, overrides, ledger)
     overrides, ledger = remap_stats["overrides_frame"], remap_stats["ledger_frame"]
+    canonical = load_canonical_facts_for_review(config.fact_root)
     queue = build_queue(
         sec.join(iex, on="symbol_era_id", how="left")
         .join(overrides, on="symbol_era_id", how="left")
         .join(ledger, on="symbol_era_id", how="left")
+        .join(canonical, on="symbol_era_id", how="left")
     )
     summary = build_summary(config, queue)
     summary["era_id_remap"] = remap_stats["summary"]
@@ -258,11 +265,21 @@ def build_summary(config: DeadTickerReviewConfig, queue: pl.DataFrame) -> dict[s
         "resolution_status_counts": count_by(queue, "resolution_status"),
         "review_priority_counts": count_by(queue, "review_priority"),
         "classification_counts": count_by(queue, "source_classification"),
+        "canonical_identity_tier_counts": count_by(queue, "canonical_identity_tier"),
+        "canonical_identity_instrument_counts": count_by(queue, "canonical_identity_instrument"),
+        "canonical_identity_usable_default_count": int(
+            queue.select(pl.col("canonical_identity_usable_default").sum()).item()
+        ),
         "limitations": [
             "This queue classifies ticker-era review targets; it does not prove issuer identity.",
             "Current SEC/IEX evidence can be stale or reused for historical eras.",
-            "Instrument types are first-pass heuristics from ticker syntax and IEX hints only.",
-            "Rows with historical_identity_unresolved need historical listing, filings, or manual review.",
+            "instrument_hint/instrument_type/research_route are first-pass regex heuristics from "
+            "ticker syntax and IEX hints only; canonical_identity_instrument is the OpenFIGI "
+            "authoritative classification and should be preferred when both are present.",
+            "historical_identity_status/resolution_workflow_status reflect the legacy manual "
+            "override CSV and resolution ledger only; canonical_identity_tier reflects the current "
+            "confidence-tiered data/resolution/identity_facts.jsonl store (verified > corroborated "
+            "> openfigi_asserted) and is the broader, current source of truth for era coverage.",
             "Resolution ledger dispositions are workflow state and may not assert issuer identity.",
         ],
     }
@@ -307,7 +324,20 @@ def write_markdown(path: Path, summary: dict[str, Any], queue: pl.DataFrame) -> 
     lines.extend(
         f"- `{key}`: `{value}`" for key, value in summary["evidence_status_counts"].items()
     )
-    lines.extend(["", "## Instrument Hints", ""])
+    lines.extend(
+        [
+            "",
+            "## Canonical Identity (data/resolution/identity_facts.jsonl, current source of truth)",
+            "",
+            f"- Usable by default (`verified`/`corroborated`/non-contested `openfigi_asserted`): "
+            f"`{summary['canonical_identity_usable_default_count']}`",
+        ]
+    )
+    lines.extend(
+        f"- tier `{key}`: `{value}`"
+        for key, value in summary["canonical_identity_tier_counts"].items()
+    )
+    lines.extend(["", "## Instrument Hints (legacy regex heuristic)", ""])
     lines.extend(
         f"- `{key}`: `{value}`" for key, value in summary["instrument_hint_counts"].items()
     )

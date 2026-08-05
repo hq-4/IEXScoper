@@ -5,7 +5,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from utils.build_terminal_event_search_batch import (
+from utils.legacy.build_terminal_event_search_batch import (
     TerminalEventSearchBatchConfig,
     build_terminal_event_search_batch,
 )

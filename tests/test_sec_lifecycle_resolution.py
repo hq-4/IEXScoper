@@ -6,19 +6,19 @@ import json
 
 import polars as pl
 
-from utils.build_lifecycle_event_search_batch import (
+from utils.legacy.build_lifecycle_event_search_batch import (
     LifecycleEventSearchBatchConfig,
     build_lifecycle_event_search_batch,
 )
-from utils.build_lifecycle_override_candidates import (
+from utils.legacy.build_lifecycle_override_candidates import (
     LifecycleCandidateConfig,
     build_lifecycle_override_candidates,
 )
-from utils.build_sec_lifecycle_text_evidence import (
+from utils.legacy.build_sec_lifecycle_text_evidence import (
     LifecycleTextEvidenceConfig,
     build_sec_lifecycle_text_evidence,
 )
-from utils.run_sec_lifecycle_resolution_iterations import prior_run_attempts
+from utils.legacy.run_sec_lifecycle_resolution_iterations import prior_run_attempts
 
 
 def test_lifecycle_batch_and_candidates_preserve_anchor_metadata(tmp_path: Path) -> None:
@@ -72,7 +72,7 @@ def test_lifecycle_text_evidence_conservative_buckets(
     def fake_fetch_text(url: str, config: Any) -> str:
         return _texts()[url.rsplit("/", maxsplit=1)[-1]]
 
-    monkeypatch.setattr("utils.build_sec_lifecycle_text_evidence.fetch_text", fake_fetch_text)
+    monkeypatch.setattr("utils.legacy.build_sec_lifecycle_text_evidence.fetch_text", fake_fetch_text)
     result = build_sec_lifecycle_text_evidence(
         LifecycleTextEvidenceConfig(
             verifier_path=verifier_path,

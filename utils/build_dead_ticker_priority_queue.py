@@ -59,6 +59,7 @@ def build_priority_queue(config: PriorityQueueConfig) -> dict[str, Any]:
     review = load_review_queue(config.review_queue_path)
     priority = prioritize_unresolved(review)
     summary = build_summary(config, priority)
+    summary["canonically_resolved_excluded_count"] = count_canonically_resolved_excluded(review)
     write_outputs(config.output_root, priority, summary, config.top_n)
     return {"summary": summary, "rows": priority.head(config.top_n).to_dicts()}
 
@@ -103,8 +104,23 @@ def prioritize_unresolved(frame: pl.DataFrame) -> pl.DataFrame:
         if "resolution_workflow_status" in frame.columns
         else pl.lit(True)
     )
+    # `identity_evidence_status` only ever reflects current SEC/IEX listing matches and
+    # the legacy manual-override CSV; it predates the OpenFIGI identity pillar and never
+    # saw the 15,000+ eras that store resolved. An era already covered by a usable
+    # canonical fact (verified/corroborated/non-contested openfigi_asserted) is not a
+    # priority research target even though the legacy status still reads "unresolved".
+    # [CDiP][KBT]
+    canonical_resolved_expr = (
+        pl.col("canonical_identity_usable_default").fill_null(False)
+        if "canonical_identity_usable_default" in frame.columns
+        else pl.lit(False)
+    )
     return (
-        frame.filter((pl.col("identity_evidence_status") == UNRESOLVED_STATUS) & workflow_expr)
+        frame.filter(
+            (pl.col("identity_evidence_status") == UNRESOLVED_STATUS)
+            & workflow_expr
+            & ~canonical_resolved_expr
+        )
         .with_columns(
             operating_expr.alias("is_probable_operating"),
             (pl.col("source_classification") == DELISTED_CLASS).alias("is_delisted_candidate"),
@@ -149,9 +165,25 @@ def priority_columns(source_columns: list[str]) -> list[str]:
         "resolution_disposition",
         "evidence_tier",
         "resolution_workflow_status",
+        "canonical_identity_tier",
+        "canonical_identity_issuer",
+        "canonical_identity_instrument",
     ]
     generated = {"priority_rank", "is_probable_operating", "is_delisted_candidate"}
     return [column for column in preferred if column in source_columns or column in generated]
+
+
+def count_canonically_resolved_excluded(review: pl.DataFrame) -> int:
+    """Legacy-unresolved eras that a canonical OpenFIGI/SEC fact already covers, and
+    are therefore excluded from this queue rather than sent back into manual/automated
+    research. [CDiP]"""
+    if "canonical_identity_usable_default" not in review.columns:
+        return 0
+    matched = review.filter(
+        (pl.col("identity_evidence_status") == UNRESOLVED_STATUS)
+        & pl.col("canonical_identity_usable_default").fill_null(False)
+    )
+    return matched.height
 
 
 def build_summary(config: PriorityQueueConfig, priority: pl.DataFrame) -> dict[str, Any]:
@@ -212,6 +244,8 @@ def write_markdown(path: Path, top_rows: pl.DataFrame, summary: dict[str, Any]) 
         "This report ranks unresolved historical ticker-era identity targets for manual review.",
         "",
         f"- Unresolved eras: `{summary['unresolved_era_count']}`",
+        f"- Excluded because a canonical OpenFIGI/SEC identity fact already covers them: "
+        f"`{summary.get('canonically_resolved_excluded_count', 0)}`",
         f"- Top rows shown: `{summary['top_n']}`",
         f"- Probable operating rows: `{summary['probable_operating_count']}`",
         f"- Delisted/acquired candidate rows: `{summary['delisted_candidate_count']}`",

@@ -13,8 +13,12 @@ if __package__ in {None, ""}:
 import polars as pl
 
 from src.framework.logging import get_logger, setup_logging
+from utils.canonical_identity_join import (
+    identity_usable_default_expr,
+    load_best_event_facts,
+    load_best_identity_facts,
+)
 
-TIER_RANK = {"verified": 0, "corroborated": 1, "openfigi_asserted": 2}
 DEFAULT_ERAS = Path("reports/symbol-stability/symbol_eras.parquet")
 DEFAULT_FACT_ROOT = Path("data/resolution")
 DEFAULT_OUTPUT_ROOT = Path("reports/era-identity")
@@ -39,20 +43,13 @@ def main() -> int:
 
 def build_enriched(eras_path: Path, fact_root: Path, output_path: Path) -> dict[str, Any]:
     eras = pl.read_parquet(eras_path)
-    identities = pl.from_dicts(
-        _best_per_era(_read_jsonl(fact_root / "identity_facts.jsonl"), _identity_row)
-    )
-    events = pl.from_dicts(_best_per_era(_read_jsonl(fact_root / "event_facts.jsonl"), _event_row))
+    identities = load_best_identity_facts(fact_root)
+    events = load_best_event_facts(fact_root)
     enriched = eras.join(identities, on="symbol_era_id", how="left").join(
         events, on="symbol_era_id", how="left"
     )
     enriched = enriched.with_columns(
-        pl.when(pl.col("identity_tier").is_in(["verified", "corroborated"]))
-        .then(True)
-        .when((pl.col("identity_tier") == "openfigi_asserted") & ~pl.col("identity_contested"))
-        .then(True)
-        .otherwise(False)
-        .alias("identity_usable_default"),
+        identity_usable_default_expr().alias("identity_usable_default"),
         pl.when(pl.col("first_day").is_not_null() & pl.col("last_day").is_not_null())
         .then(
             (
@@ -65,43 +62,6 @@ def build_enriched(eras_path: Path, fact_root: Path, output_path: Path) -> dict[
     )
     enriched.write_parquet(output_path)
     return _summary(enriched)
-
-
-def _best_per_era(facts: list[dict[str, Any]], row_fn: Any) -> list[dict[str, Any]]:
-    best: dict[str, tuple[int, dict[str, Any]]] = {}
-    for fact in facts:
-        rank = TIER_RANK.get(str(fact.get("verification_state")), 9)
-        era = fact.get("symbol_era_id")
-        if era and (era not in best or rank < best[era][0]):
-            best[era] = (rank, row_fn(fact))
-    return [row for _, row in best.values()]
-
-
-def _identity_row(fact: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "symbol_era_id": fact["symbol_era_id"],
-        "identity_tier": fact.get("verification_state"),
-        "identity_issuer": fact.get("issuer"),
-        "identity_entity_id": fact.get("entity_id"),
-        "identity_method": fact.get("evidence_method"),
-        "identity_instrument": fact.get("instrument"),
-        "identity_contested": "contested" in (fact.get("flags") or []),
-    }
-
-
-def _event_row(fact: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "symbol_era_id": fact["symbol_era_id"],
-        "event_type": fact.get("event_type"),
-        "event_date": fact.get("event_date"),
-        "event_verification": fact.get("verification_state"),
-    }
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
 def _summary(enriched: pl.DataFrame) -> dict[str, Any]:

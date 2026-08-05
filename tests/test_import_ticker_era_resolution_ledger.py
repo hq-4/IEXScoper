@@ -5,7 +5,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from utils.import_ticker_era_resolution_ledger import (
+from utils.legacy.import_ticker_era_resolution_ledger import (
     ResolutionLedgerImportConfig,
     import_resolution_ledger,
 )

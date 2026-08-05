@@ -4,7 +4,7 @@ from pathlib import Path
 
 import polars as pl
 
-from utils.build_sec_verified_review_batch import ReviewBatchConfig, build_review_batch
+from utils.legacy.build_sec_verified_review_batch import ReviewBatchConfig, build_review_batch
 
 
 def test_build_review_batch_defaults_to_strong_rows(tmp_path: Path) -> None:

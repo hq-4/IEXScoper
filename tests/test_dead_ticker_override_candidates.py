@@ -4,7 +4,7 @@ from pathlib import Path
 
 import polars as pl
 
-from utils.build_dead_ticker_override_candidates import (
+from utils.legacy.build_dead_ticker_override_candidates import (
     CANDIDATE_STATUS,
     CandidateConfig,
     build_override_candidates,

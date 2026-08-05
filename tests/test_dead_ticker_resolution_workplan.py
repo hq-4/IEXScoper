@@ -5,8 +5,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-import utils.dead_ticker_resolution_workplan as workplan_module
-from utils.dead_ticker_resolution_workplan import (
+import utils.legacy.dead_ticker_resolution_workplan as workplan_module
+from utils.legacy.dead_ticker_resolution_workplan import (
     ResolutionWorkplanConfig,
     build_resolution_workplan,
 )
