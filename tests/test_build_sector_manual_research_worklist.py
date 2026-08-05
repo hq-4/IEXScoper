@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import polars as pl
+import pytest
+
+from utils.build_sector_manual_research_worklist import (
+    SectorWorklistConfig,
+    build_sector_worklist,
+)
+
+
+def _write_enriched(path: Path) -> None:
+    pl.DataFrame(
+        {
+            "symbol": ["ZZZ", "YYY", "XXX", "DONE"],
+            "symbol_era_id": ["ZZZ#001", "YYY#001", "XXX#001", "DONE#001"],
+            "source_classification": [
+                "delisted_or_acquired_candidate",
+                "intermittent_or_reused_candidate",
+                "delisted_or_acquired_candidate",
+                "stable_candidate",
+            ],
+            "trade_rows": [100, 300, 200, 9999],
+            "first_day": ["20170103", "20180103", "20190103", "20200103"],
+            "last_day": ["20171229", "20181231", "20191231", "20260101"],
+            "identity_tier": [None, "openfigi_asserted", None, "verified"],
+            "identity_issuer": [None, "Some Fund Trust", None, "Done Corp"],
+            "identity_instrument": [None, "fund_etf", None, "probable_operating_company"],
+            "cik_source": [
+                "no_cik_available",
+                "no_cik_available",
+                "no_cik_available",
+                "sec_current_ticker_match",
+            ],
+            "resolved_cik": [None, None, None, "123456"],
+        }
+    ).write_parquet(path)
+
+
+def test_build_sector_worklist_ranks_by_trade_rows_and_excludes_resolved(tmp_path: Path) -> None:
+    enriched_path = tmp_path / "eras_sector_enriched.parquet"
+    output_root = tmp_path / "out"
+    _write_enriched(enriched_path)
+
+    result = build_sector_worklist(
+        SectorWorklistConfig(
+            eras_sector_enriched_path=enriched_path, output_root=output_root, top_n=2
+        )
+    )
+
+    rows = pl.read_parquet(output_root / "sector_research_worklist.parquet").to_dicts()
+    assert [row["symbol"] for row in rows] == ["YYY", "XXX", "ZZZ"]
+    assert "DONE" not in [row["symbol"] for row in rows]  # already has a resolved CIK
+    assert rows[0]["priority_rank"] == 1
+    assert rows[0]["has_googleable_name"] is True  # YYY has an OpenFIGI-asserted issuer
+    assert rows[1]["has_googleable_name"] is False  # XXX has nothing to google by
+    for column in ("manual_cik", "manual_sic", "manual_notes"):
+        assert rows[0][column] is None
+
+    assert result["summary"]["worklist_era_count"] == 3
+    assert result["summary"]["has_googleable_name_count"] == 1
+    assert result["summary"]["top_n"] == 2
+    assert (output_root / "sector_research_worklist_report.md").exists()
+    assert (output_root / "sector_research_worklist_top.csv").exists()
+
+
+def test_build_sector_worklist_raises_on_missing_input(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        build_sector_worklist(
+            SectorWorklistConfig(
+                eras_sector_enriched_path=tmp_path / "missing.parquet",
+                output_root=tmp_path / "out",
+            )
+        )

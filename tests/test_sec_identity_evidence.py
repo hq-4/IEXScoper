@@ -5,6 +5,7 @@ from datetime import date
 from utils.sec_identity_evidence import (
     build_identity_queries,
     identity_result,
+    parse_cik_from_archive_url,
     parse_display_name,
 )
 from utils.sec_identity_sources import evidence_from_raw_paths
@@ -66,6 +67,25 @@ def test_identity_queries_never_use_entity_name() -> None:
     assert len(variants) == 3
     assert all("entityName" not in params for params in variants)
     assert all("ABC" in params["q"] for params in variants)
+
+
+def test_parse_cik_from_archive_url_extracts_digits() -> None:
+    url = "https://www.sec.gov/Archives/edgar/data/907654/000121390024098530/ea0221362-8k_oruka.htm"
+
+    assert parse_cik_from_archive_url(url) == "907654"
+
+
+def test_parse_cik_from_archive_url_returns_empty_for_non_edgar_url() -> None:
+    assert parse_cik_from_archive_url("https://example.test/not-a-filing") == ""
+
+
+def test_parse_cik_from_archive_url_returns_empty_for_malformed_path() -> None:
+    assert parse_cik_from_archive_url("https://www.sec.gov/Archives/edgar/data/") == ""
+
+
+def test_parse_cik_from_archive_url_handles_none_and_blank() -> None:
+    assert parse_cik_from_archive_url("") == ""
+    assert parse_cik_from_archive_url(None) == ""  # type: ignore[arg-type]
 
 
 def test_existing_raw_evidence_is_loaded_without_network(tmp_path) -> None:

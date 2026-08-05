@@ -29,6 +29,7 @@ IDENTITY_SCHEMA = {
     "identity_method": pl.String,
     "identity_instrument": pl.String,
     "identity_contested": pl.Boolean,
+    "identity_source_url": pl.String,
 }
 
 EVENT_SCHEMA = {
@@ -64,7 +65,7 @@ def load_canonical_facts_for_review(fact_root: Path = DEFAULT_FACT_ROOT) -> pl.D
     identities = (
         load_best_identity_facts(fact_root)
         .with_columns(identity_usable_default_expr().alias("identity_usable_default"))
-        .drop("identity_entity_id", "identity_method")
+        .drop("identity_entity_id", "identity_method", "identity_source_url")
         .rename(
             {
                 "identity_tier": "canonical_identity_tier",
@@ -119,6 +120,11 @@ def _identity_row(fact: dict[str, Any]) -> dict[str, Any]:
         "identity_method": fact.get("evidence_method"),
         "identity_instrument": fact.get("instrument"),
         "identity_contested": "contested" in (fact.get("flags") or []),
+        # Raw fact `source` (an EDGAR archive URL for SEC-lane facts). Some `verified`
+        # facts migrated from the legacy override CSV have an empty `identity_entity_id`
+        # (flag `migrated_without_entity_id`) but still carry a real CIK embedded in this
+        # URL, recoverable via utils.sec_identity_evidence.parse_cik_from_archive_url.
+        "identity_source_url": fact.get("source"),
     }
 
 
