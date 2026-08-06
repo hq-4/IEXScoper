@@ -71,13 +71,19 @@ DESCRIPTOR_PATTERNS = (
     re.compile(r"-SPON ADR$", re.IGNORECASE),
     re.compile(r"-ADR$", re.IGNORECASE),
     re.compile(r"[-\s]*W/I$", re.IGNORECASE),
-    re.compile(r"-CL [A-Z]$", re.IGNORECASE),
+    # Matches both "-CL A" and the "- CL A" spacing variant seen on real worklist rows
+    # (e.g. "ROYALTY PHARMA PLC- CL A").
+    re.compile(r"-\s*CL\s[A-Z]$", re.IGNORECASE),
     re.compile(r"-CLASS [A-Z]$", re.IGNORECASE),
     re.compile(r"-NEW$", re.IGNORECASE),
     re.compile(r"-WI$", re.IGNORECASE),
     re.compile(r"-WTS?$", re.IGNORECASE),
     re.compile(r"-RTS$", re.IGNORECASE),
     re.compile(r"-UNITS?$", re.IGNORECASE),
+    # A bare trailing "-A"/"-B" share-class letter with no "CL"/"CLASS" word attached —
+    # e.g. "EVERPURE INC-A", "C3.AI INC-A". Requires exactly one letter after the
+    # hyphen so it can't accidentally eat a real two-letter word ending like "-CO".
+    re.compile(r"-[A-Z]$", re.IGNORECASE),
 )
 
 
