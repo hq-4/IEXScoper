@@ -55,6 +55,13 @@ LEGAL_SUFFIXES = frozenset(
 )
 NON_ALNUM = re.compile(r"[^A-Z0-9 ]+")
 
+# SEC appends a trailing "/XX" state-of-incorporation tag to disambiguate identically
+# named registrants (e.g. "CORE SCIENTIFIC, INC./TX"). Left alone, NON_ALNUM turns the
+# slash into a space and the two-letter code becomes a trailing token that blocks the
+# legal-suffix strip loop below from ever reaching "INC" — stripped here, before that
+# conversion, so it never gets the chance to.
+JURISDICTION_SUFFIX = re.compile(r"/[A-Z]{2}$", re.IGNORECASE)
+
 # Bloomberg/OpenFIGI appends these to a security's `name` field to distinguish share
 # classes, warrants, ADRs, and when-issued lines — they're ticker/security metadata,
 # never part of the issuer's actual legal name, so stripping them before matching is
@@ -75,9 +82,11 @@ DESCRIPTOR_PATTERNS = (
 
 
 def normalize_name(value: str | None) -> str:
-    """Uppercase, strip punctuation, and drop trailing legal-entity suffix tokens
-    (repeatedly, so "XYZ HOLDINGS INC" -> "XYZ"). Blank/None -> ""."""
-    text = NON_ALNUM.sub(" ", str(value or "").upper())
+    """Uppercase, strip a trailing SEC jurisdiction tag and punctuation, and drop
+    trailing legal-entity suffix tokens (repeatedly, so "XYZ HOLDINGS INC" -> "XYZ").
+    Blank/None -> ""."""
+    text = JURISDICTION_SUFFIX.sub("", str(value or "").upper())
+    text = NON_ALNUM.sub(" ", text)
     tokens = text.split()
     while tokens and tokens[-1] in LEGAL_SUFFIXES:
         tokens.pop()

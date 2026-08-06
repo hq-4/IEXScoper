@@ -7,8 +7,8 @@ from utils.edgar_company_search_match import (
     STATUS_AMBIGUOUS,
     STATUS_FETCH_ERROR,
     STATUS_MATCHED,
-    STATUS_NAME_MISMATCH,
     STATUS_NO_CANDIDATES,
+    STATUS_NO_VALIDATED_MATCH,
     match_issuer_name,
 )
 from utils.resolution_v2_network import CachedPrimaryClient, NetworkConfig
@@ -37,19 +37,39 @@ def _client(tmp_path: Path, *, retries: int = 3) -> CachedPrimaryClient:
     return CachedPrimaryClient(config, registry)
 
 
-def _fake_get(search_atom: str, submissions_payload: dict[str, Any] | None):
-    def fake_get(url: str, **_: Any) -> FakeResponse:
+def _atom(ciks: list[str]) -> str:
+    entries = "".join(
+        f"<entry><content type='text/xml'><company-info><cik>{int(c):010d}</cik>"
+        "</company-info></content></entry>"
+        for c in ciks
+    )
+    return f"<feed>{entries}</feed>"
+
+
+def _cik_from_submissions_url(url: str) -> str:
+    digits = url.rsplit("CIK", 1)[1].split(".")[0]
+    return str(int(digits))
+
+
+def _fake_get(search_by_query: dict[str, str], submissions_by_cik: dict[str, dict[str, Any]]):
+    """`search_by_query` maps the exact `company` search param to an atom string;
+    missing keys default to an empty feed. `submissions_by_cik` maps unpadded CIK to a
+    submissions payload."""
+
+    def fake_get(url: str, **kwargs: Any) -> FakeResponse:
         if url == SEARCH_URL:
-            return FakeResponse(text=search_atom)
-        return FakeResponse(payload=submissions_payload)
+            company = kwargs["params"]["company"]
+            return FakeResponse(text=search_by_query.get(company, "<feed></feed>"))
+        cik = _cik_from_submissions_url(url)
+        return FakeResponse(payload=submissions_by_cik.get(cik))
 
     return fake_get
 
 
-def test_match_issuer_name_no_candidates(tmp_path: Path, monkeypatch: Any) -> None:
-    monkeypatch.setattr(
-        "utils.resolution_v2_network.requests.get", _fake_get("<feed></feed>", None)
-    )
+def test_match_issuer_name_no_candidates_at_any_truncation_level(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setattr("utils.resolution_v2_network.requests.get", _fake_get({}, {}))
 
     result = match_issuer_name(_client(tmp_path), "Nonexistent Company Xyz")
 
@@ -57,14 +77,40 @@ def test_match_issuer_name_no_candidates(tmp_path: Path, monkeypatch: Any) -> No
     assert result["matched_cik"] is None
 
 
-def test_match_issuer_name_ambiguous_candidates(tmp_path: Path, monkeypatch: Any) -> None:
-    atom = (
-        "<feed>"
-        "<entry><content type='text/xml'><company-info><cik>0000000001</cik></company-info></content></entry>"
-        "<entry><content type='text/xml'><company-info><cik>0000000002</cik></company-info></content></entry>"
-        "</feed>"
+def test_match_issuer_name_too_many_candidates_skips_validation(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A query returning more candidates than the validate-individually cap is reported
+    ambiguous without spending a single validation request — a shorter query would only
+    return more, never fewer."""
+    calls = []
+    atom = _atom([str(n) for n in range(1, 10)])  # 9 candidates > MAX_CANDIDATES_TO_VALIDATE
+
+    def fake_get(url: str, **kwargs: Any) -> FakeResponse:
+        calls.append(url)
+        return FakeResponse(text=atom)
+
+    monkeypatch.setattr("utils.resolution_v2_network.requests.get", fake_get)
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co")
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["candidate_count"] == 9
+    assert result["matched_cik"] is None
+    assert calls == [SEARCH_URL]  # no submissions fetches at all
+
+
+def test_match_issuer_name_two_candidates_both_validate_is_genuinely_ambiguous(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    atom = _atom(["1", "2"])
+    submissions = {
+        "1": {"sic": "1000", "sicDescription": "A", "name": "Ambiguous Co"},
+        "2": {"sic": "2000", "sicDescription": "B", "name": "Ambiguous Co"},
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
     )
-    monkeypatch.setattr("utils.resolution_v2_network.requests.get", _fake_get(atom, None))
 
     result = match_issuer_name(_client(tmp_path), "Ambiguous Co")
 
@@ -73,29 +119,39 @@ def test_match_issuer_name_ambiguous_candidates(tmp_path: Path, monkeypatch: Any
     assert result["matched_cik"] is None
 
 
-def test_match_issuer_name_single_candidate_name_matches(tmp_path: Path, monkeypatch: Any) -> None:
-    atom = "<feed><entry><content type='text/xml'><company-info><cik>0000104599</cik></company-info></content></entry></feed>"
-    submissions = {
-        "sic": "5731",
-        "sicDescription": "Retail-Electronics",
-        "name": "CIRCUIT CITY STORES INC",
-    }
-    monkeypatch.setattr("utils.resolution_v2_network.requests.get", _fake_get(atom, submissions))
+def test_match_issuer_name_single_candidate_matches_on_first_query(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """No truncation needed — a fast path that costs exactly one search request."""
+    calls = []
+    atom = _atom(["104599"])
+    submissions = {"104599": {"sic": "5731", "sicDescription": "Retail-Electronics",
+                               "name": "CIRCUIT CITY STORES INC"}}
+
+    def fake_get(url: str, **kwargs: Any) -> FakeResponse:
+        calls.append((url, kwargs.get("params", {}).get("company")))
+        if url == SEARCH_URL:
+            return FakeResponse(text=atom)
+        return FakeResponse(payload=submissions["104599"])
+
+    monkeypatch.setattr("utils.resolution_v2_network.requests.get", fake_get)
 
     result = match_issuer_name(_client(tmp_path), "Circuit City Stores")
 
     assert result["match_status"] == STATUS_MATCHED
     assert result["matched_cik"] == "104599"
     assert result["sic"] == "5731"
-    assert result["candidate_name"] == "CIRCUIT CITY STORES INC"
+    search_calls = [c for c in calls if c[0] == SEARCH_URL]
+    assert len(search_calls) == 1  # matched on the very first, untruncated query
 
 
-def test_match_issuer_name_single_candidate_name_matches_after_descriptor_strip(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    atom = "<feed><entry><content type='text/xml'><company-info><cik>0000313216</cik></company-info></content></entry></feed>"
-    submissions = {"sic": "3826", "sicDescription": "Instruments", "name": "ABB LTD"}
-    monkeypatch.setattr("utils.resolution_v2_network.requests.get", _fake_get(atom, submissions))
+def test_match_issuer_name_matches_after_descriptor_strip(tmp_path: Path, monkeypatch: Any) -> None:
+    atom = _atom(["313216"])
+    submissions = {"313216": {"sic": "3826", "sicDescription": "Instruments", "name": "ABB LTD"}}
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"ABB LTD": atom}, submissions),  # raw "ABB LTD-SPON ADR" query gets nothing
+    )
 
     result = match_issuer_name(_client(tmp_path), "ABB LTD-SPON ADR")
 
@@ -103,22 +159,85 @@ def test_match_issuer_name_single_candidate_name_matches_after_descriptor_strip(
     assert result["matched_cik"] == "313216"
 
 
-def test_match_issuer_name_single_candidate_name_mismatch(tmp_path: Path, monkeypatch: Any) -> None:
-    """A single search candidate isn't automatically trusted — its actual registrant
-    name still has to match, or this stays unresolved rather than guessed."""
-    atom = "<feed><entry><content type='text/xml'><company-info><cik>0000999999</cik></company-info></content></entry></feed>"
+def test_match_issuer_name_finds_match_via_progressive_truncation(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The real bug this fix targets: the raw name (with a trailing legal-suffix word
+    the registrant's exact string doesn't share, here compounded by a SEC jurisdiction
+    tag) returns nothing, but the truncated 2-word query finds the real registrant, and
+    validation succeeds despite the "/TX" tag in the actual name."""
+    atom = _atom(["1839341"])
     submissions = {
-        "sic": "1234",
-        "sicDescription": "Something Else",
-        "name": "TOTALLY DIFFERENT CO",
+        "1839341": {"sic": "7372", "sicDescription": "Software", "name": "Core Scientific, Inc./tx"}
     }
-    monkeypatch.setattr("utils.resolution_v2_network.requests.get", _fake_get(atom, submissions))
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"CORE SCIENTIFIC": atom}, submissions),  # "CORE SCIENTIFIC INC" gets nothing
+    )
+
+    result = match_issuer_name(_client(tmp_path), "CORE SCIENTIFIC INC")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1839341"
+
+
+def test_match_issuer_name_rejects_name_match_with_blank_sic(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Real SEC data has a genuine name collision this guards against: searching
+    "Confluent, Inc." (the real Kafka company) also turns up an unrelated same-named
+    shell with a blank SIC. A candidate whose name matches but has no SIC on record is
+    never accepted, even alone with no competing candidate."""
+    atom = _atom(["1171179"])
+    submissions = {"1171179": {"sic": "", "sicDescription": "", "name": "CONFLUENT INC"}}
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"CONFLUENT INC": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "CONFLUENT INC-CLASS A")
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_accepts_name_match_with_real_sic(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The counterpart to the blank-SIC rejection above: a candidate with a real SIC on
+    record is accepted exactly as before — the guard only rejects blank-SIC candidates,
+    it doesn't add friction to the normal case."""
+    atom = _atom(["1699838"])
+    submissions = {
+        "1699838": {"sic": "7372", "sicDescription": "Software", "name": "Confluent, Inc."}
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"CONFLUENT INC": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "CONFLUENT INC-CLASS A")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1699838"
+
+
+def test_match_issuer_name_no_validated_match_when_nothing_matches_any_variant(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Candidates exist at some truncation level, but none of their real names match —
+    distinguishable from STATUS_NO_CANDIDATES (EDGAR found literally nothing)."""
+    atom = _atom(["999999"])
+    submissions = {"999999": {"sic": "1234", "sicDescription": "X", "name": "TOTALLY DIFFERENT CO"}}
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Circuit City": atom}, submissions),
+    )
 
     result = match_issuer_name(_client(tmp_path), "Circuit City Stores")
 
-    assert result["match_status"] == STATUS_NAME_MISMATCH
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
     assert result["matched_cik"] is None
-    assert result["candidate_name"] == "TOTALLY DIFFERENT CO"
 
 
 def test_match_issuer_name_search_fetch_error_does_not_raise(
@@ -150,10 +269,10 @@ def test_match_issuer_name_validation_fetch_error_does_not_raise(
 ) -> None:
     """A transient SEC 503 on the *validation* (submissions) request, after the search
     itself succeeded with a single candidate, must also surface as `fetch_error` rather
-    than a false `name_mismatch`."""
+    than a false negative."""
     import requests
 
-    atom = "<feed><entry><content type='text/xml'><company-info><cik>0000104599</cik></company-info></content></entry></feed>"
+    atom = _atom(["104599"])
 
     class FailingResponse:
         status_code = 503
@@ -177,15 +296,15 @@ def test_match_issuer_name_validation_fetch_error_does_not_raise(
 def test_match_issuer_name_reuses_cached_sic_fetch(tmp_path: Path, monkeypatch: Any) -> None:
     """If the CIK's submissions data was already fetched (e.g. by the main SIC pass),
     validating a name match here is a free cache hit, not a new request."""
-    atom = "<feed><entry><content type='text/xml'><company-info><cik>0000104599</cik></company-info></content></entry></feed>"
-    submissions = {"sic": "5731", "sicDescription": "Retail", "name": "CIRCUIT CITY STORES INC"}
+    atom = _atom(["104599"])
+    submissions = {"104599": {"sic": "5731", "sicDescription": "Retail", "name": "CIRCUIT CITY STORES INC"}}
     calls = []
 
-    def fake_get(url: str, **_: Any) -> FakeResponse:
+    def fake_get(url: str, **kwargs: Any) -> FakeResponse:
         calls.append(url)
         if url == SEARCH_URL:
             return FakeResponse(text=atom)
-        return FakeResponse(payload=submissions)
+        return FakeResponse(payload=submissions["104599"])
 
     monkeypatch.setattr("utils.resolution_v2_network.requests.get", fake_get)
     client = _client(tmp_path)

@@ -110,12 +110,24 @@ def validate_inputs(config: EdgarSearchConfig) -> None:
         )
 
 
+TIER_E_SOURCE = "edgar_company_search_matched"
+
+
 def unresolved_issuer_names(path: Path) -> list[str]:
-    """Every unique `identity_issuer` on an era with no resolved CIK and no fund/ETF
-    exclusion — the exact same population as the manual-research worklist."""
+    """Every unique `identity_issuer` not resolved by Tiers A-D, no fund/ETF exclusion —
+    the exact same population as the manual-research worklist, **plus** any name Tier E
+    itself resolved on a previous run. This always recomputes a complete,
+    self-consistent Tier E output from scratch rather than only the residual pool still
+    failing — `reconcile_cik` rebuilds `cik_source` fresh from this file every run, so
+    writing just the residual would silently drop every match a prior run already
+    found. Cached search/validation responses make the redundant-looking rerun over
+    already-matched names cheap, not wasteful."""
     frame = pl.read_parquet(path)
+    not_resolved_by_earlier_tiers = pl.col("resolved_cik").is_null() | (
+        pl.col("cik_source") == TIER_E_SOURCE
+    )
     pool = frame.filter(
-        pl.col("resolved_cik").is_null()
+        not_resolved_by_earlier_tiers
         & pl.col("identity_issuer").is_not_null()
         & (pl.col("sic_coverage_status") != "fund_no_sic_needed")
     )

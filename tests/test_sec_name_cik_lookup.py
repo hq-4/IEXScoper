@@ -22,6 +22,10 @@ from utils.sec_name_cik_lookup import (
         ("Ares Acquisition Corp III", "ARES ACQUISITION CORP III"),
         ("Some Fund Trust", "SOME FUND"),
         ("XYZ Holdings Inc", "XYZ"),
+        # SEC's trailing "/XX" state-of-incorporation disambiguation tag must not block
+        # the legal-suffix strip loop from reaching "INC" behind it.
+        ("Core Scientific, Inc./tx", "CORE SCIENTIFIC"),
+        ("Some Corp/DE", "SOME"),
         (None, ""),
         ("", ""),
         ("   ", ""),
