@@ -1,5 +1,20 @@
 # Task List
 
+- 2026-08-06: SIC/sector classification, Phase 8 correction. User checked
+  `reports/sector-research-worklist/sector_research_worklist.csv` directly and found `GPS` and
+  `CFLT` both still at the top, contradicting the Phase 8 entry's claim that only `GPS` and `HOLX`
+  remained unresolved. Verified against the real data: the claim was wrong — `CFLT` was never
+  resolved, and got dropped from the "remains unresolved" list by a counting error while writing
+  that summary (6 of 9 originally-named top-10 tickers actually resolved, not 7). `CFLT`'s
+  unresolved status is itself correct behavior, not a gap: the Phase 7 SIC guard refuses it,
+  because the only single-candidate match reachable within Tier E's 2-word truncation floor for
+  `"CONFLUENT INC-CLASS A"` is an unrelated blank-SIC shell (CIK 1171179), not the real Confluent,
+  Inc. (CIK 1699838) — whose exact registered name only becomes reachable by truncating to the
+  single word `"CONFLUENT"`, below the floor this design deliberately holds to limit
+  over-broad-query collision risk. No code changed; `docs/ARCHITECTURE.md`'s Phase 8 entry
+  corrected to list all 3 genuinely-unresolved names (`GPS`, `HOLX`, `CFLT`) instead of 2.
+  `[KBT][CDiP]`
+
 - 2026-08-06: SIC/sector classification, Phase 8 (descriptor-pattern gap). User: "what else is
   next." Rather than manufacture busywork, checked the refreshed worklist's own top rows and found
   a visible, concrete pattern: `EVERPURE INC-A` (`PSTG`), `C3.AI INC-A`, `ROYALTY PHARMA PLC- CL
