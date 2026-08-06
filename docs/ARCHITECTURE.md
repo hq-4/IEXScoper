@@ -309,10 +309,20 @@ Real run: Tier D directly resolved 24 more CIKs / 106 more eras with zero networ
 Tier E pass (4,584 names, mostly cache hits) then rose 1,680/4,627 (36.3%) → **1,844/4,584 matched
 (40.2%)**. Reconciled: distinct CIKs resolved 8,085 → **8,201**; eras with real SIC + sector
 11,150 (30.2%) → **11,466 (31.1%)**; manual-research worklist 13,448 → **13,131 eras**, 292M →
-**264M trade rows**; top-500 volume concentration 83.0% → **83.4%**. `GPS` and `HOLX` remain the
-only unresolved names among the original spot-checked top-10 rows — both confirmed to have no
-descriptor-suffix issue at all, genuinely different failure modes (no name anywhere in the
-pipeline, and a real EDGAR search miss, respectively). [CA][IV][REH][CDiP][KBT]
+**264M trade rows**; top-500 volume concentration 83.0% → **83.4%**.
+
+**Correction** (a prior version of this entry undercounted the remaining unresolved names — caught
+when the user spot-checked the actual worklist CSV against the summary rather than trusting it):
+of the original top-10, **3 remain unresolved, not 2** — `GPS`, `HOLX`, **and `CFLT`**. `CFLT`'s
+case is worth being explicit about, since it isn't a gap at all: the SIC guard from the Tier E
+recall fix correctly refuses it, because the only single-candidate match EDGAR's search can reach
+for `"CONFLUENT INC-CLASS A"` within the 2-word truncation floor is the unrelated blank-SIC shell
+(CIK 1171179), not the real Confluent, Inc. (CIK 1699838) — whose actual registered name, `"Confluent,
+Inc."`, only becomes reachable by truncating to the single word `"CONFLUENT"`, below the floor this
+design deliberately holds to avoid over-broad, high-collision-risk queries. `HOLX` is a genuine
+EDGAR search miss (the real registrant's exact name/comma placement isn't reachable by any
+variant tried) and `GPS` has no name anywhere in the pipeline — both, like `CFLT`, correctly
+unresolved rather than silently missing. [CA][IV][REH][CDiP][KBT]
 
 ## Benchmark Utilities
 
