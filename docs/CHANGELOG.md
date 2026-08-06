@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- feat: fix Tier E's EDGAR search-recall gap (progressive truncation + validate-among-candidates)
+  and a jurisdiction-tag bug in `sec_name_cik_lookup.normalize_name` that also silently fixed Tier
+  D for the same names (`CORZ`). A live smoke test before the full run caught a real false-positive
+  risk the fix itself introduced — a genuine SEC name collision between the real Confluent, Inc.
+  (CIK 1699838, SIC 7372) and an unrelated same-named shell (CIK 1171179, blank SIC) that plain
+  normalized-name matching can't tell apart — fixed by requiring a real SIC on record before
+  accepting any name match, free since it's already fetched during validation. A second, unrelated
+  bug was caught mid-run: rerunning the EDGAR search over only the residual unresolved pool and
+  overwriting its output silently dropped the previous run's 969 matches (`reconcile_cik` rebuilds
+  fresh from that file every run); fixed by re-including any name Tier E previously resolved in the
+  search population so every run recomputes a complete table, not an eroding one. Real run (4,627
+  names, mostly cache hits): EDGAR matches 969/4,453 (21.8%) -> 1,680/4,627 (36.3%); distinct CIKs
+  resolved 7,546 -> 8,085; eras with real SIC+sector 10,070 -> 11,150 (30.2%); manual-research
+  worklist 14,491 -> 13,448 eras, 378M -> 292M trade rows; top-500 volume concentration 78.7% ->
+  83.0%. Of the original spot-checked top-10 worklist rows, 7/9 with any name in the pipeline now
+  resolve correctly (`ATVI`, `X`, `BK`, `FTCH`, `CORZ`, `PXD`); only `PSTG`/`HOLX` (genuine EDGAR
+  search misses) and `GPS` (no name anywhere in the pipeline) remain `[CA][IV][REH][CDiP][KBT]`
+
 - feat: backfill `identity_issuer` from IEX's own entity snapshots and detect ticker
   renames/still-active-under-original-symbol via SEC's current ticker list — closes a real gap a
   worklist spot-check surfaced (`GPS`→`GAP`, `BK`→`BNY`, `PSTG`→`P` were misclassified as

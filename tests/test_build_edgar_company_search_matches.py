@@ -17,6 +17,7 @@ ERAS_SECTOR_ENRICHED_SCHEMA = {
     "symbol_era_id": pl.String,
     "identity_issuer": pl.String,
     "resolved_cik": pl.String,
+    "cik_source": pl.String,
     "sic_coverage_status": pl.String,
 }
 
@@ -28,6 +29,7 @@ def _write_eras_sector_enriched(tmp_path: Path) -> Path:
             "symbol_era_id": ["AAA#001", "BBB#001", "CCC#001", "DDD#001", "EEE#001"],
             "identity_issuer": ["Alpha Corp", "Beta Fund", "Alpha Corp", None, "Gamma Inc"],
             "resolved_cik": [None, None, "12345", None, None],
+            "cik_source": [None, None, "sec_current_ticker_match", None, None],
             "sic_coverage_status": ["no_cik", "fund_no_sic_needed", "sic_and_sector", "no_cik", "no_cik"],
         },
         schema=ERAS_SECTOR_ENRICHED_SCHEMA,
@@ -40,10 +42,36 @@ def test_unresolved_issuer_names_dedupes_excludes_resolved_and_funds(tmp_path: P
 
     names = unresolved_issuer_names(path)
 
-    # BBB is a fund (excluded), CCC already has a resolved_cik (excluded), DDD has no
-    # issuer name at all (excluded); AAA's issuer repeats across two eras and is only
-    # counted once.
+    # BBB is a fund (excluded), CCC already has a resolved_cik via Tier C (excluded),
+    # DDD has no issuer name at all (excluded); AAA's issuer repeats across two eras and
+    # is only counted once.
     assert names == ["Alpha Corp", "Gamma Inc"]
+
+
+def test_unresolved_issuer_names_reincludes_tier_e_own_prior_matches(tmp_path: Path) -> None:
+    """A name Tier E itself resolved on a *previous* run must stay in the search
+    population on a rerun — this file gets overwritten each run, and `reconcile_cik`
+    rebuilds `cik_source` fresh from it every time, so dropping a previously-Tier-E-
+    matched name here would silently erase a real match on the next `reconcile_cik`
+    pass, not just skip a redundant search."""
+    path = tmp_path / "eras_sector_enriched.parquet"
+    pl.DataFrame(
+        {
+            "symbol_era_id": ["AAA#001", "BBB#001"],
+            "identity_issuer": ["Alpha Corp", "Beta Corp"],
+            "resolved_cik": ["104599", "999"],
+            "cik_source": ["edgar_company_search_matched", "sec_current_ticker_match"],
+            "sic_coverage_status": ["sic_and_sector", "sic_and_sector"],
+        },
+        schema=ERAS_SECTOR_ENRICHED_SCHEMA,
+    ).write_parquet(path)
+
+    names = unresolved_issuer_names(path)
+
+    # AAA was resolved by Tier E on a prior run — stays in the population so a rerun
+    # reproduces it (cheaply, via cache) rather than silently dropping it. BBB was
+    # resolved by a different tier (Tier C) — genuinely done, excluded.
+    assert names == ["Alpha Corp"]
 
 
 class FakeResponse:

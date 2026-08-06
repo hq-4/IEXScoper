@@ -248,17 +248,48 @@ anywhere in the pipeline (not OpenFIGI, not IEX), so no tier has anything to sea
 need a heavier mechanism (EDGAR full-text search over old filings, deliberately deprioritized
 earlier in this program for ~1% yield) or manual lookup.
 
-**Separately diagnosed, not yet fixed**: `CFLT`, `CORZ`, and `PXD` *do* have a real
-`identity_issuer` and still fail to resolve, traced to a genuine Tier E recall gap — EDGAR's
-`browse-edgar` company search does literal prefix matching against the exact registered name
-string, and the raw OpenFIGI/IEX name sent as the query (`"CORE SCIENTIFIC INC"` vs SEC's actual
-`"Core Scientific, Inc./tx"`, `"Pioneer Natural Resources Company"` vs SEC's `"PIONEER NATURAL
-RESOURCES CO"`) frequently doesn't literally prefix-match, when a shorter truncated query would
-(confirmed live: `"Core Scientific"` and `"Pioneer Natural"` both find the right CIK immediately).
-Tier E also currently discards any multi-candidate search result as `ambiguous` rather than
-validating each candidate's real name to find the one that matches — a second, compounding gap.
-Both are real, general recall improvements (progressive truncation + validate-among-candidates),
-not one-off fixes for these three names — left as a scoped follow-on. [CA][IV][REH][CDiP][KBT]
+**A fourth pass fixed the diagnosed Tier E recall gap** (`CFLT`/`CORZ`/`PXD`/and, on inspection, a
+wider set including `ATVI`/`X`): EDGAR's `browse-edgar` company search does literal prefix
+matching against the exact registered name string, and the raw OpenFIGI/IEX name frequently
+doesn't literally prefix-match a real registrant's exact string. `utils/edgar_company_search_match.py`
+now tries the full (descriptor-stripped) name first, then progressively drops trailing words down
+to a 2-word floor, stopping at the first query that yields a validated match — and validates
+*every* candidate a query returns (reusing `fetch_sic`, often a free cache hit) instead of
+discarding any multi-candidate result as ambiguous outright. A separate, compounding bug in
+`utils.sec_name_cik_lookup.normalize_name` meant SEC's trailing `/XX` jurisdiction tag (`"Core
+Scientific, Inc./tx"`) blocked the legal-suffix-stripping loop from ever reaching `"INC"` — fixed
+by stripping the tag first; this also fixed `CORZ` directly through **Tier D**, since the current-
+listings match Tier D already does had the same normalization bug.
+
+**A live smoke test before committing to the full run caught a real false-positive risk in the fix
+itself**: searching for the real Confluent, Inc. (CIK 1699838, SIC 7372, the Kafka company) also
+turned up an unrelated same-named shell, `"CONFLUENT INC"` (CIK 1171179, blank SIC) — a genuine SEC
+name collision that plain normalized-name matching can't tell apart. Every confirmed-correct match
+found while building this had a real SIC on record; the collision didn't, so a candidate with no
+SIC is now never accepted as a match, even alone with no competing candidate — free (the SIC is
+already fetched during validation) and directly targeted at the failure actually observed, not a
+hypothetical one.
+
+**A second bug, unrelated to search quality, was found and fixed mid-run**: rerunning
+`utils/build_edgar_company_search_matches.py` against only the still-unresolved residual pool and
+overwriting its output file silently *dropped* the previous run's 969 matches, since
+`reconcile_cik` rebuilds `cik_source` fresh from that file on every run — `distinct_ciks_resolved`
+measurably went *down* after the first rerun before this was caught. Fixed by re-including any
+name Tier E itself resolved on a prior run in the search population, so every run recomputes a
+complete, self-consistent Tier E table from scratch rather than an eroding partial one; cached
+responses make the redundant-looking rerun over already-matched names cheap.
+
+Real run (full recomputation, 4,627 unique names, mostly cache hits): EDGAR matches rose
+969/4,453 (21.8%) → **1,680/4,627 matched (36.3%)**. Reconciled: distinct CIKs resolved 7,546 →
+**8,085**; eras with real SIC + sector 10,070 (27.3%) → **11,150 (30.2%)**; `continuity_status`
+`terminal` rose 1,953 → 2,956 (the newly-resolved CIKs are disproportionately genuinely-delisted
+companies, e.g. `ATVI`/`X`/`FTCH`/`PXD`, correctly flagged rather than left unresolved). Of the
+original top-10-by-volume worklist rows spot-checked, **7 of the 9 that had a real name anywhere
+in the pipeline now resolve correctly** (`ATVI`, `X`, `BK`, `FTCH`, `CORZ`×2, `PXD`); only `PSTG`
+(a bare `-A` share-class suffix the descriptor patterns don't cover) and `HOLX` (a genuine EDGAR
+search miss) remain, plus `GPS` itself (no name anywhere in the pipeline, unreachable by any of
+this). Manual-research worklist 14,491 → **13,448 eras**, 378M → **292M trade rows**; top-500
+volume concentration 78.7% → **83.0%**. [CA][IV][REH][CDiP][KBT]
 
 ## Benchmark Utilities
 

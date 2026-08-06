@@ -1,5 +1,41 @@
 # Task List
 
+- 2026-08-06: SIC/sector classification, Phase 7 (Tier E recall fix). User asked directly: "does
+  that mean the CSV top 10 are resolved and kicked from the stack?" Checked the real data: no —
+  only `BK` had dropped out; `ATVI`/`X`/`HOLX`/`PSTG`/`FTCH`/`CFLT`/`CORZ`/`PXD` were all still
+  hitting the Tier E search-recall gap diagnosed (not fixed) in Phase 6. User: "build that." Built
+  the fix: `utils/edgar_company_search_match.py` now tries the full (descriptor-stripped) name
+  first, then progressively drops trailing words to a 2-word floor — EDGAR's `browse-edgar` search
+  does literal prefix matching, so a raw name with a trailing-word/punctuation mismatch against the
+  exact registrant string often returns nothing where a shorter query would — and validates *every*
+  candidate a query returns (reusing `fetch_sic`, often a free cache hit) instead of discarding any
+  multi-candidate result as ambiguous outright. Also fixed a compounding bug in
+  `utils.sec_name_cik_lookup.normalize_name`: SEC's trailing `/XX` jurisdiction tag (`"Core
+  Scientific, Inc./tx"`) was blocking the legal-suffix-stripping loop from ever reaching `"INC"` —
+  this also fixed Tier D directly for the same names (`CORZ`), since Tier D's current-listing match
+  shares the same normalization function. A live smoke test before committing to the full run
+  caught a real false-positive the fix itself introduced: searching for the real Confluent, Inc.
+  (CIK 1699838, SIC 7372) also surfaced an unrelated same-named shell (`"CONFLUENT INC"`, CIK
+  1171179, blank SIC) — a genuine SEC name collision plain normalized-name matching can't tell
+  apart. Every confirmed-correct match checked while building this had a real SIC on record; the
+  collision didn't — added a free guard (the SIC is already fetched during validation) requiring
+  one before accepting any match. A second, unrelated bug surfaced mid-run: rerunning the EDGAR
+  search over only the still-unresolved residual pool and overwriting the output file silently
+  *dropped* the first run's 969 matches, since `reconcile_cik` rebuilds `cik_source` fresh from
+  that file every run — `distinct_ciks_resolved` measurably went *down* (7,546 -> 7,267) after the
+  first rerun, caught by comparing against a saved before-snapshot rather than trusting the new
+  numbers blindly. Fixed by re-including any name Tier E itself resolved on a prior run in the
+  search population, so every run recomputes a complete, self-consistent table rather than an
+  eroding partial one. 470 tests pass (was 448 going into Phase 6+7 combined); ruff and bandit
+  clean. Real run (full recomputation, 4,627 unique names, mostly cache hits): EDGAR matches rose
+  969/4,453 (21.8%) -> **1,680/4,627 (36.3%)**; distinct CIKs resolved 7,546 -> **8,085**; eras
+  with real SIC+sector 10,070 (27.3%) -> **11,150 (30.2%)**; manual-research worklist 14,491 ->
+  **13,448 eras**, 378M -> **292M trade rows**; top-500 volume concentration 78.7% -> **83.0%**.
+  Of the original spot-checked top-10 rows, 7/9 with any name in the pipeline now resolve
+  correctly (`ATVI`, `X`, `BK`, `FTCH`, `CORZ`×2, `PXD`); `PSTG` (bare `-A` suffix the descriptor
+  patterns don't cover) and `HOLX` (genuine EDGAR search miss) remain diagnosed residuals, and
+  `GPS` stays a genuine residual with no name anywhere in the pipeline. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-06: SIC/sector classification, Phase 6 (ticker-rename/continuity detection). User
   spot-checked the worklist's own top rows against real SEC data and found `GPS`, `BK`, and
   `PSTG` are not delisted — they're ticker renames (`GPS`→`GAP`, `BK`→`BNY`, `PSTG`→`P`, all
