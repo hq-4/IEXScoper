@@ -44,3 +44,40 @@ def load_edgar_matches(path: Path) -> pl.DataFrame | None:
     if not path.exists():
         return None
     return pl.read_parquet(path).select("identity_issuer", "matched_cik")
+
+
+def load_iex_fallback_names(path: Path) -> pl.DataFrame | None:
+    """`iex_latest_issuer` from `utils/build_iex_entity_enrichment.py`'s output — a real
+    issuer name IEX's own entity snapshots captured, already sitting unused for eras
+    where the identity pillar came back empty. This mostly rescues names OpenFIGI's
+    ticker-keyed lookup structurally cannot find: once a ticker is renamed away (e.g.
+    `BK` -> `BNY`), querying the *old* ticker string returns zero FIGI matches, the same
+    current-listing bias Tier C already has, just one layer upstream. Missing file just
+    means this fallback contributes nothing."""
+    if not path.exists():
+        return None
+    return (
+        pl.read_parquet(path)
+        .select("symbol_era_id", "iex_latest_issuer")
+        .filter(pl.col("iex_latest_issuer").is_not_null())
+        .rename({"iex_latest_issuer": "iex_fallback_issuer"})
+    )
+
+
+def apply_iex_fallback_issuer(
+    era_identity: pl.DataFrame, iex_fallback: pl.DataFrame | None
+) -> pl.DataFrame:
+    """Backfills `identity_issuer` from the IEX fallback only where the identity pillar
+    left it null — never overwrites a real OpenFIGI/SEC-asserted name. Adds
+    `identity_issuer_from_iex_fallback` so the backfilled rows stay distinguishable from
+    the identity pillar's own assertions in the output."""
+    if iex_fallback is None or not iex_fallback.height:
+        return era_identity.with_columns(
+            pl.lit(False).alias("identity_issuer_from_iex_fallback")
+        )
+    joined = era_identity.join(iex_fallback, on="symbol_era_id", how="left")
+    backfilled = pl.col("identity_issuer").is_null() & pl.col("iex_fallback_issuer").is_not_null()
+    return joined.with_columns(
+        pl.coalesce(["identity_issuer", "iex_fallback_issuer"]).alias("identity_issuer"),
+        backfilled.fill_null(False).alias("identity_issuer_from_iex_fallback"),
+    ).drop("iex_fallback_issuer")

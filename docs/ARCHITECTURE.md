@@ -201,6 +201,65 @@ already-searched names as free cache hits.
 
 [CA][IV][REH][CDiP][KBT]
 
+**A user spot-check of the worklist's own top rows surfaced a real, general blind spot**: `GPS`,
+`BK`, and `PSTG` are not delisted at all — they're ticker renames (`GPS`→`GAP`, `BK`→`BNY`,
+`PSTG`→`P`, all confirmed live against SEC's own submissions data), and `CORZ`'s `20260622` end
+date is a stale vendor-window artifact, not a real corporate event (Core Scientific is still
+actively trading). Root-caused to two distinct, general problems rather than four one-off ticker
+fixes:
+
+- **OpenFIGI's ticker-keyed lookup is current-listing-biased**, the same structural blind spot
+  Tier C already has, just one layer upstream: querying a renamed-away ticker string (`GPS`, `BK`,
+  `PSTG`) returns zero FIGI matches, so `identity_issuer` never gets populated and no downstream
+  tier has a name to search with. (`CFLT`'s ticker separately collides with an unrelated foreign
+  security in OpenFIGI's namespace — a different failure mode, same symptom.)
+- **Nothing checked whether a resolved CIK's current SEC ticker matched the era's own symbol** —
+  the pipeline had no way to distinguish "genuinely delisted" from "renamed" from "still trading,
+  stale end-date" once *any* CIK was resolved.
+
+Two fixes landed for these, both zero-new-network-cost (both reuse data already fetched/ingested
+elsewhere) and general — they apply to the whole universe, not just the four tickers found by
+inspection:
+
+- `utils/sector_enrichment_inputs.py`'s `load_iex_fallback_names`/`apply_iex_fallback_issuer`
+  backfill `identity_issuer` from `iex_latest_issuer` (`utils/build_iex_entity_enrichment.py`'s
+  output — already-ingested local snapshot data, zero network cost) whenever the identity pillar
+  left it null, without ever overwriting a real OpenFIGI/SEC-asserted name. A new
+  `identity_issuer_from_iex_fallback` boolean keeps the backfilled rows distinguishable in the
+  output.
+- `utils/ticker_continuity.py` reads `tickers`/`exchanges` from the same SEC submissions payload
+  `sec_sic_client.fetch_sic` already fetches for SIC — two more fields sitting unused in that same
+  response, at zero additional network cost whenever the SIC pass already covered the CIK. Derives
+  `continuity_status` per era: `terminal` (current tickers empty — genuinely delisted),
+  `still_active_same_symbol` (era's own symbol is still in the current list — the end date is a
+  stale artifact, not a real event), or `renamed_or_successor` (current tickers non-empty but
+  doesn't include the era's own symbol).
+
+Real run (17 new network requests — a mostly-free-cache-hit rerun since most CIKs were already
+fetched by the prior pass): `sec_name_matched` CIKs rose 1,948 → 2,015 (+67, IEX-fallback names
+Tier D could now search); manual-research worklist 14,559 → **14,491 eras**, 389M → **378M trade
+rows**; `has_googleable_name` rows in the worklist rose 5,155 → **6,513** (+1,358 — IEX-fallback
+names now visible for the eras that still didn't get an automatic CIK, e.g. `CFLT`/`CORZ`/`FTCH`/
+`PSTG`/`PXD`, all of which need the separate Tier E search-recall fix below, not this one).
+Across the whole universe, **`continuity_status` classified 740 eras `renamed_or_successor` and
+7,915 `still_active_same_symbol`** — signal that was structurally invisible before, not just for
+the four tickers that prompted the investigation. `GPS` itself stays a genuine residual: no name
+anywhere in the pipeline (not OpenFIGI, not IEX), so no tier has anything to search with; would
+need a heavier mechanism (EDGAR full-text search over old filings, deliberately deprioritized
+earlier in this program for ~1% yield) or manual lookup.
+
+**Separately diagnosed, not yet fixed**: `CFLT`, `CORZ`, and `PXD` *do* have a real
+`identity_issuer` and still fail to resolve, traced to a genuine Tier E recall gap — EDGAR's
+`browse-edgar` company search does literal prefix matching against the exact registered name
+string, and the raw OpenFIGI/IEX name sent as the query (`"CORE SCIENTIFIC INC"` vs SEC's actual
+`"Core Scientific, Inc./tx"`, `"Pioneer Natural Resources Company"` vs SEC's `"PIONEER NATURAL
+RESOURCES CO"`) frequently doesn't literally prefix-match, when a shorter truncated query would
+(confirmed live: `"Core Scientific"` and `"Pioneer Natural"` both find the right CIK immediately).
+Tier E also currently discards any multi-candidate search result as `ambiguous` rather than
+validating each candidate's real name to find the one that matches — a second, compounding gap.
+Both are real, general recall improvements (progressive truncation + validate-among-candidates),
+not one-off fixes for these three names — left as a scoped follow-on. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.
