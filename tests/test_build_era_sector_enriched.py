@@ -76,6 +76,7 @@ def test_build_era_sector_enriched_skip_fetch(tmp_path: Path) -> None:
             stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
             sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
             edgar_matches_path=tmp_path / "no_edgar_matches.parquet",
+            iex_eras_path=tmp_path / "no_iex.parquet",
             output_root=output_root,
             registry_path=tmp_path / "registry.sqlite",
             skip_fetch=True,
@@ -132,6 +133,7 @@ def test_build_era_sector_enriched_with_fetch(tmp_path: Path, monkeypatch: Any) 
             sec_ticker_cik_path=sec_path,
             stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
             sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
+            iex_eras_path=tmp_path / "no_iex.parquet",
             output_root=output_root,
             registry_path=tmp_path / "registry.sqlite",
             user_agent="test test@example.test",
@@ -169,6 +171,7 @@ def test_fund_reclassification_from_stable_openfigi_universe(tmp_path: Path) -> 
             sec_ticker_cik_path=sec_path,
             stable_openfigi_path=stable_path,
             sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
+            iex_eras_path=tmp_path / "no_iex.parquet",
             output_root=output_root,
             registry_path=tmp_path / "registry.sqlite",
             skip_fetch=True,
@@ -200,6 +203,7 @@ def test_fund_no_sic_needed_when_no_cik_and_no_sic(tmp_path: Path) -> None:
             sec_ticker_cik_path=sec_path,
             stable_openfigi_path=stable_path,
             sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
+            iex_eras_path=tmp_path / "no_iex.parquet",
             output_root=output_root,
             registry_path=tmp_path / "registry.sqlite",
             skip_fetch=True,
@@ -248,6 +252,7 @@ def test_tier_d_name_match_resolves_a_cik_end_to_end(tmp_path: Path) -> None:
             sec_ticker_cik_path=sec_path,
             stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
             sec_company_tickers_path=sec_names_path,
+            iex_eras_path=tmp_path / "no_iex.parquet",
             output_root=output_root,
             registry_path=tmp_path / "registry.sqlite",
             skip_fetch=True,
@@ -299,6 +304,7 @@ def test_tier_e_edgar_matches_resolves_a_cik_end_to_end(tmp_path: Path) -> None:
             stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
             sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
             edgar_matches_path=edgar_matches_path,
+            iex_eras_path=tmp_path / "no_iex.parquet",
             output_root=output_root,
             registry_path=tmp_path / "registry.sqlite",
             skip_fetch=True,
@@ -310,3 +316,85 @@ def test_tier_e_edgar_matches_resolves_a_cik_end_to_end(tmp_path: Path) -> None:
     assert row["resolved_cik"] == "104599"
     assert row["cik_source"] == "edgar_company_search_matched"
     assert row["cik_tier"] == "E"
+
+
+def test_renamed_ticker_resolves_via_iex_fallback_and_flags_continuity(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """GGG stands in for the real GPS -> GAP case: the identity pillar never asserted
+    an issuer name (OpenFIGI's ticker-keyed lookup can't find a renamed-away ticker),
+    but IEX's own entity snapshot already captured the real name. That name should
+    resolve a CIK via Tier D, and since the CIK's *current* SEC ticker differs from this
+    era's own symbol, continuity_status should flag it as a rename rather than a real
+    delisting."""
+    era_identity_path = tmp_path / "eras_identity_enriched.parquet"
+    sec_path = tmp_path / "symbol_eras_sec_enriched.parquet"
+    pl.DataFrame(
+        {
+            "symbol": ["GGG"],
+            "symbol_era_id": ["GGG#001"],
+            "source_classification": ["delisted_or_acquired_candidate"],
+            "trade_rows": [4000],
+            "identity_tier": [None],
+            "identity_issuer": [None],
+            "identity_entity_id": [None],
+            "identity_method": [None],
+            "identity_instrument": [None],
+            "identity_source_url": [None],
+        },
+        schema=ERA_IDENTITY_SCHEMA,
+    ).write_parquet(era_identity_path)
+    pl.DataFrame(
+        {"symbol_era_id": ["GGG#001"], "sec_cik": [None], "sec_current_confidence": [None]},
+        schema=SEC_TICKER_CIK_SCHEMA,
+    ).write_parquet(sec_path)
+    sec_names_path = tmp_path / "sec_company_tickers_exchange.parquet"
+    pl.DataFrame(
+        {"sec_cik": ["0000039911"], "sec_name": ["Gap Inc"], "sec_ticker": ["GAP"]}
+    ).write_parquet(sec_names_path)
+    iex_eras_path = tmp_path / "symbol_eras_iex_enriched.parquet"
+    pl.DataFrame(
+        {"symbol_era_id": ["GGG#001"], "iex_latest_issuer": ["Gap Inc"]}
+    ).write_parquet(iex_eras_path)
+    output_root = tmp_path / "out"
+
+    class FakeResponse:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self.payload = payload
+            self.status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return self.payload
+
+    def fake_get(url: str, **_: Any) -> FakeResponse:
+        return FakeResponse(
+            {"sic": "5651", "sicDescription": "Retail-Family Clothing", "name": "Gap Inc",
+             "tickers": ["GAP"], "exchanges": ["NYSE"]}
+        )
+
+    monkeypatch.setattr("utils.resolution_v2_network.requests.get", fake_get)
+
+    build_era_sector_enriched(
+        SectorConfig(
+            era_identity_path=era_identity_path,
+            sec_ticker_cik_path=sec_path,
+            stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
+            sec_company_tickers_path=sec_names_path,
+            iex_eras_path=iex_eras_path,
+            output_root=output_root,
+            registry_path=tmp_path / "registry.sqlite",
+            user_agent="test test@example.test",
+            delay_seconds=0,
+        )
+    )
+
+    enriched = pl.read_parquet(output_root / "eras_sector_enriched.parquet")
+    row = enriched.filter(pl.col("symbol_era_id") == "GGG#001").to_dicts()[0]
+    assert row["identity_issuer"] == "Gap Inc"
+    assert row["identity_issuer_from_iex_fallback"] is True
+    assert row["resolved_cik"] == "39911"
+    assert row["cik_source"] == "sec_name_matched"
+    assert row["continuity_status"] == "renamed_or_successor"

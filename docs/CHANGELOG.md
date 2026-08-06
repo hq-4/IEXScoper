@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- feat: backfill `identity_issuer` from IEX's own entity snapshots and detect ticker
+  renames/still-active-under-original-symbol via SEC's current ticker list — closes a real gap a
+  worklist spot-check surfaced (`GPS`→`GAP`, `BK`→`BNY`, `PSTG`→`P` were misclassified as
+  delisted; `CORZ`'s end date was a stale vendor-window artifact, not a real event). Root cause:
+  OpenFIGI's ticker-keyed lookup is current-listing-biased (same blind spot as Tier C, one layer
+  upstream) — a renamed-away ticker string returns zero FIGI matches, so `identity_issuer` never
+  gets populated. `utils/sector_enrichment_inputs.load_iex_fallback_names`/
+  `apply_iex_fallback_issuer` backfill it from `iex_latest_issuer` (already-ingested local data,
+  zero network cost) without ever overwriting a real assertion. `utils/ticker_continuity.py` reads
+  `tickers`/`exchanges` from the same SEC submissions payload already fetched for SIC (zero
+  additional network cost) and derives `continuity_status`
+  (`terminal`/`still_active_same_symbol`/`renamed_or_successor`) per era. Real run (17 network
+  requests, mostly cache hits): `sec_name_matched` 1,948 -> 2,015; manual-research worklist 14,559
+  -> 14,491 eras, 389M -> 378M trade rows; `has_googleable_name` rows 5,155 -> 6,513. Across the
+  whole universe, `continuity_status` classified 740 eras `renamed_or_successor` and 7,915
+  `still_active_same_symbol` — a signal that was structurally invisible before. Diagnosed but not
+  yet fixed: `CFLT`/`CORZ`/`PXD` still fail to resolve due to a separate Tier E search-recall gap
+  (EDGAR's literal prefix-match search rejects the raw OpenFIGI/IEX name; a shorter truncated
+  query finds the right CIK) `[CA][IV][REH][CDiP][KBT]`
+
 - feat: add EDGAR company-name-search CIK resolution (`sector_cik_reconcile.py` Tier E) for
   issuers no longer in SEC's current listings at all — genuinely deregistered/merged/dissolved
   companies Tier D structurally can't reach. `utils/sec_company_search_client.py` calls EDGAR's

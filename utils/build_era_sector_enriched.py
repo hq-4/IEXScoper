@@ -9,10 +9,8 @@ first supervised run instead. [CA][REH][KBT]
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,11 +27,19 @@ from utils.resolution_v2_registry import EvidenceRegistry
 from utils.sec_sic_client import fetch_many
 from utils.sector_cik_reconcile import distinct_ciks, reconcile_cik
 from utils.sector_enrichment_inputs import (
+    apply_iex_fallback_issuer,
     load_edgar_matches,
+    load_iex_fallback_names,
     load_name_matches,
     load_stable_classes,
 )
+from utils.sector_enrichment_report import build_summary, write_outputs
 from utils.sic_division_table import sic_division_code_expr, sic_division_name_expr
+from utils.ticker_continuity import (
+    CONTINUITY_LOOKUP_SCHEMA,
+    apply_continuity_status,
+    fetch_many_current_tickers,
+)
 
 DEFAULT_ERA_IDENTITY_PATH = Path("reports/era-identity/eras_identity_enriched.parquet")
 DEFAULT_SEC_TICKER_CIK_PATH = Path("reports/sec-ticker-cik/symbol_eras_sec_enriched.parquet")
@@ -44,6 +50,7 @@ DEFAULT_SEC_COMPANY_TICKERS_PATH = Path(
 DEFAULT_EDGAR_MATCHES_PATH = Path(
     "reports/edgar-company-search/edgar_company_search_matches.parquet"
 )
+DEFAULT_IEX_ERAS_PATH = Path("reports/iex-entity-enrichment/symbol_eras_iex_enriched.parquet")
 DEFAULT_OUTPUT_ROOT = Path("reports/era-identity")
 DEFAULT_REGISTRY_PATH = Path("data/resolution/evidence_registry.sqlite")
 DEFAULT_USER_AGENT = "IEXScoper research contact@example.com"
@@ -70,6 +77,7 @@ class SectorConfig:
     stable_openfigi_path: Path = DEFAULT_STABLE_OPENFIGI_PATH
     sec_company_tickers_path: Path = DEFAULT_SEC_COMPANY_TICKERS_PATH
     edgar_matches_path: Path = DEFAULT_EDGAR_MATCHES_PATH
+    iex_eras_path: Path = DEFAULT_IEX_ERAS_PATH
     output_root: Path = DEFAULT_OUTPUT_ROOT
     registry_path: Path = DEFAULT_REGISTRY_PATH
     user_agent: str = ""
@@ -90,6 +98,7 @@ def main() -> int:
         stable_openfigi_path=Path(args.stable_openfigi_path),
         sec_company_tickers_path=Path(args.sec_company_tickers_path),
         edgar_matches_path=Path(args.edgar_matches_path),
+        iex_eras_path=Path(args.iex_eras_path),
         output_root=Path(args.output_root),
         registry_path=Path(args.registry_path),
         user_agent=args.user_agent or os.getenv("SEC_USER_AGENT") or DEFAULT_USER_AGENT,
@@ -115,6 +124,8 @@ def build_era_sector_enriched(config: SectorConfig) -> dict[str, Any]:
     validate_inputs(config)
     config.output_root.mkdir(parents=True, exist_ok=True)
     era_identity = pl.read_parquet(config.era_identity_path)
+    iex_fallback = load_iex_fallback_names(config.iex_eras_path)
+    era_identity = apply_iex_fallback_issuer(era_identity, iex_fallback)
     sec_ticker_cik = pl.read_parquet(config.sec_ticker_cik_path)
     name_matches = load_name_matches(config.sec_company_tickers_path, era_identity)
     edgar_matches = load_edgar_matches(config.edgar_matches_path)
@@ -123,8 +134,11 @@ def build_era_sector_enriched(config: SectorConfig) -> dict[str, Any]:
     fetch_ciks = ciks[: config.limit_ciks] if config.limit_ciks is not None else ciks
     sic_rows = [] if config.skip_fetch else _fetch_sic(config, fetch_ciks)
     sic_lookup = _sic_lookup_frame(sic_rows)
+    continuity_rows = [] if config.skip_fetch else _fetch_continuity(config, fetch_ciks)
+    continuity_lookup = _continuity_lookup_frame(continuity_rows)
     stable_classes = load_stable_classes(config.stable_openfigi_path)
     enriched = _build_enriched(era_identity, cik_table, sic_lookup, stable_classes)
+    enriched = apply_continuity_status(enriched, continuity_lookup)
     summary = build_summary(enriched, sic_lookup, len(ciks), len(sic_rows))
     write_outputs(config.output_root, enriched, sic_lookup, summary)
     return {"summary": summary}
@@ -162,6 +176,32 @@ def _sic_lookup_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
         pl.DataFrame(rows, schema=SIC_LOOKUP_SCHEMA)
         if rows
         else pl.DataFrame(schema=SIC_LOOKUP_SCHEMA)
+    )
+
+
+def _fetch_continuity(config: SectorConfig, ciks: list[str]) -> list[dict[str, Any]]:
+    if not ciks:
+        return []
+    registry = EvidenceRegistry(config.registry_path)
+    try:
+        network_config = NetworkConfig(
+            user_agent=config.user_agent,
+            delay_seconds=config.delay_seconds,
+            timeout_seconds=config.timeout_seconds,
+            retries=config.retries,
+        )
+        client = CachedPrimaryClient(network_config, registry)
+        max_age_days = 0 if config.refresh else config.max_age_days
+        return fetch_many_current_tickers(client, ciks, max_age_days=max_age_days)
+    finally:
+        registry.close()
+
+
+def _continuity_lookup_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
+    return (
+        pl.DataFrame(rows, schema=CONTINUITY_LOOKUP_SCHEMA)
+        if rows
+        else pl.DataFrame(schema=CONTINUITY_LOOKUP_SCHEMA)
     )
 
 
@@ -203,80 +243,6 @@ def _coverage_status_expr() -> pl.Expr:
     )
 
 
-def build_summary(
-    enriched: pl.DataFrame, sic_lookup: pl.DataFrame, total_ciks: int, fetched_ciks: int
-) -> dict[str, Any]:
-    cache_hits = int(sic_lookup["from_cache"].sum()) if sic_lookup.height else 0
-    return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "total_eras": enriched.height,
-        "distinct_ciks_resolved": total_ciks,
-        "distinct_ciks_fetched": fetched_ciks,
-        "cache_hits": cache_hits,
-        "network_requests": fetched_ciks - cache_hits,
-        "cik_source_counts": _counts(enriched, "cik_source"),
-        "sic_coverage_status_counts": _counts(enriched, "sic_coverage_status"),
-        "fetch_status_counts": _counts(sic_lookup, "fetch_status") if sic_lookup.height else {},
-        "sector_counts": _counts(enriched, "sector_name"),
-        "by_source_classification": _counts_nested(
-            enriched, "source_classification", "sic_coverage_status"
-        ),
-    }
-
-
-def _counts(frame: pl.DataFrame, column: str) -> dict[str, int]:
-    return {
-        str(row[column]): row["len"] for row in frame.group_by(column).len().sort(column).to_dicts()
-    }
-
-
-def _counts_nested(frame: pl.DataFrame, outer: str, inner: str) -> dict[str, dict[str, int]]:
-    result: dict[str, dict[str, int]] = {}
-    for row in frame.group_by([outer, inner]).len().sort([outer, inner]).to_dicts():
-        result.setdefault(str(row[outer]), {})[str(row[inner])] = row["len"]
-    return result
-
-
-def write_outputs(
-    root: Path, enriched: pl.DataFrame, sic_lookup: pl.DataFrame, summary: dict[str, Any]
-) -> None:
-    enriched.write_parquet(root / "eras_sector_enriched.parquet", compression="zstd")
-    sic_lookup.write_parquet(root / "cik_sic_lookup.parquet", compression="zstd")
-    (root / "sector_summary.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    write_markdown(root / "sector_report.md", summary)
-
-
-def write_markdown(path: Path, summary: dict[str, Any]) -> None:
-    lines = [
-        "# Era x Sector Enrichment",
-        "",
-        f"- Total eras: `{summary['total_eras']}`",
-        f"- Distinct CIKs resolved: `{summary['distinct_ciks_resolved']}`",
-        f"- Distinct CIKs fetched this run: `{summary['distinct_ciks_fetched']}`",
-        f"- Cache hits: `{summary['cache_hits']}`",
-        f"- Network requests: `{summary['network_requests']}`",
-        "",
-        "## CIK Source",
-        "",
-    ]
-    lines.extend(f"- `{key}`: `{value}`" for key, value in summary["cik_source_counts"].items())
-    lines.extend(["", "## SIC Coverage Status", ""])
-    lines.extend(
-        f"- `{key}`: `{value}`" for key, value in summary["sic_coverage_status_counts"].items()
-    )
-    lines.extend(["", "## Fetch Status", ""])
-    lines.extend(f"- `{key}`: `{value}`" for key, value in summary["fetch_status_counts"].items())
-    lines.extend(["", "## SIC Coverage by Source Classification", ""])
-    for outer, inner_counts in summary["by_source_classification"].items():
-        lines.append(f"- `{outer}`: " + ", ".join(f"{k}={v}" for k, v in inner_counts.items()))
-    lines.extend(["", "## Top Sectors", ""])
-    top_sectors = sorted(summary["sector_counts"].items(), key=lambda kv: kv[1], reverse=True)
-    lines.extend(f"- `{key}`: `{value}`" for key, value in top_sectors[:15])
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Reconcile CIKs, fetch SIC, and join the sector rollup onto the era universe."
@@ -286,6 +252,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stable-openfigi-path", default=str(DEFAULT_STABLE_OPENFIGI_PATH))
     parser.add_argument("--sec-company-tickers-path", default=str(DEFAULT_SEC_COMPANY_TICKERS_PATH))
     parser.add_argument("--edgar-matches-path", default=str(DEFAULT_EDGAR_MATCHES_PATH))
+    parser.add_argument("--iex-eras-path", default=str(DEFAULT_IEX_ERAS_PATH))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--registry-path", default=str(DEFAULT_REGISTRY_PATH))
     parser.add_argument("--user-agent", default="")

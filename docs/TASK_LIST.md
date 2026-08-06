@@ -1,5 +1,44 @@
 # Task List
 
+- 2026-08-06: SIC/sector classification, Phase 6 (ticker-rename/continuity detection). User
+  spot-checked the worklist's own top rows against real SEC data and found `GPS`, `BK`, and
+  `PSTG` are not delisted — they're ticker renames (`GPS`→`GAP`, `BK`→`BNY`, `PSTG`→`P`, all
+  confirmed live against SEC's submissions endpoint), and `CORZ`'s tracked end date is a stale
+  vendor-window artifact, not a real corporate event (Core Scientific never stopped trading).
+  Traced to two general, structural causes rather than four one-off tickers: (1) OpenFIGI's
+  ticker-keyed `/v3/mapping` lookup is current-listing-biased — the same blind spot Tier C
+  already has, just one layer upstream — so querying a renamed-away ticker string returns zero
+  FIGI matches and `identity_issuer` never gets populated in the first place; (2) nothing in the
+  pipeline checked whether a resolved CIK's *current* SEC ticker matched the era's own symbol, so
+  "genuinely delisted," "renamed," and "still trading, stale end-date" were all indistinguishable.
+  Fixed both, zero new network cost either way: `utils/sector_enrichment_inputs.py` gained
+  `load_iex_fallback_names`/`apply_iex_fallback_issuer`, backfilling `identity_issuer` from
+  `iex_latest_issuer` (`utils/build_iex_entity_enrichment.py`'s already-ingested local snapshot
+  data) whenever the identity pillar left it null, never overwriting a real assertion, with a new
+  `identity_issuer_from_iex_fallback` flag for provenance. New `utils/ticker_continuity.py` reads
+  `tickers`/`exchanges` from the same SEC submissions payload `sec_sic_client.fetch_sic` already
+  fetches for SIC (two more fields sitting unused in that response, same pattern as `sic`/
+  `sicDescription` before this program started) and derives `continuity_status` per era —
+  `terminal`, `still_active_same_symbol`, or `renamed_or_successor`. Extracted
+  `utils/sector_enrichment_report.py` from the orchestrator to stay under the file-size gate (was
+  362 lines after the new wiring, now 270). 15 new tests (10 for `ticker_continuity`, 4 for the
+  IEX fallback, 1 full end-to-end using the real GPS/GAP case) — 463 pass (was 448); ruff clean.
+  Real re-run (17 network requests, mostly cache hits since the prior pass already covered most
+  CIKs): `sec_name_matched` 1,948 -> **2,015** (BK now resolves and correctly flags
+  `renamed_or_successor`); manual-research worklist 14,559 -> **14,491 eras**, 389M -> **378M
+  trade rows**; `has_googleable_name` rows 5,155 -> **6,513** (real names now visible for
+  CFLT/CORZ/FTCH/PSTG/PXD even though they still lack an automatic CIK). Across the whole
+  universe — not just the four tickers that prompted the investigation — `continuity_status`
+  classified **740 eras `renamed_or_successor`** and **7,915 `still_active_same_symbol`**, a
+  signal that was structurally invisible before. `GPS` itself stays a genuine residual (no name
+  anywhere in the pipeline, not OpenFIGI, not IEX). Separately diagnosed but explicitly left
+  unfixed (out of this phase's scope): `CFLT`/`CORZ`/`PXD` already have a real `identity_issuer`
+  and still fail Tier E, traced to EDGAR's `browse-edgar` search doing literal prefix matching
+  against the exact registered name string — the raw name sent as the query often doesn't
+  literally prefix-match (confirmed live: a shorter truncated query finds the right CIK
+  immediately), and Tier E separately discards any multi-candidate result as `ambiguous` rather
+  than validating each candidate. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-06: SIC/sector classification, Phase 5 (EDGAR full-text/company-search CIK tier).
   User's explicit goal: resolve more of the remaining manual-research worklist via EDGAR, subject
   to two hard constraints — respect SEC's rate-limit guidance, and design every network request to
