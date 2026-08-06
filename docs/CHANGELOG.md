@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- feat: extend `sec_name_cik_lookup.DESCRIPTOR_PATTERNS` to cover a bare trailing `-A`/`-B`
+  share-class letter (`"EVERPURE INC-A"`) and the `"- CL A"` spacing variant
+  (`"ROYALTY PHARMA PLC- CL A"`), both visible at the top of the refreshed worklist after the Tier
+  E recall fix. Quantified first: 599 rows (29.9M trade rows) with the bare-letter form, 23 rows
+  (4.1M trade rows) with the spacing variant. Improves both Tier D and Tier E, since both share
+  `strip_security_descriptors` — `PSTG` resolved immediately through Tier D alone, no live search
+  needed, since its real current name was already in SEC's current-listings file and the `-A`
+  suffix was the only blocker. Real run: Tier D resolved 24 more CIKs / 106 more eras with zero
+  network calls; a fresh Tier E pass then rose 1,680/4,627 (36.3%) -> 1,844/4,584 (40.2%). Distinct
+  CIKs resolved 8,085 -> 8,201; eras with real SIC+sector 11,150 -> 11,466 (31.1%);
+  manual-research worklist 13,448 -> 13,131 eras, 292M -> 264M trade rows; top-500 volume
+  concentration 83.0% -> 83.4% `[CA][IV][REH][CDiP][KBT]`
+
 - feat: fix Tier E's EDGAR search-recall gap (progressive truncation + validate-among-candidates)
   and a jurisdiction-tag bug in `sec_name_cik_lookup.normalize_name` that also silently fixed Tier
   D for the same names (`CORZ`). A live smoke test before the full run caught a real false-positive

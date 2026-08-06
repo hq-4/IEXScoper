@@ -109,6 +109,14 @@ def test_match_by_name_no_match_for_unknown_issuer() -> None:
         ("ALKERMES PLC-WI", "ALKERMES PLC"),
         ("APEX TREASURY CORP-CL A", "APEX TREASURY CORP"),
         ("ATOUR LIFESTYLE HOLDINGS-ADR", "ATOUR LIFESTYLE HOLDINGS"),
+        # The "- CL A" spacing variant (space before "CL") seen on real worklist rows.
+        ("ROYALTY PHARMA PLC- CL A", "ROYALTY PHARMA PLC"),
+        # A bare trailing "-A"/"-B" share-class letter with no "CL"/"CLASS" word.
+        ("EVERPURE INC-A", "EVERPURE INC"),
+        ("C3.AI INC-A", "C3.AI INC"),
+        ("MOBILEYE GLOBAL INC-A", "MOBILEYE GLOBAL INC"),
+        # A genuine two-letter trailing word must not be eaten by the bare-letter rule.
+        ("SOME COMPANY-CO", "SOME COMPANY-CO"),
         # No descriptor suffix present -> unchanged.
         ("Agilent Technologies, Inc.", "Agilent Technologies, Inc."),
         (None, ""),

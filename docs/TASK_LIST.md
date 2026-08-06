@@ -1,5 +1,28 @@
 # Task List
 
+- 2026-08-06: SIC/sector classification, Phase 8 (descriptor-pattern gap). User: "what else is
+  next." Rather than manufacture busywork, checked the refreshed worklist's own top rows and found
+  a visible, concrete pattern: `EVERPURE INC-A` (`PSTG`), `C3.AI INC-A`, `ROYALTY PHARMA PLC- CL
+  A`, `MOBILEYE GLOBAL INC-A` all carry a share-class suffix format
+  `sec_name_cik_lookup.DESCRIPTOR_PATTERNS` didn't cover — a bare trailing `-A`/`-B` letter with no
+  `CL`/`CLASS` word, and a `"- CL A"` spacing variant. Quantified before proposing: 599 rows (29.9M
+  trade rows) bare-letter, 23 rows (4.1M trade rows) spacing variant — comparable to the Phase 4
+  descriptor fix's 299-row recovery. Presented two honest options (fix this small pattern, or call
+  it here and hand off the worklist); user: "do 1." Added both patterns, with the bare-letter one
+  requiring exactly one trailing character so it can't eat a genuine two-letter word ending like
+  `-CO` (tested explicitly). Improves both Tier D and Tier E, since both share
+  `strip_security_descriptors` — `PSTG` resolved immediately through Tier D alone (no live search
+  needed): its real current name, "Everpure, Inc.", was already in SEC's current-listings file,
+  the `-A` suffix was the only blocker. 475 tests pass (was 470); ruff and bandit clean. Real run:
+  Tier D directly resolved 24 more CIKs / 106 more eras with zero network calls; a fresh Tier E
+  pass (4,584 names, mostly cache hits) then rose 1,680/4,627 (36.3%) -> **1,844/4,584 matched
+  (40.2%)**. Reconciled: distinct CIKs resolved 8,085 -> **8,201**; eras with real SIC+sector
+  11,150 (30.2%) -> **11,466 (31.1%)**; manual-research worklist 13,448 -> **13,131 eras**, 292M
+  -> **264M trade rows**; top-500 volume concentration 83.0% -> **83.4%**. `GPS` and `HOLX` remain
+  the only unresolved names among the original spot-checked top-10 rows, both confirmed to be
+  genuinely different failure modes (no name anywhere in the pipeline; a real EDGAR search miss)
+  rather than another descriptor-pattern gap. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-06: SIC/sector classification, Phase 7 (Tier E recall fix). User asked directly: "does
   that mean the CSV top 10 are resolved and kicked from the stack?" Checked the real data: no —
   only `BK` had dropped out; `ATVI`/`X`/`HOLX`/`PSTG`/`FTCH`/`CFLT`/`CORZ`/`PXD` were all still

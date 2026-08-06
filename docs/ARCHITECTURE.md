@@ -289,7 +289,30 @@ in the pipeline now resolve correctly** (`ATVI`, `X`, `BK`, `FTCH`, `CORZ`×2, `
 (a bare `-A` share-class suffix the descriptor patterns don't cover) and `HOLX` (a genuine EDGAR
 search miss) remain, plus `GPS` itself (no name anywhere in the pipeline, unreachable by any of
 this). Manual-research worklist 14,491 → **13,448 eras**, 378M → **292M trade rows**; top-500
-volume concentration 78.7% → **83.0%**. [CA][IV][REH][CDiP][KBT]
+volume concentration 78.7% → **83.0%**.
+
+**A fifth pass closed the `PSTG`-shaped gap directly visible at the top of the refreshed
+worklist**: after the Tier E recall fix, the worklist's own top rows showed `EVERPURE INC-A`,
+`C3.AI INC-A`, `ROYALTY PHARMA PLC- CL A`, and `MOBILEYE GLOBAL INC-A` — bare trailing `-A`/`-B`
+share-class letters and a `"- CL A"` spacing variant `DESCRIPTOR_PATTERNS` didn't cover.
+Quantified before building anything: 599 rows (29.9M trade rows) with a bare trailing letter, 23
+rows (4.1M trade rows) with the spacing variant — comparable in size to the Phase 4 descriptor fix
+that already recovered 299 rows earlier in this program. Added both patterns to
+`utils.sec_name_cik_lookup.DESCRIPTOR_PATTERNS`, with the bare-letter pattern requiring exactly
+one trailing character so it can't eat a genuine two-letter word ending like `-CO`. This improves
+**both** Tier D and Tier E, since both share `strip_security_descriptors` — `PSTG` resolved
+immediately through Tier D alone (its real current name, "Everpure, Inc.", is already in SEC's
+current-listings file; the `-A` suffix was the only thing blocking the match), no live search
+needed.
+
+Real run: Tier D directly resolved 24 more CIKs / 106 more eras with zero network calls; a fresh
+Tier E pass (4,584 names, mostly cache hits) then rose 1,680/4,627 (36.3%) → **1,844/4,584 matched
+(40.2%)**. Reconciled: distinct CIKs resolved 8,085 → **8,201**; eras with real SIC + sector
+11,150 (30.2%) → **11,466 (31.1%)**; manual-research worklist 13,448 → **13,131 eras**, 292M →
+**264M trade rows**; top-500 volume concentration 83.0% → **83.4%**. `GPS` and `HOLX` remain the
+only unresolved names among the original spot-checked top-10 rows — both confirmed to have no
+descriptor-suffix issue at all, genuinely different failure modes (no name anywhere in the
+pipeline, and a real EDGAR search miss, respectively). [CA][IV][REH][CDiP][KBT]
 
 ## Benchmark Utilities
 
