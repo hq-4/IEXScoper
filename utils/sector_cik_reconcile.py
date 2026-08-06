@@ -19,14 +19,21 @@ The sources, highest confidence first:
 - **Tier D** — `utils.sec_name_cik_lookup`: an unambiguous exact-normalized-name match
   between an era's `identity_issuer` (from a `corroborated`/`openfigi_asserted` identity
   fact — Tiers A-C never touch these, since their `identity_entity_id` is a Bloomberg
-  FIGI, not a CIK) and SEC's current company-name list. Unlike Tier C this applies to
+  FIGI, not a CIK) and SEC's *current* company-name list. Unlike Tier C this applies to
   *any* class, dead-ticker ones included: a company keeps roughly the same name even
   after its old ticker gets reused by someone else, so a name match doesn't carry the
   same "wrong company" risk a current-ticker match does. Ambiguous names (two distinct
   CIKs normalizing the same) are excluded upstream in `sec_name_cik_lookup`, so this
   tier never guesses between candidates.
+- **Tier E** — `utils.edgar_company_search_match`: same idea as Tier D, but against
+  EDGAR's classic company-browse search instead of the current-listings file, so it can
+  find a CIK for a company that's genuinely gone (deregistered/merged/dissolved), not
+  just absent from a current snapshot. Only accepted when the search returns exactly one
+  candidate CIK *and* that candidate's actual registrant name (fetched fresh, or reused
+  from the SIC cache) matches the query name after normalization — never a bare "only
+  one search hit" on its own.
 
-An era with none of Tiers A-D resolves to no CIK rather than a further guess. [CA][IV][KBT]
+An era with none of Tiers A-E resolves to no CIK rather than a further guess. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ CIK_SOURCE_SEC_DATE_SCOPED = "sec_date_scoped_display_names"
 CIK_SOURCE_LEGACY_URL = "legacy_historical_override_url_derived"
 CIK_SOURCE_CURRENT_MATCH = "sec_current_ticker_match"
 CIK_SOURCE_NAME_MATCHED = "sec_name_matched"
+CIK_SOURCE_EDGAR_SEARCH_MATCHED = "edgar_company_search_matched"
 CIK_SOURCE_NONE = "no_cik_available"
 
 CIK_TIER = {
@@ -48,6 +56,7 @@ CIK_TIER = {
     CIK_SOURCE_LEGACY_URL: "B",
     CIK_SOURCE_CURRENT_MATCH: "C",
     CIK_SOURCE_NAME_MATCHED: "D",
+    CIK_SOURCE_EDGAR_SEARCH_MATCHED: "E",
 }
 
 REQUIRED_IDENTITY_COLUMNS = (
@@ -57,6 +66,7 @@ REQUIRED_IDENTITY_COLUMNS = (
     "identity_method",
     "identity_entity_id",
     "identity_source_url",
+    "identity_issuer",
 )
 REQUIRED_SEC_COLUMNS = ("symbol_era_id", "sec_cik", "sec_current_confidence")
 
@@ -65,12 +75,16 @@ def reconcile_cik(
     era_identity: pl.DataFrame,
     sec_ticker_cik: pl.DataFrame,
     name_matches: pl.DataFrame | None = None,
+    edgar_matches: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """One row per era: `symbol_era_id, resolved_cik, cik_source, cik_tier`. Both CIK
     representations (unpadded `identity_entity_id`, zero-padded `sec_cik`) are
     normalized to unpadded strings before comparison. `name_matches` is optional
-    (`symbol_era_id`, `name_matched_cik`) — see `utils.sec_name_cik_lookup.match_by_name`;
-    omitting it just means Tier D never fires."""
+    (`symbol_era_id`, `name_matched_cik`) — see `utils.sec_name_cik_lookup.match_by_name`.
+    `edgar_matches` is optional (`identity_issuer`, `matched_cik`, joined by issuer name
+    since it's one row per unique name, not per era) — see
+    `utils.edgar_company_search_match`. Omitting either just means that tier never
+    fires."""
     require_columns(era_identity, REQUIRED_IDENTITY_COLUMNS)
     require_columns(sec_ticker_cik, REQUIRED_SEC_COLUMNS)
     # Cast defensively: a caller-built frame with an all-null column (e.g. an empty or
@@ -87,6 +101,7 @@ def reconcile_cik(
             how="left",
         )
         .join(_name_matches_or_empty(name_matches), on="symbol_era_id", how="left")
+        .join(_edgar_matches_or_empty(edgar_matches), on="identity_issuer", how="left")
     )
     joined = joined.with_columns(_legacy_url_cik_expr().alias("_legacy_cik"))
     resolved = joined.with_columns(_resolved_cik_expr().alias("resolved_cik")).with_columns(
@@ -106,6 +121,19 @@ def _name_matches_or_empty(name_matches: pl.DataFrame | None) -> pl.DataFrame:
     require_columns(name_matches, ("symbol_era_id", "name_matched_cik"))
     return name_matches.select("symbol_era_id", "name_matched_cik").cast(
         {"name_matched_cik": pl.String}
+    )
+
+
+def _edgar_matches_or_empty(edgar_matches: pl.DataFrame | None) -> pl.DataFrame:
+    schema = {"identity_issuer": pl.String, "edgar_matched_cik": pl.String}
+    if edgar_matches is None or not edgar_matches.height:
+        return pl.DataFrame(schema=schema)
+    require_columns(edgar_matches, ("identity_issuer", "matched_cik"))
+    return (
+        edgar_matches.select("identity_issuer", "matched_cik")
+        .rename({"matched_cik": "edgar_matched_cik"})
+        .filter(pl.col("edgar_matched_cik").is_not_null())
+        .cast(schema)
     )
 
 
@@ -158,6 +186,10 @@ def _tier_d_expr() -> pl.Expr:
     return pl.col("name_matched_cik").is_not_null()
 
 
+def _tier_e_expr() -> pl.Expr:
+    return pl.col("edgar_matched_cik").is_not_null()
+
+
 def _resolved_cik_expr() -> pl.Expr:
     return (
         pl.when(_tier_a_expr())
@@ -168,6 +200,8 @@ def _resolved_cik_expr() -> pl.Expr:
         .then(pl.col("sec_cik").str.strip_chars_start("0"))
         .when(_tier_d_expr())
         .then(pl.col("name_matched_cik"))
+        .when(_tier_e_expr())
+        .then(pl.col("edgar_matched_cik"))
         .otherwise(None)
     )
 
@@ -182,5 +216,7 @@ def _cik_source_expr() -> pl.Expr:
         .then(pl.lit(CIK_SOURCE_CURRENT_MATCH))
         .when(_tier_d_expr())
         .then(pl.lit(CIK_SOURCE_NAME_MATCHED))
+        .when(_tier_e_expr())
+        .then(pl.lit(CIK_SOURCE_EDGAR_SEARCH_MATCHED))
         .otherwise(pl.lit(CIK_SOURCE_NONE))
     )

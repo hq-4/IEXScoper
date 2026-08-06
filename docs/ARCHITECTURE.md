@@ -154,6 +154,53 @@ name but no automatic path to a CIK:
 `stable_candidate`'s `no_cik` count alone dropped from 542 to 13 — virtually every stable ticker
 now either has a real SIC/sector or is correctly identified as a fund. [CA][IV][REH][CDiP][KBT]
 
+**A third automation pass added Tier E**, extending the same "match a name, validate before
+trusting it" idea Tier D uses to companies that are no longer in SEC's *current* listings at
+all — genuinely deregistered, merged, or dissolved issuers, which Tier D structurally cannot
+reach since it only searches the current-company file:
+
+- `utils/sec_company_search_client.py` calls EDGAR's classic
+  `cgi-bin/browse-edgar?action=getcompany` company-name browse search (not the current-listings
+  JSON file), which — confirmed on live data before building the parser — **does** return
+  historical/inactive registrants (e.g. a real, bankrupt Circuit City Stores CIK). It parses only
+  the `<cik>` tags from the atom response; the endpoint's `title` field is a known SEC-side
+  rendering bug (`title="ARRAY(0x...)"`) and is never read. Routed through
+  `CachedPrimaryClient.get_json()`'s new optional `parse_response`/`is_negative` hooks (fully
+  backward-compatible — every existing JSON caller is unaffected) so this non-JSON endpoint gets
+  the same cache/retry/rate-limit machinery as everything else.
+- `utils/edgar_company_search_match.py` accepts a match **only** when the search returns exactly
+  one candidate CIK *and* that candidate's actual registrant name (fetched via the same
+  `sec_sic_client.fetch_sic` call already used for SIC — often a free cache hit) matches the query
+  name after normalization, with the same descriptor-stripping fallback Tier D uses. A bare
+  "only one search hit" is never trusted on its own — live testing surfaced a real single-candidate
+  false lead (`180 Life Sciences Corp` → a single, wrong-company search hit) that the name
+  validation step correctly rejected.
+- `utils/build_edgar_company_search_matches.py` batches this over every unique unresolved issuer
+  name (deduped once up front — the same name repeating across an issuer's several eras is one
+  request, not several), rate-limited at the same ~3.3 req/sec. A transient SEC 5xx on one name
+  degrades to a `fetch_error` status and the batch continues rather than aborting and losing every
+  result already collected (this exact failure happened once on the real run — see below).
+- `sector_cik_reconcile.py`'s new **Tier E** fires only when Tiers A-D didn't already resolve a
+  CIK, joined by issuer name (one row per unique name, like Tier D) rather than by era.
+
+**Real run, 4,453 unique unresolved issuer names searched**: `969` matched (21.8%), `245`
+ambiguous (>1 candidate, correctly left unresolved), `463` name-mismatch (single candidate but
+the actual registrant name didn't match — rejected rather than guessed), `2,767` no-candidates,
+`9` transient fetch errors. The run hit one real SEC `503` about 10 minutes in; before the
+`fetch_error` handling above existed, that aborted the entire batch and discarded everything
+collected so far — the fix (catch `PrimarySourceError` per name, mirroring the pattern
+`sec_sic_client.fetch_sic` already established) let the rerun continue past it, replaying the
+already-searched names as free cache hits.
+
+| | Before Tier E | After Tier E |
+|---|---:|---:|
+| Distinct CIKs resolved | 6,605 | 7,529 |
+| Eras with real SIC + sector | 8,716 (23.6%) | 10,002 (27.1%) |
+| **Manual-research worklist size** | 15,882 eras / 492M trade rows | **14,559 eras / 389M trade rows** |
+| Worklist top-500 volume concentration | 72.5% | 78.7% |
+
+[CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

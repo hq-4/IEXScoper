@@ -28,7 +28,11 @@ from utils.resolution_v2_network import CachedPrimaryClient, NetworkConfig
 from utils.resolution_v2_registry import EvidenceRegistry
 from utils.sec_sic_client import fetch_many
 from utils.sector_cik_reconcile import distinct_ciks, reconcile_cik
-from utils.sector_enrichment_inputs import load_name_matches, load_stable_classes
+from utils.sector_enrichment_inputs import (
+    load_edgar_matches,
+    load_name_matches,
+    load_stable_classes,
+)
 from utils.sic_division_table import sic_division_code_expr, sic_division_name_expr
 
 DEFAULT_ERA_IDENTITY_PATH = Path("reports/era-identity/eras_identity_enriched.parquet")
@@ -36,6 +40,9 @@ DEFAULT_SEC_TICKER_CIK_PATH = Path("reports/sec-ticker-cik/symbol_eras_sec_enric
 DEFAULT_STABLE_OPENFIGI_PATH = Path("reports/openfigi-identity-stable/era_classes.parquet")
 DEFAULT_SEC_COMPANY_TICKERS_PATH = Path(
     "reports/sec-ticker-cik/sec_company_tickers_exchange.parquet"
+)
+DEFAULT_EDGAR_MATCHES_PATH = Path(
+    "reports/edgar-company-search/edgar_company_search_matches.parquet"
 )
 DEFAULT_OUTPUT_ROOT = Path("reports/era-identity")
 DEFAULT_REGISTRY_PATH = Path("data/resolution/evidence_registry.sqlite")
@@ -62,6 +69,7 @@ class SectorConfig:
     sec_ticker_cik_path: Path = DEFAULT_SEC_TICKER_CIK_PATH
     stable_openfigi_path: Path = DEFAULT_STABLE_OPENFIGI_PATH
     sec_company_tickers_path: Path = DEFAULT_SEC_COMPANY_TICKERS_PATH
+    edgar_matches_path: Path = DEFAULT_EDGAR_MATCHES_PATH
     output_root: Path = DEFAULT_OUTPUT_ROOT
     registry_path: Path = DEFAULT_REGISTRY_PATH
     user_agent: str = ""
@@ -81,6 +89,7 @@ def main() -> int:
         sec_ticker_cik_path=Path(args.sec_ticker_cik_path),
         stable_openfigi_path=Path(args.stable_openfigi_path),
         sec_company_tickers_path=Path(args.sec_company_tickers_path),
+        edgar_matches_path=Path(args.edgar_matches_path),
         output_root=Path(args.output_root),
         registry_path=Path(args.registry_path),
         user_agent=args.user_agent or os.getenv("SEC_USER_AGENT") or DEFAULT_USER_AGENT,
@@ -108,7 +117,8 @@ def build_era_sector_enriched(config: SectorConfig) -> dict[str, Any]:
     era_identity = pl.read_parquet(config.era_identity_path)
     sec_ticker_cik = pl.read_parquet(config.sec_ticker_cik_path)
     name_matches = load_name_matches(config.sec_company_tickers_path, era_identity)
-    cik_table = reconcile_cik(era_identity, sec_ticker_cik, name_matches)
+    edgar_matches = load_edgar_matches(config.edgar_matches_path)
+    cik_table = reconcile_cik(era_identity, sec_ticker_cik, name_matches, edgar_matches)
     ciks = distinct_ciks(cik_table)
     fetch_ciks = ciks[: config.limit_ciks] if config.limit_ciks is not None else ciks
     sic_rows = [] if config.skip_fetch else _fetch_sic(config, fetch_ciks)
@@ -275,6 +285,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sec-ticker-cik-path", default=str(DEFAULT_SEC_TICKER_CIK_PATH))
     parser.add_argument("--stable-openfigi-path", default=str(DEFAULT_STABLE_OPENFIGI_PATH))
     parser.add_argument("--sec-company-tickers-path", default=str(DEFAULT_SEC_COMPANY_TICKERS_PATH))
+    parser.add_argument("--edgar-matches-path", default=str(DEFAULT_EDGAR_MATCHES_PATH))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--registry-path", default=str(DEFAULT_REGISTRY_PATH))
     parser.add_argument("--user-agent", default="")

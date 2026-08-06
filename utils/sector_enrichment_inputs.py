@@ -35,3 +35,12 @@ def load_stable_classes(path: Path) -> pl.DataFrame:
     return pl.read_parquet(path).select(
         "symbol_era_id", pl.col("openfigi_class").cast(pl.String).alias("stable_openfigi_class")
     )
+
+
+def load_edgar_matches(path: Path) -> pl.DataFrame | None:
+    """Tier E (EDGAR company-search-matched CIKs, see `utils.sector_cik_reconcile`) is
+    skipped, not an error, when `utils/build_edgar_company_search_matches.py` hasn't
+    been run yet."""
+    if not path.exists():
+        return None
+    return pl.read_parquet(path).select("identity_issuer", "matched_cik")

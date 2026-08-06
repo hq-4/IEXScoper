@@ -5,6 +5,7 @@ import pytest
 
 from utils.sector_cik_reconcile import (
     CIK_SOURCE_CURRENT_MATCH,
+    CIK_SOURCE_EDGAR_SEARCH_MATCHED,
     CIK_SOURCE_LEGACY_URL,
     CIK_SOURCE_NAME_MATCHED,
     CIK_SOURCE_NONE,
@@ -22,6 +23,7 @@ ERA_IDENTITY_SCHEMA = {
     "identity_method": pl.String,
     "identity_entity_id": pl.String,
     "identity_source_url": pl.String,
+    "identity_issuer": pl.String,
 }
 SEC_TICKER_CIK_SCHEMA = {
     "symbol_era_id": pl.String,
@@ -38,6 +40,7 @@ def _era_identity(**overrides) -> pl.DataFrame:
         "identity_method": [None],
         "identity_entity_id": [None],
         "identity_source_url": [None],
+        "identity_issuer": [None],
     }
     base.update(overrides)
     return pl.DataFrame(base, schema=ERA_IDENTITY_SCHEMA)
@@ -54,15 +57,25 @@ def _sec_ticker_cik(**overrides) -> pl.DataFrame:
 
 
 def _resolve_one(
-    era_identity: pl.DataFrame, sec: pl.DataFrame, name_matches: pl.DataFrame | None = None
+    era_identity: pl.DataFrame,
+    sec: pl.DataFrame,
+    name_matches: pl.DataFrame | None = None,
+    edgar_matches: pl.DataFrame | None = None,
 ) -> dict:
-    return reconcile_cik(era_identity, sec, name_matches).to_dicts()[0]
+    return reconcile_cik(era_identity, sec, name_matches, edgar_matches).to_dicts()[0]
 
 
 def _name_matches(cik: str, symbol_era_id: str = "X#001") -> pl.DataFrame:
     return pl.DataFrame(
         {"symbol_era_id": [symbol_era_id], "name_matched_cik": [cik]},
         schema={"symbol_era_id": pl.String, "name_matched_cik": pl.String},
+    )
+
+
+def _edgar_matches(cik: str, identity_issuer: str = "Some Corp") -> pl.DataFrame:
+    return pl.DataFrame(
+        {"identity_issuer": [identity_issuer], "matched_cik": [cik]},
+        schema={"identity_issuer": pl.String, "matched_cik": pl.String},
     )
 
 
@@ -213,6 +226,99 @@ def test_distinct_ciks_dedupes_and_sorts() -> None:
 def test_require_columns_raises_on_missing() -> None:
     with pytest.raises(ValueError, match="missing required columns"):
         require_columns(pl.DataFrame({"symbol_era_id": ["A#001"]}), ("symbol_era_id", "sec_cik"))
+
+
+@pytest.mark.parametrize(
+    "dead_class",
+    [
+        "delisted_or_acquired_candidate",
+        "intermittent_or_reused_candidate",
+        "intermittent_full_window_candidate",
+        "partial_window_candidate",
+        "stable_candidate",
+    ],
+)
+def test_tier_e_edgar_search_match_applies_to_any_class(dead_class: str) -> None:
+    """Same rationale as Tier D: a name match doesn't carry reused-ticker risk, so it
+    applies to dead-ticker classes too."""
+    row = _resolve_one(
+        _era_identity(source_classification=[dead_class], identity_issuer=["Circuit City Stores"]),
+        _sec_ticker_cik(),
+        edgar_matches=_edgar_matches("104599", "Circuit City Stores"),
+    )
+    assert row["resolved_cik"] == "104599"
+    assert row["cik_source"] == CIK_SOURCE_EDGAR_SEARCH_MATCHED
+    assert row["cik_tier"] == "E"
+
+
+def test_tier_e_joins_by_issuer_name_not_era_id() -> None:
+    """edgar_matches is one row per unique name, not per era — two different eras
+    sharing the same issuer name both resolve from the same match row."""
+    era_identity = pl.concat(
+        [
+            _era_identity(symbol_era_id=["A#001"], identity_issuer=["Some Corp"]),
+            _era_identity(symbol_era_id=["A#002"], identity_issuer=["Some Corp"]),
+        ]
+    )
+    resolved = reconcile_cik(
+        era_identity, _sec_ticker_cik(symbol_era_id=["A#001"]), edgar_matches=_edgar_matches("42")
+    )
+    rows = {row["symbol_era_id"]: row for row in resolved.to_dicts()}
+    assert rows["A#001"]["resolved_cik"] == "42"
+    assert rows["A#002"]["resolved_cik"] == "42"
+
+
+def test_tier_d_still_wins_over_tier_e() -> None:
+    row = _resolve_one(
+        _era_identity(identity_issuer=["Some Corp"]),
+        _sec_ticker_cik(),
+        name_matches=_name_matches("111"),
+        edgar_matches=_edgar_matches("999", "Some Corp"),
+    )
+    assert row["resolved_cik"] == "111"
+    assert row["cik_source"] == CIK_SOURCE_NAME_MATCHED
+
+
+def test_tier_a_still_wins_over_tier_e() -> None:
+    row = _resolve_one(
+        _era_identity(
+            identity_tier=["verified"],
+            identity_method=["sec_date_scoped_display_names"],
+            identity_entity_id=["123456"],
+            identity_issuer=["Some Corp"],
+        ),
+        _sec_ticker_cik(),
+        edgar_matches=_edgar_matches("999", "Some Corp"),
+    )
+    assert row["resolved_cik"] == "123456"
+    assert row["cik_source"] == CIK_SOURCE_SEC_DATE_SCOPED
+
+
+def test_reconcile_cik_without_edgar_matches_argument_is_unaffected() -> None:
+    row = _resolve_one(_era_identity(), _sec_ticker_cik())
+    assert row["resolved_cik"] is None
+    assert row["cik_source"] == CIK_SOURCE_NONE
+
+
+def test_reconcile_cik_with_empty_edgar_matches_frame() -> None:
+    empty = pl.DataFrame(schema={"identity_issuer": pl.String, "matched_cik": pl.String})
+    row = _resolve_one(_era_identity(), _sec_ticker_cik(), edgar_matches=empty)
+    assert row["resolved_cik"] is None
+
+
+def test_edgar_matches_null_matched_cik_rows_are_dropped_not_joined_as_null() -> None:
+    """A row in edgar_matches with matched_cik=None (e.g. a batch output that includes
+    every attempted name, matched or not) must not accidentally null-join and get
+    treated differently from simply having no row at all."""
+    unmatched = pl.DataFrame(
+        {"identity_issuer": ["Some Corp"], "matched_cik": [None]},
+        schema={"identity_issuer": pl.String, "matched_cik": pl.String},
+    )
+    row = _resolve_one(
+        _era_identity(identity_issuer=["Some Corp"]), _sec_ticker_cik(), edgar_matches=unmatched
+    )
+    assert row["resolved_cik"] is None
+    assert row["cik_source"] == CIK_SOURCE_NONE
 
 
 @pytest.mark.parametrize(
