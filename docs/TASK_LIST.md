@@ -1,5 +1,39 @@
 # Task List
 
+- 2026-08-06: SIC/sector classification, Phase 5 (EDGAR full-text/company-search CIK tier).
+  User's explicit goal: resolve more of the remaining manual-research worklist via EDGAR, subject
+  to two hard constraints — respect SEC's rate-limit guidance, and design every network request to
+  yield the most information possible. Tier D (Phase 4) only searches SEC's *current* company
+  listings, so it structurally cannot resolve a genuinely deregistered/merged/dissolved issuer.
+  Built a new Tier E on the same "search then validate, never trust a bare single hit" shape:
+  `utils/sec_company_search_client.py` calls EDGAR's classic `cgi-bin/browse-edgar` company-name
+  browse search — confirmed live, before writing the parser, that it *does* return
+  historical/inactive registrants (a real bankrupt Circuit City Stores CIK) unlike the
+  current-listings JSON file. Routed through a new backward-compatible `parse_response`/
+  `is_negative` hook pair on `CachedPrimaryClient.get_json()` so this non-JSON atom/XML endpoint
+  gets the same cache/retry/rate-limit machinery as every other SEC call, at no cost to existing
+  callers. `utils/edgar_company_search_match.py` accepts a match only when exactly one candidate's
+  actual registrant name (fetched via the same `fetch_sic` call already used for SIC — usually a
+  free cache hit) validates against the query name; live testing surfaced a real single-candidate
+  false lead (`180 Life Sciences Corp` → a wrong-company hit) that this correctly rejected instead
+  of guessing. `utils/build_edgar_company_search_matches.py` batches the search over every unique
+  unresolved issuer name (deduped once, not per era row — the yield-per-request design goal), at
+  the same ~3.3 req/sec (well under SEC's guidance). The first live run hit a real SEC `503`
+  ~10 minutes in and aborted the *entire* batch, discarding everything already collected — a real
+  robustness gap, since `match_issuer_name` wasn't catching `PrimarySourceError` the way the
+  sibling `sec_sic_client.fetch_sic` already does. Fixed to match that established pattern (a
+  `fetch_error` status per name, batch continues, nothing cached so it retries), added 2 tests
+  proving both the search- and validation-request failure paths degrade gracefully, then reran —
+  the SQLite cache replayed everything already searched as free hits. Real run over 4,453 unique
+  names: `969` matched (21.8%), `245` ambiguous, `463` name-mismatch (rejected), `2,767`
+  no-candidates, `9` transient fetch errors (retryable next run). Wired as Tier E in
+  `sector_cik_reconcile.py` and `build_era_sector_enriched.py` via `sector_enrichment_inputs.py`'s
+  new `load_edgar_matches`. Live re-run (7,529 distinct CIKs, mostly cache hits, zero errors):
+  distinct CIKs resolved 6,605 -> **7,529**; eras with real SIC+sector 8,716 -> **10,002** (27.1%
+  of the universe); manual-research worklist **15,882 -> 14,559 eras**, 492M -> **389M trade
+  rows**; top-500 volume concentration 72.5% -> 78.7%. 448 tests pass (was 436); ruff clean.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-05: SIC/sector classification, Phase 4 (name-matching precision pass). Followed up on
   "what else is next" by checking whether the remaining ~6,777-row googleable-name pool (post
   Phase 3) was genuinely unfindable or just a name-matching gap. Found `identity_issuer` often

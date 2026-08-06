@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- feat: add EDGAR company-name-search CIK resolution (`sector_cik_reconcile.py` Tier E) for
+  issuers no longer in SEC's current listings at all — genuinely deregistered/merged/dissolved
+  companies Tier D structurally can't reach. `utils/sec_company_search_client.py` calls EDGAR's
+  classic `browse-edgar` company search (confirmed live to return historical/inactive
+  registrants) through `CachedPrimaryClient.get_json()`'s new backward-compatible
+  `parse_response`/`is_negative` hooks for non-JSON responses; `utils/edgar_company_search_match.py`
+  accepts a match only when exactly one candidate's actual registrant name validates against the
+  query name (rejected a real single-candidate false lead — `180 Life Sciences Corp` → a
+  wrong-company hit — on live data); `utils/build_edgar_company_search_matches.py` batches it over
+  every unique unresolved issuer name, rate-limited, and now survives a transient SEC 5xx on one
+  name (`fetch_error` status, batch continues) after the first live run hit a real `503` ~10
+  minutes in and lost all in-progress results before this fix. Real run: 969/4,453 unique names
+  matched (21.8%); manual-research worklist dropped 15,882 -> 14,559 eras (492M -> 389M trade
+  rows) `[CA][IV][REH][CDiP][KBT]`
+
 - feat: add a descriptor-stripping fallback to `utils.sec_name_cik_lookup.match_by_name` — strips
   trailing Bloomberg/OpenFIGI security-descriptor suffixes (`-CW23`, `-ADR`, `W/I`, `-CLASS A`, …)
   before a second exact-match attempt against SEC's current company-name list; still strict exact

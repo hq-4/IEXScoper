@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Iterator
@@ -42,14 +43,23 @@ class CachedPrimaryClient:
         url: str,
         params: dict[str, Any],
         policy: CachePolicy,
+        *,
+        parse_response: Callable[[requests.Response], Any] | None = None,
+        is_negative: Callable[[Any], bool] | None = None,
     ) -> tuple[Any, bool]:
+        """`parse_response`/`is_negative` let a caller cache a non-JSON response (e.g.
+        EDGAR's classic browse-edgar atom/XML company search in
+        `utils.sec_company_search_client`) through this same cache/retry/rate-limit
+        path — both default to the original JSON behavior, so every existing caller is
+        unaffected. [CA]"""
         request = {"url": url, "params": params}
         cached = self.registry.get(source, request, policy)
         if cached is not None:
             return cached, True
         response = self._request(url, params=params)
-        payload = response.json()
-        self.registry.put(source, request, payload, negative=_negative_payload(payload))
+        payload = response.json() if parse_response is None else parse_response(response)
+        negative = _negative_payload(payload) if is_negative is None else is_negative(payload)
+        self.registry.put(source, request, payload, negative=negative)
         return payload, False
 
     def get_text(self, source: str, url: str) -> str:

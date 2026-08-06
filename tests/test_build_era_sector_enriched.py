@@ -75,6 +75,7 @@ def test_build_era_sector_enriched_skip_fetch(tmp_path: Path) -> None:
             sec_ticker_cik_path=sec_path,
             stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
             sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
+            edgar_matches_path=tmp_path / "no_edgar_matches.parquet",
             output_root=output_root,
             registry_path=tmp_path / "registry.sqlite",
             skip_fetch=True,
@@ -258,3 +259,54 @@ def test_tier_d_name_match_resolves_a_cik_end_to_end(tmp_path: Path) -> None:
     assert row["resolved_cik"] == "8177"
     assert row["cik_source"] == "sec_name_matched"
     assert row["cik_tier"] == "D"
+
+
+def test_tier_e_edgar_matches_resolves_a_cik_end_to_end(tmp_path: Path) -> None:
+    """FFF has an OpenFIGI-asserted issuer name absent from SEC's *current* company
+    list (so Tier D can't fire) but present in
+    `utils/build_edgar_company_search_matches.py`'s output — Tier E should resolve it."""
+    era_identity_path = tmp_path / "eras_identity_enriched.parquet"
+    sec_path = tmp_path / "symbol_eras_sec_enriched.parquet"
+    pl.DataFrame(
+        {
+            "symbol": ["FFF"],
+            "symbol_era_id": ["FFF#001"],
+            "source_classification": ["delisted_or_acquired_candidate"],
+            "trade_rows": [500],
+            "identity_tier": ["openfigi_asserted"],
+            "identity_issuer": ["Circuit City Stores"],
+            "identity_entity_id": ["BBG000BLNNH7"],
+            "identity_method": ["openfigi_symbol_identity"],
+            "identity_instrument": ["equity_common"],
+            "identity_source_url": [None],
+        },
+        schema=ERA_IDENTITY_SCHEMA,
+    ).write_parquet(era_identity_path)
+    pl.DataFrame(
+        {"symbol_era_id": ["FFF#001"], "sec_cik": [None], "sec_current_confidence": [None]},
+        schema=SEC_TICKER_CIK_SCHEMA,
+    ).write_parquet(sec_path)
+    edgar_matches_path = tmp_path / "edgar_company_search_matches.parquet"
+    pl.DataFrame(
+        {"identity_issuer": ["Circuit City Stores"], "matched_cik": ["104599"]}
+    ).write_parquet(edgar_matches_path)
+    output_root = tmp_path / "out"
+
+    build_era_sector_enriched(
+        SectorConfig(
+            era_identity_path=era_identity_path,
+            sec_ticker_cik_path=sec_path,
+            stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
+            sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
+            edgar_matches_path=edgar_matches_path,
+            output_root=output_root,
+            registry_path=tmp_path / "registry.sqlite",
+            skip_fetch=True,
+        )
+    )
+
+    enriched = pl.read_parquet(output_root / "eras_sector_enriched.parquet")
+    row = enriched.filter(pl.col("symbol_era_id") == "FFF#001").to_dicts()[0]
+    assert row["resolved_cik"] == "104599"
+    assert row["cik_source"] == "edgar_company_search_matched"
+    assert row["cik_tier"] == "E"
