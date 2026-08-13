@@ -1,5 +1,56 @@
 # Task List
 
+- 2026-08-13: SIC/sector classification, Phase 12 (share-class spacing gaps). Session opened with
+  a housekeeping step first: Phases 9-11 (`docs/TASK_LIST.md` already narrated them, 488 tests
+  passing) had been built and verified in a prior session but never committed — sitting directly
+  on `main`, unbranched. Verified the diff matched the narrative exactly (488/488 tests, ruff
+  clean) before branching, committing, and opening PR #13, per the user's explicit choice
+  ("commit it now, then find what's next") over leaving it uncommitted.
+  Then, "what else is next": checked the freshly-regenerated worklist's top rows and traced why
+  several real, still-findable companies (`SEE`/Sealed Air, `CPE`/Callon Petroleum,
+  `HZNP`/Horizon Therapeutics, `IAC`, `CLR`/Continental Resources) were landing in
+  `ambiguous_candidates` or `no_validated_match` — by replaying the *actual* `match_issuer_name`
+  function against the live worklist names, not just eyeballing candidate lists (an early manual
+  trace nearly mis-diagnosed `HZNP` as a `PLC`/"Public Ltd Co" suffix gap; only re-running the real
+  function surfaced that its 2-word query never even finds a name-matching candidate, so it falls
+  through to `HORIZON` alone and hits the candidate-count cap — a reminder to trust the actual code
+  path over a manual approximation of it). That trace surfaced a bigger, separately-risky
+  discovery — `normalize_name`'s legal-suffix strip loop treats "GROUP" (and other generic
+  business words) as a droppable suffix, so `"Continental Resources Group, Inc."` (an unrelated
+  junior mining shell, SIC 1000) and `"CONTINENTAL RESOURCES, INC"` (the real Harold Hamm oil
+  company, ticker `CLR`, SIC 1311) both collapse to the same normalized name and jointly cause a
+  false `ambiguous_candidates` — but a fix needs a disambiguation signal (SEC's own `tickers` field
+  from the same submissions payload, already fetched, unused) and careful two-directional live
+  verification against everything currently resolved correctly through that suffix list, so it's
+  deliberately left as a follow-up, not built today.
+  What *was* narrow and safe enough to ship today: two spacing gaps in already-accepted regex
+  patterns, found the same way as Phase 9's `-CL A` spacing fix. `DESCRIPTOR_PATTERNS`'
+  `-CLASS [A-Z]$` pattern required the hyphen to sit directly against "CLASS" with no space, so
+  `"SWEETGREEN INC - CLASS A"` and `"FIRST DATA CORP- CLASS A"` never got stripped even though the
+  equivalent abbreviated `-CL A` pattern already tolerated that spacing since Phase 9 — now fixed
+  to mirror it (and both `-CL A`/`-CLASS A` patterns now also consume a space *before* the hyphen,
+  which the original Phase 9 fix left as a trailing-space artifact, caught by a direct
+  `strip_security_descriptors` unit test rather than by any matching behavior actually breaking).
+  Separately, `JURISDICTION_SUFFIX` only matched a tight `/XX` with no space, but SEC's own
+  submissions payload returns `"Alight Inc. / DE"` — a spaced variant the tight `Core Scientific,
+  Inc./tx` precedent from Phase 7 never covered. Quantified entirely by replaying the full
+  still-unresolved Tier E population (1,904 names) against the cached search/validation responses
+  already on disk with both fixes applied — zero new network calls: 15 names flip to a validated
+  match. 6 new tests; 494 pass (was 488); ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`, ~40s wall-clock, essentially all cache hits): Tier E
+  matched 2,438/4,342 -> **2,453/4,342**; distinct CIKs resolved 8,455 -> **8,470**;
+  manual-research worklist 11,817 -> **11,791 eras**, 187.7M -> **180.8M trade rows**. Spot-checked
+  all 6 largest newly-resolved matches against known real companies (`SG`->Sweetgreen SIC 5812
+  Retail-Eating Places, `ALIT`->Alight Inc SIC 7374, `AYX`->Alteryx SIC 7372, `FDC`->First Data
+  Corp SIC 7389, `MCFE`->McAfee Corp SIC 7372, `VEI`->Vine Energy SIC 1311) — all correct; `SG`
+  resolved via Tier D (`sec_name_matched`) rather than Tier E, confirming the shared
+  `strip_security_descriptors` fix benefits both tiers as designed. Next candidate, not started:
+  a ticker-based disambiguator for the `ambiguous_candidates` bucket (1,340 names, the largest
+  remaining) using SEC's already-fetched `tickers` field to break ties like `CLR`/Continental
+  Resources and `CPE`/Callon Petroleum — plus, separately, tightening the `GROUP`-as-suffix
+  over-normalization this phase found but didn't touch. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-11: SIC/sector classification, Phase 11 (Tier E 1-word query floor). User: "what else
   is next," then "do a" (run the full live quantification and build it) after being shown the
   trade-off against the project's own prior `CFLT` 2-word-floor decision. Root cause: a name

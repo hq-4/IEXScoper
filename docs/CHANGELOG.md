@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- fix: tolerate two spacing variants in `sec_name_cik_lookup` normalization that were blocking
+  otherwise-exact matches — `DESCRIPTOR_PATTERNS`' `-CLASS [A-Z]$` pattern now mirrors the
+  already-tolerant `-CL A` pattern's spacing (`"SWEETGREEN INC - CLASS A"`, `"FIRST DATA CORP-
+  CLASS A"`), and both patterns now also consume a space before the hyphen, closing a
+  trailing-space artifact the original `-CL A` fix left behind (`"UCP INC - CL A"`).
+  `JURISDICTION_SUFFIX` now tolerates a space between the slash and the state code (`"Alight Inc.
+  / DE"`, as returned by SEC's own submissions payload), not just the tight `"/DE"` form. Found by
+  replaying the actual `match_issuer_name` function against real worklist names rather than
+  eyeballing candidate lists by hand — an earlier manual trace nearly mis-diagnosed one case
+  (`HZNP`) as an unrelated `PLC`-suffix gap. Quantified from the existing request cache (zero new
+  network calls): 15 names flip to a validated match. 6 new tests; 494 pass (was 488); ruff/bandit
+  clean. Real run: Tier E matched 2,438/4,342 -> 2,453/4,342; distinct CIKs resolved 8,455 ->
+  8,470; manual-research worklist 11,817 -> 11,791 eras, 187.7M -> 180.8M trade rows. Also traced,
+  but deliberately left unfixed pending a ticker-based disambiguator: `normalize_name` treats
+  "GROUP" as a droppable legal suffix, causing a real false-ambiguity collision between an
+  unrelated shell (`"Continental Resources Group, Inc."`) and the real Continental Resources
+  (`CLR`). `[CA][IV][REH][CDiP][KBT]`
+
 - feat: drop `edgar_company_search_match.MIN_QUERY_WORDS` from 2 to 1 — a name already exactly 2
   words after descriptor-stripping (`"HOLOGIC INC"`, `"ZENDESK INC"`, `"ANAPLAN INC"`) could never
   truncate further under the old floor, so a literal-prefix mismatch against EDGAR's real

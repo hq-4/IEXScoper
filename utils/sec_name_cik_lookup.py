@@ -37,7 +37,23 @@ worklist: 220 additional unique-name matches (~21M trade rows) among names whose
 was independently confirmed to be currently SEC-listed; the ticker-reuse cases (a
 different company now trading the same symbol, e.g. `IAC`, `USEG`) correctly stayed
 unmatched since a reused ticker's name shares no real prefix relation with the old one.
-[CA][IV][KBT]
+
+Two more narrow spacing gaps surfaced by tracing live Tier E rejections through
+`edgar_company_search_match`'s cached responses (zero new network calls to find or
+confirm either): `DESCRIPTOR_PATTERNS`' `-CLASS [A-Z]$` pattern required the hyphen to
+sit directly against "CLASS" with no space, so `"SWEETGREEN INC - CLASS A"` and `"FIRST
+DATA CORP- CLASS A"` never got their descriptor stripped even though the equivalent
+abbreviated `-CL A` pattern already tolerated that spacing (see the `ROYALTY PHARMA PLC-
+CL A` case above) — both patterns now also consume a space *before* the hyphen (e.g.
+`"UCP INC - CL A"`), which the original `-CL A` fix left as a trailing-space artifact on
+the stripped name. Separately, `JURISDICTION_SUFFIX`
+only matched a tight `/XX` with no space, but SEC's own submissions payload returns
+`"Alight Inc. / DE"` (a space before the state code) — `strip_security_descriptors`'s own
+`Core Scientific, Inc./tx` precedent had no space, so this variant was never covered.
+Replayed the full still-unresolved Tier E population (1,904 names) against the cached
+search/validation responses already on disk with both fixes applied — zero new network
+requests — and 15 names flip to a validated match (`SWEETGREEN`, `ALIGHT`, `ALTERYX`,
+`FIRST DATA CORP`, `MCAFEE`, among others), 23 eras / 6.19M trade rows. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -98,8 +114,10 @@ ROMAN_NUMERAL_CHARS = frozenset("IVXLCDM")
 # named registrants (e.g. "CORE SCIENTIFIC, INC./TX"). Left alone, NON_ALNUM turns the
 # slash into a space and the two-letter code becomes a trailing token that blocks the
 # legal-suffix strip loop below from ever reaching "INC" — stripped here, before that
-# conversion, so it never gets the chance to.
-JURISDICTION_SUFFIX = re.compile(r"/[A-Z]{2}$", re.IGNORECASE)
+# conversion, so it never gets the chance to. Tolerates the "/ XX" spacing variant too
+# (e.g. SEC's own submissions payload returns "Alight Inc. / DE", not "/DE") — same gap
+# as the tight "/XX" original, just with SEC's own whitespace this time.
+JURISDICTION_SUFFIX = re.compile(r"/\s*[A-Z]{2}$", re.IGNORECASE)
 
 # Bloomberg/OpenFIGI appends these to a security's `name` field to distinguish share
 # classes, warrants, ADRs, and when-issued lines — they're ticker/security metadata,
@@ -110,10 +128,15 @@ DESCRIPTOR_PATTERNS = (
     re.compile(r"-SPON ADR$", re.IGNORECASE),
     re.compile(r"-ADR$", re.IGNORECASE),
     re.compile(r"[-\s]*W/I$", re.IGNORECASE),
-    # Matches both "-CL A" and the "- CL A" spacing variant seen on real worklist rows
-    # (e.g. "ROYALTY PHARMA PLC- CL A").
-    re.compile(r"-\s*CL\s[A-Z]$", re.IGNORECASE),
-    re.compile(r"-CLASS [A-Z]$", re.IGNORECASE),
+    # Matches "-CL A", the "- CL A" spacing variant (e.g. "ROYALTY PHARMA PLC- CL A"),
+    # and the " -CL A"/"" - CL A" variant with a space *before* the hyphen too (e.g.
+    # "UCP INC - CL A") — the leading `\s*` consumes that space so it doesn't survive as
+    # a trailing artifact on the stripped name.
+    re.compile(r"\s*-\s*CL\s[A-Z]$", re.IGNORECASE),
+    # Same spacing tolerance for the unabbreviated "CLASS" word ("SWEETGREEN INC -
+    # CLASS A", "FIRST DATA CORP- CLASS A") — the "-CL A" fix above only covered the
+    # abbreviated form.
+    re.compile(r"\s*-\s*CLASS\s[A-Z]$", re.IGNORECASE),
     re.compile(r"-NEW$", re.IGNORECASE),
     re.compile(r"-WI$", re.IGNORECASE),
     re.compile(r"-WTS?$", re.IGNORECASE),
