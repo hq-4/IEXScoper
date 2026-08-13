@@ -1,5 +1,26 @@
 # Task List
 
+- 2026-08-13: Test suite parallelized. User: "can you parallelize tests if possible,"
+  asked mid-turn while Phase 12 was wrapping up. Checked parallel-safety before adding
+  anything: every test's file I/O runs through the `tmp_path` fixture, nothing `chdir`s
+  the process, and no test writes a shared real path (`reports/`, `data/`) or mutates an
+  unguarded env var — confirmed by grep across all 84 test files, not assumed. Added
+  `pytest-xdist` and set `-n auto` in `pyproject.toml`'s `addopts`, so the canonical
+  `uv run -m pytest -q` command is parallel by default with no flag change needed anywhere
+  else (CI, docs, muscle memory).
+  The first parallel run immediately failed one real test —
+  `test_workflow_emits_structured_progress_logs` — not a parallelization artifact but a
+  genuine latent bug the new run order finally exposed: the test's `caplog.set_level(...,
+  logger="utils.sec_high_impact_workflow")` targeted a logger name from before the
+  2026-08-05 `utils/` -> `utils/legacy/` reorg; the real logger (per
+  `utils/legacy/sec_high_impact_logging.py`) is
+  `"utils.legacy.sec_high_impact_workflow"`. It only ever passed under strict serial
+  execution because an earlier test's global root-logger level (mutable, process-wide
+  state) happened to leak through in that fixed order — a real test-isolation smell
+  masked by always running in the same sequence. Fixed the logger name, not the symptom.
+  Re-ran 3x after the fix with no flakiness. Wall-clock: 494 tests, ~10.8s serial ->
+  ~6.5s parallel on this machine. `[PA][REH][CDiP]`
+
 - 2026-08-13: SIC/sector classification, Phase 12 (share-class spacing gaps). Session opened with
   a housekeeping step first: Phases 9-11 (`docs/TASK_LIST.md` already narrated them, 488 tests
   passing) had been built and verified in a prior session but never committed — sitting directly
