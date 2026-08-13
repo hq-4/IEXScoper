@@ -14,6 +14,7 @@ from utils.sec_sic_client import (
     STATUS_NOT_FOUND,
     STATUS_OK,
     SEC_SUBMISSIONS_SOURCE,
+    fetch_filing_activity,
     fetch_many,
     fetch_sic,
 )
@@ -226,6 +227,105 @@ def test_fetch_sic_retries_exhausted_is_fetch_error(tmp_path, monkeypatch) -> No
     result = fetch_sic(_client(tmp_path), "8")
 
     assert result["fetch_status"] == STATUS_FETCH_ERROR
+
+
+def _filings_payload(dates: list[str], *, files: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Real shape: `filings.recent` is parallel columnar arrays (all the same length),
+    keyed by form/filingDate/accessionNumber/primaryDocument/... `filings.files` lists
+    older-history shard filenames once `recent` exceeds ~1000 rows."""
+    return {
+        "sic": "1311",
+        "sicDescription": "Crude Petroleum & Natural Gas",
+        "name": "Continental Resources, Inc.",
+        "filings": {
+            "recent": {
+                "form": ["10-K"] * len(dates),
+                "filingDate": dates,
+                "accessionNumber": [f"000{i}" for i in range(len(dates))],
+                "primaryDocument": ["doc.htm"] * len(dates),
+            },
+            "files": files or [],
+        },
+    }
+
+
+def test_fetch_filing_activity_summarizes_recent_filings(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse(
+            _filings_payload(["2020-05-01", "2009-12-28", "2015-03-14", "2009-12-28"])
+        ),
+    )
+    result = fetch_filing_activity(_client(tmp_path), "732834")
+
+    # sorted, distinct
+    assert result["filing_dates"] == ("2009-12-28", "2015-03-14", "2020-05-01")
+    assert result["earliest_filing_date"] == "2009-12-28"
+    assert result["latest_filing_date"] == "2020-05-01"
+    assert result["has_older_shards"] is False
+    assert result["fetch_status"] == STATUS_OK
+
+
+def test_fetch_filing_activity_flags_older_shards(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse(
+            _filings_payload(
+                ["2020-05-01"],
+                files=[{"name": "CIK0000732834-submissions-001.json", "filingFrom": "1998-08-14"}],
+            )
+        ),
+    )
+    result = fetch_filing_activity(_client(tmp_path), "732834")
+
+    assert result["has_older_shards"] is True
+
+
+def test_fetch_filing_activity_missing_filings_block_is_empty(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse({"sic": "7372", "sicDescription": "S", "name": "N"}),
+    )
+    result = fetch_filing_activity(_client(tmp_path), "1")
+
+    assert result["filing_dates"] == ()
+    assert result["earliest_filing_date"] is None
+    assert result["latest_filing_date"] is None
+    assert result["has_older_shards"] is False
+    assert result["fetch_status"] == STATUS_OK
+
+
+def test_fetch_filing_activity_reuses_cached_submissions_payload(tmp_path, monkeypatch) -> None:
+    """The load-bearing "adds no network cost" proof: fetch_sic and fetch_filing_activity
+    hit the identical SEC_SUBMISSIONS_SOURCE cache key, so calling the second right after
+    the first for the same CIK must not trigger a second `requests.get`."""
+    calls = []
+
+    def fake_get(url: str, **_: Any) -> FakeResponse:
+        calls.append(url)
+        return FakeResponse(_filings_payload(["2020-05-01"]))
+
+    monkeypatch.setattr("utils.resolution_v2_network.requests.get", fake_get)
+    client = _client(tmp_path)
+
+    fetch_sic(client, "732834")
+    result = fetch_filing_activity(client, "732834")
+
+    assert len(calls) == 1
+    assert result["from_cache"] is True
+    assert result["filing_dates"] == ("2020-05-01",)
+
+
+def test_fetch_filing_activity_fetch_error_does_not_raise(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse({}, status_code=503),
+    )
+    monkeypatch.setattr("utils.resolution_v2_network.time.sleep", lambda *_: None)
+    result = fetch_filing_activity(_client(tmp_path), "8")
+
+    assert result["fetch_status"] == STATUS_FETCH_ERROR
+    assert result["filing_dates"] == ()
 
 
 def test_fetch_many_continues_past_individual_errors(tmp_path, monkeypatch) -> None:

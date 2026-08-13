@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- feat: add a filing-activity tie-break to `edgar_company_search_match` (Tier E) for genuine 2-way
+  name collisions between real registrants — e.g. the real Continental Resources, Inc. (CIK 732834,
+  ticker `CLR`) vs an unrelated same-named junior-mining shell whose last SEC filing was a 2013
+  voluntary deregistration. `sec_sic_client.fetch_filing_activity` reads `filings.recent`/
+  `filings.files` from the same already-fetched submissions payload `fetch_sic` uses (zero new
+  network cost); a candidate is only accepted when every tied candidate gets a definite
+  plausible/disjoint verdict against the era's date span and exactly one is plausible — a candidate
+  whose history merely brackets the era without a filing inside it stays `unknown`, never rejected.
+  Supersedes a reverted prior attempt using SEC's `tickers` field, which yielded 0 real matches
+  since it only reflects current listing state. 16 new tests; 510 pass (was 494); ruff/bandit
+  clean. Real run: Tier E matched 2,453/4,342 -> 2,495/4,339 (43 via the new tie-break); distinct
+  CIKs resolved 8,470 -> 8,500; manual-research worklist 11,791 -> 11,707 eras, 180.8M -> 169.7M
+  trade rows. All 43 newly-resolved matches spot-checked against known real companies (Raytheon,
+  CIT Group, Mead Johnson Nutrition, Nuance Communications, Sealed Air, Callon Petroleum, IAC,
+  Rexnord, Vivint Smart Home, GCI Liberty, MB Financial, Renewable Energy Group, Welbilt, among
+  others) — all correct. `[CA][IV][REH][CDiP][KBT]`
+
 - perf: parallelize the test suite with `pytest-xdist` (`-n auto` in the default
   `addopts`, so the canonical `uv run -m pytest -q` command runs parallel with no flag
   change needed). Verified safe first: every test's file I/O is `tmp_path`-scoped, no

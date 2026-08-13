@@ -8,6 +8,7 @@ import polars as pl
 from utils.build_edgar_company_search_matches import (
     EdgarSearchConfig,
     build_edgar_company_search_matches,
+    unresolved_issuer_era_spans,
     unresolved_issuer_names,
 )
 
@@ -19,6 +20,8 @@ ERAS_SECTOR_ENRICHED_SCHEMA = {
     "resolved_cik": pl.String,
     "cik_source": pl.String,
     "sic_coverage_status": pl.String,
+    "first_day": pl.String,
+    "last_day": pl.String,
 }
 
 
@@ -31,6 +34,8 @@ def _write_eras_sector_enriched(tmp_path: Path) -> Path:
             "resolved_cik": [None, None, "12345", None, None],
             "cik_source": [None, None, "sec_current_ticker_match", None, None],
             "sic_coverage_status": ["no_cik", "fund_no_sic_needed", "sic_and_sector", "no_cik", "no_cik"],
+            "first_day": ["20170101", "20180101", "20190101", "20200101", "20210101"],
+            "last_day": ["20171231", "20181231", "20191231", "20201231", "20211231"],
         },
         schema=ERAS_SECTOR_ENRICHED_SCHEMA,
     ).write_parquet(path)
@@ -62,6 +67,8 @@ def test_unresolved_issuer_names_reincludes_tier_e_own_prior_matches(tmp_path: P
             "resolved_cik": ["104599", "999"],
             "cik_source": ["edgar_company_search_matched", "sec_current_ticker_match"],
             "sic_coverage_status": ["sic_and_sector", "sic_and_sector"],
+            "first_day": ["20170101", "20180101"],
+            "last_day": ["20171231", "20181231"],
         },
         schema=ERAS_SECTOR_ENRICHED_SCHEMA,
     ).write_parquet(path)
@@ -72,6 +79,44 @@ def test_unresolved_issuer_names_reincludes_tier_e_own_prior_matches(tmp_path: P
     # reproduces it (cheaply, via cache) rather than silently dropping it. BBB was
     # resolved by a different tier (Tier C) — genuinely done, excluded.
     assert names == ["Alpha Corp"]
+
+
+def test_unresolved_issuer_era_spans_unions_across_eras(tmp_path: Path) -> None:
+    path = _write_eras_sector_enriched(tmp_path)
+
+    spans = unresolved_issuer_era_spans(path)
+
+    # "Alpha Corp" spans two unresolved-pool eras (AAA 2017, CCC 2019 -- but CCC already
+    # has a resolved_cik via Tier C, so it's excluded from the pool the same way
+    # unresolved_issuer_names excludes it): only AAA's 2017 window remains.
+    assert spans["Alpha Corp"] == ("2017-01-01", "2017-12-31")
+    assert spans["Gamma Inc"] == ("2021-01-01", "2021-12-31")
+    # "Beta Fund" is excluded entirely as a fund, same as unresolved_issuer_names.
+    assert "Beta Fund" not in spans
+
+
+def test_unresolved_issuer_era_spans_missing_date_columns_degrades_to_empty(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "eras_sector_enriched.parquet"
+    pl.DataFrame(
+        {
+            "symbol_era_id": ["AAA#001"],
+            "identity_issuer": ["Alpha Corp"],
+            "resolved_cik": [None],
+            "cik_source": [None],
+            "sic_coverage_status": ["no_cik"],
+        },
+        schema={
+            "symbol_era_id": pl.String,
+            "identity_issuer": pl.String,
+            "resolved_cik": pl.String,
+            "cik_source": pl.String,
+            "sic_coverage_status": pl.String,
+        },
+    ).write_parquet(path)
+
+    assert unresolved_issuer_era_spans(path) == {}
 
 
 class FakeResponse:
@@ -122,6 +167,58 @@ def test_build_edgar_company_search_matches_end_to_end(tmp_path: Path, monkeypat
     assert result["summary"]["names_searched"] == 2
     assert (output_root / "edgar_company_search_summary.json").exists()
     assert (output_root / "edgar_company_search_report.md").exists()
+
+
+def test_build_edgar_company_search_matches_passes_era_span_through_to_tiebreak(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """End-to-end proof the `unresolved_issuer_era_spans` plumbing actually reaches
+    `match_issuer_name`: "Gamma Inc" (era span 2021-01-01..2021-12-31 per the fixture)
+    ties between two name-validating candidates, resolvable only via filing activity
+    overlapping that span."""
+    eras_path = _write_eras_sector_enriched(tmp_path)
+    output_root = tmp_path / "out"
+    tied_atom = (
+        "<feed>"
+        "<entry><content type='text/xml'><company-info><cik>0000000001</cik></company-info></content></entry>"
+        "<entry><content type='text/xml'><company-info><cik>0000000002</cik></company-info></content></entry>"
+        "</feed>"
+    )
+    submissions = {
+        "1": {
+            "sic": "1000", "sicDescription": "A", "name": "Gamma Inc",
+            "filings": {"recent": {"filingDate": ["2005-01-01"]}, "files": []},  # disjoint
+        },
+        "2": {
+            "sic": "2000", "sicDescription": "B", "name": "Gamma Inc",
+            "filings": {"recent": {"filingDate": ["2021-06-01"]}, "files": []},  # inside the era
+        },
+    }
+
+    def fake_get(url: str, **kwargs: Any) -> FakeResponse:
+        if url == SEARCH_URL:
+            return FakeResponse(text=tied_atom)
+        cik = url.rsplit("CIK", 1)[1].split(".")[0].lstrip("0") or "0"
+        return FakeResponse(payload=submissions.get(cik))
+
+    monkeypatch.setattr("utils.resolution_v2_network.requests.get", fake_get)
+
+    result = build_edgar_company_search_matches(
+        EdgarSearchConfig(
+            eras_sector_enriched_path=eras_path,
+            output_root=output_root,
+            registry_path=tmp_path / "registry.sqlite",
+            user_agent="test test@example.test",
+            delay_seconds=0,
+        )
+    )
+
+    matches = pl.read_parquet(output_root / "edgar_company_search_matches.parquet")
+    rows = {row["identity_issuer"]: row for row in matches.iter_rows(named=True)}
+    assert rows["Gamma Inc"]["match_status"] == "matched"
+    assert rows["Gamma Inc"]["matched_cik"] == "2"
+    assert rows["Gamma Inc"]["match_basis"] == "filing_activity_tiebreak"
+    assert result["summary"]["match_basis_counts"]["filing_activity_tiebreak"] == 1
 
 
 def test_build_edgar_company_search_matches_limit_names(tmp_path: Path, monkeypatch: Any) -> None:

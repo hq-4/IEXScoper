@@ -485,6 +485,56 @@ follow-up phase: a ticker-based disambiguator for the `ambiguous_candidates` buc
 now the largest remaining) using SEC's already-fetched `tickers` field, and the `GROUP`-suffix
 over-normalization found but not touched here. [CA][IV][REH][CDiP][KBT]
 
+**Phase 14 (Tier E filing-activity tie-break).** A ticker-based attempt at the `ambiguous_candidates`
+disambiguator Phase 12 flagged as the next lead was tried and reverted (see `docs/TASK_LIST.md`'s
+Phase 13 entry): SEC's `tickers` field reflects only *current* listing state, and this population
+is by construction delisted companies, so it yielded 0/74 real matches. The real signal was sitting
+in the same already-fetched submissions payload the whole time: `filings.recent` (and, for older
+history, `filings.files` shards) — a candidate's actual SEC filing dates. For the real Continental
+Resources, Inc. (CIK 732834, ticker `CLR`, SIC 1311), filings span 2009-12-28 through 2026-07-31
+continuously (plus a shard back to 1998) — covering this repo's whole IEX TOPS data era
+(2016-12-12 onward). Its name-collision partner, an unrelated junior-mining shell "Continental
+Resources Group, Inc." (CIK 1430975, SIC 1000 — a real, non-blank SIC, so the existing blank-SIC
+guard alone can't catch it): last filing a `15-12G` voluntary deregistration on 2013-03-05,
+permanently dark since — structurally impossible to be the trading entity for any era after ~2013.
+
+`sec_sic_client.fetch_filing_activity` reads `filings.recent`'s dates plus whether `filings.files`
+holds unfetched older history, via the identical cache key `fetch_sic` already populated (zero new
+network cost in practice). `edgar_company_search_match._filing_activity_verdict` has three
+outcomes, never a guess: `plausible` (a filing lands inside the era window), `disjoint` (provably
+could not have been active — newest filing predates the era, or every known filing postdates it
+with no older shard left uncertain), or `unknown` (can't tell — including a candidate whose
+history merely *brackets* the era without a filing actually landing inside it, deliberately not a
+rejection, since a real filer can legitimately be quiet across a short window). A tie only resolves
+when every candidate gets a definite verdict and exactly one is `plausible`; a single `unknown`
+anywhere blocks acceptance. `_validate_candidates` no longer stops at 2 validated candidates —
+needs to see every tied candidate, not just the first 2, to disambiguate correctly.
+`build_edgar_company_search_matches.unresolved_issuer_era_spans` supplies each name's
+`(min(first_day), max(last_day))` union across every unresolved era sharing that name (name-deduped
+granularity, same as the module already runs at — a wider union only ever makes the guard more
+permissive, never a false accept).
+
+Quantified via a throwaway script (zero network calls, reading the cache directly) before writing
+the real integration: of 1,340 `ambiguous_candidates` names, 74 reach a genuine 2-way validated
+tie; ~38 resolve under the strict accept rule, confirmed correct for `CLR`. Scope confirmed with
+the user: tie-break only. The same rule applied to the 2,453 already-`matched` names would
+separately flag 81 as disjoint (e.g. `AETNA INC -> 1013761`, likely a genuine pre-existing false
+positive — the operating Aetna for 2016-2018 eras is `1122304`) and 42 more inconclusive — a
+larger, riskier audit explicitly deferred to a future phase. 16 new tests; 510 pass (was 494);
+ruff/bandit clean.
+
+Real run: **43 names** resolved via `filing_activity_tiebreak` (above the cache-only floor of ~38,
+as expected — some ties had an uncached 3rd+ candidate the live run could finally see). Tier E
+matched 2,453/4,342 -> **2,495/4,339**; distinct CIKs resolved 8,470 -> **8,500**; manual-research
+worklist 11,791 -> **11,707 eras**, 180.8M -> **169.7M trade rows**. Spot-checked all 43
+newly-resolved matches against known real companies (Raytheon Company, CIT Group Inc, Mead Johnson
+Nutrition, Nuance Communications, Sealed Air Corp, Callon Petroleum, IAC Inc, Rexnord Corp, Vivint
+Smart Home, GCI Liberty, MB Financial Inc, Renewable Energy Group, Welbilt Inc, among others) — all
+correct. Open for follow-up: the deferred 81-name existing-match audit; the 1,266-name
+`>MAX_CANDIDATES_TO_VALIDATE` bucket (filing activity is a plausible enabler for raising that cap,
+a separate larger phase); `filings.files` shard walking (measured to unblock exactly 1 name today,
+not built). [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.
