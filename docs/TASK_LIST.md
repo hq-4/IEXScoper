@@ -1,5 +1,39 @@
 # Task List
 
+- 2026-08-13: SIC/sector classification, Phase 13 attempt (ticker-based ambiguity
+  tie-break) — built, tested, then reverted after live quantification showed ~0 real
+  yield. User: "what else is next," offered a scoped choice between the
+  `ambiguous_candidates` bucket's low-risk 2-way-tie subset (74 names) and the riskier
+  `GROUP`-suffix fix; picked the low-risk tie-break. Design: when exactly 2 candidates
+  both validate by name/formerName (e.g. real `CLR`/Continental Resources vs an
+  unrelated "Continental Resources Group, Inc." shell), accept whichever candidate's SEC
+  `tickers` list contains the era's own symbol — reusing
+  `utils.ticker_continuity.fetch_current_tickers`'s identical `sec_submissions` cache
+  key, so free in the real client. Built `edgar_company_search_match.match_issuer_name`'s
+  `symbol` parameter + `_disambiguate_by_ticker`, and
+  `build_edgar_company_search_matches.unresolved_issuer_symbol_map` (name -> its one
+  associated symbol, skipped for the rare name shared across >1 symbol — 71/73 real
+  cases had exactly one). 5 new tests, 499 passed, ruff/bandit clean.
+  Live quantification against cached data (zero new network calls) before shipping
+  caught the flaw: **0 of 74 names actually resolved.** Root cause — SEC's `tickers`
+  field on the submissions payload reflects only *current* listing state, never
+  historical ticker history the way `formerNames` carries historical name history. This
+  entire worklist bucket is, by construction, companies no longer trading — checking the
+  70 real 2-way ties with a known symbol, 65/70 (93%) had *both* candidates showing empty
+  `tickers` (confirmed not a fetch bug: Apple's CIK correctly returns `["AAPL"]` as a
+  positive control). `CLR`/Continental Resources itself was taken private in 2023 and
+  shows `tickers: []` today, identical to the unrelated shell it's tied with — the same
+  current-listing bias this project has hit repeatedly (Tier C, OpenFIGI's ticker-keyed
+  lookup, Phase 6's rename gap), one layer further down than any prior phase reached.
+  Presented the negative result plus three options (keep it anyway since it's harmless/
+  free, revert, or try a filing-activity signal instead); user: revert. `git checkout --`
+  on all four touched files, confirmed working tree clean and 499/499 still passing on
+  `main` post-revert. **Any future disambiguator for this bucket needs a signal that
+  survives delisting** — filing-activity-during-the-era (SEC submissions' `filings.recent`
+  date-stamped) is the untried candidate; ticker/current-listing-derived signals are a
+  dead end for this population. `GROUP`-suffix over-normalization (Phase 12) remains the
+  other open lead, untouched by this attempt. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-13: Test suite parallelized. User: "can you parallelize tests if possible,"
   asked mid-turn while Phase 12 was wrapping up. Checked parallel-safety before adding
   anything: every test's file I/O runs through the `tmp_path` fixture, nothing `chdir`s
