@@ -73,7 +73,23 @@ def _payload_result(cik: str, payload: Any, from_cache: bool) -> dict[str, Any]:
     result["sic"] = sic or None
     result["sic_description"] = str(payload.get("sicDescription") or "").strip() or None
     result["entity_name"] = str(payload.get("name") or "").strip() or None
+    result["former_names"] = _former_names(payload)
     return result
+
+
+def _former_names(payload: dict[str, Any]) -> list[str]:
+    """SEC's submissions payload carries a `formerNames` array (exact historical name +
+    date range) for any registrant that has renamed — sitting alongside `sic`/`name` in
+    the same already-fetched response, previously unread. Returns just the name strings;
+    callers that need the date range can read `formerNames` off the raw payload
+    directly."""
+    names = []
+    for entry in payload.get("formerNames") or ():
+        if isinstance(entry, dict):
+            name = str(entry.get("name") or "").strip()
+            if name:
+                names.append(name)
+    return names
 
 
 def _error_result(cik: str, error: PrimarySourceError) -> dict[str, Any]:
@@ -93,6 +109,7 @@ def _base_result(cik: str, fetch_status: str, from_cache: bool) -> dict[str, Any
         "sic": None,
         "sic_description": None,
         "entity_name": None,
+        "former_names": [],
         "fetch_status": fetch_status,
         "from_cache": from_cache,
     }

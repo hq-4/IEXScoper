@@ -59,9 +59,46 @@ def test_fetch_sic_returns_sic_and_description_on_success(tmp_path, monkeypatch)
         "sic": "7372",
         "sic_description": "Services-Prepackaged Software",
         "entity_name": "Block, Inc.",
+        "former_names": [],
         "fetch_status": STATUS_OK,
         "from_cache": False,
     }
+
+
+def test_fetch_sic_extracts_former_names(tmp_path, monkeypatch) -> None:
+    """SEC's submissions payload carries a `formerNames` array for any registrant that
+    has renamed — real shape from a live payload (Cabot Oil & Gas Corp -> Coterra
+    Energy Inc.), just the name strings extracted since callers compare by name."""
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse(
+            {
+                "sic": "1311",
+                "sicDescription": "Crude Petroleum & Natural Gas",
+                "name": "Coterra Energy Inc.",
+                "formerNames": [
+                    {
+                        "name": "CABOT OIL & GAS CORP",
+                        "from": "1994-05-12T04:00:00.000Z",
+                        "to": "2021-09-29T04:00:00.000Z",
+                    }
+                ],
+            }
+        ),
+    )
+    result = fetch_sic(_client(tmp_path), "858470")
+
+    assert result["former_names"] == ["CABOT OIL & GAS CORP"]
+
+
+def test_fetch_sic_missing_former_names_is_empty_list(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse({"sic": "7372", "sicDescription": "S", "name": "N"}),
+    )
+    result = fetch_sic(_client(tmp_path), "1")
+
+    assert result["former_names"] == []
 
 
 def test_fetch_sic_blank_sic_is_no_sic_on_record(tmp_path, monkeypatch) -> None:

@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+- feat: drop `edgar_company_search_match.MIN_QUERY_WORDS` from 2 to 1 — a name already exactly 2
+  words after descriptor-stripping (`"HOLOGIC INC"`, `"ZENDESK INC"`, `"ANAPLAN INC"`) could never
+  truncate further under the old floor, so a literal-prefix mismatch against EDGAR's real
+  registrant punctuation left it with zero candidates at every query tried (527 names/1,800
+  eras/58.7M trade rows, the largest remaining worklist bucket). Live-verified before changing
+  anything that the risk the floor was guarding against (the documented `CFLT`/`CONFLUENT`
+  same-name-shell collision) is already handled by the existing SIC-must-exist guard, not the word
+  count: 1-word queries for `HOLOGIC`/`ZENDESK`/`ANAPLAN` each found a real single candidate, with
+  `HOLOGIC`'s blank-SIC unrelated-entity hit correctly rejected rather than accepted; re-checked
+  `CONFLUENT` itself live and confirmed it now returns 9 candidates (over the validate cap), so
+  `CFLT` still correctly stays unresolved via that separate guard. 3 new tests + 1 existing test
+  updated; 488 pass (was 485); ruff/bandit clean. Real run (54m20s wall-clock, genuinely
+  rate-limited): `no_candidates` 527 -> 54; `ambiguous_candidates` 263 -> 1,348 (the anticipated
+  trade-off — a broader query surfaces real ambiguity more often, correctly left unresolved rather
+  than guessed); `matched` 2,287 -> 2,438; distinct CIKs resolved 8,351 -> 8,455; manual-research
+  worklist 12,007 -> 11,817 eras, 210.3M -> 187.7M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
+- feat: extend `edgar_company_search_match` (Tier E) to validate a candidate against SEC's
+  `formerNames` history, not just its current registrant name — companies that renamed or merged
+  since an era's ticker was active (`"CABOT OIL & GAS CORP"` -> now `"Coterra Energy Inc."`) were
+  finding the right single-candidate CIK and then failing validation purely because the current
+  name doesn't match. `sec_sic_client.fetch_sic` now surfaces `former_names` from the same
+  already-fetched SEC submissions payload; the existing SIC-must-exist guard and
+  2-validated-matches-is-ambiguous rule both still apply unchanged. Quantified first from the
+  existing request cache (zero network calls): 515 names/724 eras/46.0M trade rows recoverable, 9
+  names correctly staying ambiguous. Real run: only 21 new network requests (8,330 cache hits);
+  Tier E matched 1,844/4,584 (40.2%) -> 2,287/4,342 (52.7%); distinct CIKs resolved 8,276 -> 8,351;
+  manual-research worklist 12,691 -> 12,007 eras, 245.8M -> 210.3M trade rows. 485 tests pass (was
+  480); ruff/bandit clean. `[CA][IV][REH][CDiP][KBT]`
+
+- feat: add a word-boundary prefix-match fallback to `sec_name_cik_lookup.match_by_name` (Tier D),
+  covering OpenFIGI's 28-character `name`-field truncation (sometimes mid-word) and un-expanded
+  Bloomberg abbreviations (`HLDGS`, `INTL`) left over after normalization. Unambiguous only: ≥2
+  tokens on the shorter side, exactly one distinct CIK across every candidate satisfying the
+  relation. Guards a real false-positive risk found while building it — SPAC sequel numbering
+  (`"...Corp II"` vs `"...Corp III"`) is a genuinely different company even though `"II"`
+  string-prefixes `"III"` — via a Roman-numeral-remainder check. Quantified first: 220 names/~21M
+  trade rows recoverable among names whose ticker was independently confirmed current-SEC-listed;
+  50 genuine ticker-reuse cases (`IAC`, `USEG`) correctly stayed unmatched. Real run (`--skip-fetch`,
+  zero network calls): distinct CIKs resolved 8,201 -> 8,276; manual-research worklist 13,131 ->
+  12,691 eras, 264M -> 245.8M trade rows. 480 tests pass (was 475); ruff/bandit clean.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - feat: extend `sec_name_cik_lookup.DESCRIPTOR_PATTERNS` to cover a bare trailing `-A`/`-B`
   share-class letter (`"EVERPURE INC-A"`) and the `"- CL A"` spacing variant
   (`"ROYALTY PHARMA PLC- CL A"`), both visible at the top of the refreshed worklist after the Tier
