@@ -159,6 +159,50 @@ def test_match_issuer_name_matches_after_descriptor_strip(tmp_path: Path, monkey
     assert result["matched_cik"] == "313216"
 
 
+def test_match_issuer_name_matches_after_spaced_class_descriptor_strip(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """`"SWEETGREEN INC - CLASS A"` has a space before the hyphen on the unabbreviated
+    "CLASS" word -- a real worklist row the original tight `-CLASS [A-Z]$` pattern
+    missed even though the equivalent `-CL A` abbreviated pattern already tolerated the
+    same spacing."""
+    atom = _atom(["1477815"])
+    submissions = {
+        "1477815": {"sic": "5812", "sicDescription": "Retail-Eating Places", "name": "Sweetgreen, Inc."}
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"SWEETGREEN": atom}, submissions),  # raw/stripped 2-word queries get nothing
+    )
+
+    result = match_issuer_name(_client(tmp_path), "SWEETGREEN INC - CLASS A")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1477815"
+
+
+def test_match_issuer_name_matches_via_spaced_jurisdiction_tag(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """SEC's own submissions payload returns a spaced "/ XX" jurisdiction tag (e.g.
+    `"Alight Inc. / DE"`), not just the tight "/XX" the `Core Scientific, Inc./tx`
+    precedent covered -- left alone, the leftover "DE" token blocks the match."""
+    atom = _atom(["1753676"])
+    submissions = {
+        "1753676": {"sic": "7374", "sicDescription": "Services-Computer Processing",
+                     "name": "Alight Inc. / DE"}
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"ALIGHT INC": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "ALIGHT INC - CLASS A")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1753676"
+
+
 def test_match_issuer_name_finds_match_via_progressive_truncation(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

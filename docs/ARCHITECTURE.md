@@ -442,6 +442,49 @@ exactly as predicted by the blank-SIC guard rather than silently regressing. Com
 three phases landed in this session: worklist 13,131 -> **11,817 eras** (-10.0%), 264.1M ->
 **187.7M trade rows** (-28.9%). [CA][IV][REH][CDiP][KBT]
 
+**Phase 12 (share-class spacing gaps).** User: "what else is next." Phases 9-11 above had been
+built and verified in a prior session but left uncommitted directly on `main`; committed first
+(branch, PR #13) per the user's explicit choice, then moved on to new work.
+
+Traced why several real, still-findable companies (`SEE`/Sealed Air, `CPE`/Callon Petroleum,
+`HZNP`/Horizon Therapeutics, `IAC`, `CLR`/Continental Resources) were landing in
+`ambiguous_candidates`/`no_validated_match` by replaying the actual `match_issuer_name` function
+against cached responses rather than eyeballing candidate lists by hand (a manual trace first
+mis-diagnosed `HZNP` as a `PLC` suffix gap; the real function showed its 2-word query never
+name-matches a candidate at all and falls through to the 1-word query's candidate-count cap
+instead). That trace also surfaced a separate, real bug — `normalize_name`'s legal-suffix strip
+loop treats "GROUP" as a droppable suffix, so `"Continental Resources Group, Inc."` (an unrelated
+junior mining shell, SIC 1000) collapses to the same normalized name as the real, Harold-Hamm
+`"CONTINENTAL RESOURCES, INC"` (ticker `CLR`, SIC 1311) and both validate, causing a false
+ambiguity — deliberately left unfixed pending a ticker-based disambiguator and two-directional
+verification against the whole existing suffix-stripped match population, since loosening or
+tightening `LEGAL_SUFFIXES` risks both directions (new matches and new false collisions) at once.
+
+What shipped: two narrow regex spacing gaps, found the same way as Phase 9's `-CL A` fix.
+`DESCRIPTOR_PATTERNS`'s `-CLASS [A-Z]$` required the hyphen directly against "CLASS" with no
+space, so `"SWEETGREEN INC - CLASS A"` and `"FIRST DATA CORP- CLASS A"` never got stripped even
+though the equivalent abbreviated `-CL A` pattern already tolerated that spacing — now mirrors it,
+and both patterns also consume a space *before* the hyphen (`"UCP INC - CL A"`), closing a
+trailing-space artifact the original Phase 9 fix left behind. Separately, `JURISDICTION_SUFFIX`
+only matched a tight `/XX`, but SEC's own submissions payload returns a spaced `"Alight Inc. /
+DE"` variant the tight `Core Scientific, Inc./tx` precedent from Phase 7 never covered.
+
+Quantified entirely by replaying the full still-unresolved Tier E population (1,904 names) against
+cached search/validation responses with both fixes applied — zero new network calls: 15 names flip
+to a validated match. 6 new tests; 494 pass (was 488); ruff/bandit clean.
+
+Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+`build_sector_manual_research_worklist.py`, ~40s wall-clock, essentially all cache hits): Tier E
+matched 2,438/4,342 -> **2,453/4,342**; distinct CIKs resolved 8,455 -> **8,470**; manual-research
+worklist 11,817 -> **11,791 eras**, 187.7M -> **180.8M trade rows**. Spot-checked all 6 largest
+newly-resolved matches against known real companies (`SG`->Sweetgreen SIC 5812, `ALIT`->Alight Inc
+SIC 7374, `AYX`->Alteryx SIC 7372, `FDC`->First Data Corp SIC 7389, `MCFE`->McAfee Corp SIC 7372,
+`VEI`->Vine Energy SIC 1311) — all correct; `SG` resolved via Tier D (`sec_name_matched`) rather
+than Tier E, confirming the shared `strip_security_descriptors` fix benefits both tiers. Open for a
+follow-up phase: a ticker-based disambiguator for the `ambiguous_candidates` bucket (1,340 names,
+now the largest remaining) using SEC's already-fetched `tickers` field, and the `GROUP`-suffix
+over-normalization found but not touched here. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

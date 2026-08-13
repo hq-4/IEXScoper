@@ -26,6 +26,9 @@ from utils.sec_name_cik_lookup import (
         # the legal-suffix strip loop from reaching "INC" behind it.
         ("Core Scientific, Inc./tx", "CORE SCIENTIFIC"),
         ("Some Corp/DE", "SOME"),
+        # SEC's own submissions payload uses a spaced "/ XX" variant of the same tag
+        # (e.g. "Alight Inc. / DE") -- must be stripped identically to the tight "/XX".
+        ("Alight Inc. / DE", "ALIGHT"),
         (None, ""),
         ("", ""),
         ("   ", ""),
@@ -111,6 +114,12 @@ def test_match_by_name_no_match_for_unknown_issuer() -> None:
         ("ATOUR LIFESTYLE HOLDINGS-ADR", "ATOUR LIFESTYLE HOLDINGS"),
         # The "- CL A" spacing variant (space before "CL") seen on real worklist rows.
         ("ROYALTY PHARMA PLC- CL A", "ROYALTY PHARMA PLC"),
+        # A space *before* the hyphen too, on the same abbreviated pattern -- must not
+        # leave a trailing-space artifact on the stripped name.
+        ("UCP INC - CL A", "UCP INC"),
+        # The same spacing variants for the unabbreviated "CLASS" word.
+        ("SWEETGREEN INC - CLASS A", "SWEETGREEN INC"),
+        ("FIRST DATA CORP- CLASS A", "FIRST DATA CORP"),
         # A bare trailing "-A"/"-B" share-class letter with no "CL"/"CLASS" word.
         ("EVERPURE INC-A", "EVERPURE INC"),
         ("C3.AI INC-A", "C3.AI INC"),
