@@ -293,6 +293,159 @@ def test_match_issuer_name_validation_fetch_error_does_not_raise(
     assert result["matched_cik"] is None
 
 
+def test_match_issuer_name_matches_via_former_name(tmp_path: Path, monkeypatch: Any) -> None:
+    """The real gap this fix targets: the registrant's *current* name no longer matches
+    the era's historical issuer name because the company renamed or merged since, but
+    SEC's own `formerNames` history — real shape, Cabot Oil & Gas Corp's 2021 merger
+    into Coterra Energy — carries the exact queried name."""
+    atom = _atom(["858470"])
+    submissions = {
+        "858470": {
+            "sic": "1311",
+            "sicDescription": "Crude Petroleum & Natural Gas",
+            "name": "Coterra Energy Inc.",
+            "formerNames": [
+                {
+                    "name": "CABOT OIL & GAS CORP",
+                    "from": "1994-05-12T04:00:00.000Z",
+                    "to": "2021-09-29T04:00:00.000Z",
+                }
+            ],
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"CABOT OIL & GAS CORP": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "CABOT OIL & GAS CORP")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "858470"
+    assert result["candidate_name"] == "CABOT OIL & GAS CORP"
+
+
+def test_match_issuer_name_former_name_still_requires_real_sic(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The blank-SIC collision guard applies to a `formerNames` match exactly like a
+    current-name match — a renamed shell with no SIC on record still isn't trusted."""
+    atom = _atom(["1"])
+    submissions = {
+        "1": {
+            "sic": "",
+            "sicDescription": "",
+            "name": "Some Shell Co",
+            "formerNames": [{"name": "OLD ISSUER NAME CORP", "from": "2000", "to": "2020"}],
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"OLD ISSUER NAME CORP": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "OLD ISSUER NAME CORP")
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_two_former_name_matches_is_ambiguous(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Two distinct real registrants both having once carried the queried name is
+    genuine ambiguity, not a match to guess between — `formerNames` doesn't loosen the
+    existing ambiguity rule."""
+    atom = _atom(["1", "2"])
+    submissions = {
+        "1": {
+            "sic": "1000",
+            "sicDescription": "A",
+            "name": "New Name One",
+            "formerNames": [{"name": "SHARED OLD NAME INC", "from": "2000", "to": "2010"}],
+        },
+        "2": {
+            "sic": "2000",
+            "sicDescription": "B",
+            "name": "New Name Two",
+            "formerNames": [{"name": "SHARED OLD NAME INC", "from": "2010", "to": "2020"}],
+        },
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"SHARED OLD NAME INC": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "SHARED OLD NAME INC")
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_truncates_a_two_word_name_to_one_word(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The real gap this fix targets: a name that's already exactly 2 words after
+    descriptor-stripping ("ZENDESK INC") could never truncate further under the old
+    2-word floor. If the full query doesn't literally prefix-match the registrant's real
+    punctuation ("Zendesk, Inc."), the only remaining query is the single distinctive
+    word — real shape, live-verified against SEC before shipping."""
+    atom = _atom(["1463172"])
+    submissions = {
+        "1463172": {"sic": "7374", "sicDescription": "Data Processing", "name": "Zendesk, Inc."}
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"ZENDESK": atom}, submissions),  # "ZENDESK INC" (2-word) gets nothing
+    )
+
+    result = match_issuer_name(_client(tmp_path), "ZENDESK INC")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1463172"
+
+
+def test_match_issuer_name_one_word_query_still_rejects_blank_sic_shell(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The 1-word floor is only safe because the existing guards don't change — a
+    single-word query surfacing an unrelated blank-SIC entity (real shape: searching
+    "HOLOGIC" alone first turns up a limited partnership, not the real Hologic, Inc.)
+    still isn't trusted just because it was the only candidate."""
+    atom = _atom(["1566252"])
+    submissions = {
+        "1566252": {"sic": "", "sicDescription": "", "name": "Hologic Limited Partnership"}
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"HOLOGIC": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "HOLOGIC INC")
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_one_word_query_over_candidate_cap_stays_ambiguous(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The real `CONFLUENT` case: a 1-word query for a genuinely common root returns more
+    candidates than `MAX_CANDIDATES_TO_VALIDATE`, so it's reported ambiguous via the
+    existing count guard exactly as a broad 2-word query already was — the 1-word floor
+    doesn't bypass that guard."""
+    atom = _atom([str(n) for n in range(1, 10)])  # 9 candidates > MAX_CANDIDATES_TO_VALIDATE
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"CONFLUENT": atom}, {}),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "CONFLUENT")
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["matched_cik"] is None
+
+
 def test_match_issuer_name_reuses_cached_sic_fetch(tmp_path: Path, monkeypatch: Any) -> None:
     """If the CIK's submissions data was already fetched (e.g. by the main SIC pass),
     validating a name match here is a free cache hit, not a new request."""

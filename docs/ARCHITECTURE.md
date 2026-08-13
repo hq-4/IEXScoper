@@ -324,6 +324,124 @@ EDGAR search miss (the real registrant's exact name/comma placement isn't reacha
 variant tried) and `GPS` has no name anywhere in the pipeline — both, like `CFLT`, correctly
 unresolved rather than silently missing. [CA][IV][REH][CDiP][KBT]
 
+**Phase 9 (Tier D prefix-match fallback).** User: "what else is next." Cross-checked the refreshed
+worklist's still-unresolved googleable-issuer names directly against SEC's current-listing file by
+ticker and found 253 names whose ticker *is* currently SEC-listed under a name Tier D's exact match
+was too strict to see — two generalizable, non-fuzzy patterns: (1) OpenFIGI truncates its `name`
+field to a hard 28-character ceiling, sometimes mid-word (`"ALPHA METALLURGICAL RESOURCE"` for
+`"...Resources, Inc."`); (2) un-expanded Bloomberg abbreviations survive `normalize_name` because
+they aren't legal suffixes it knows to drop (`HLDGS` vs `HOLDINGS`, `INTL` vs `INTERNATIONAL`).
+Quantified before building: 93 names/9.2M rows exactly-28-char-truncated, 127 names/11.4M rows
+abbreviation-shaped, 220 total/~21M rows — comparable to prior descriptor-fix phases — against 50
+names correctly left alone as genuine ticker reuse (`IAC`→People Inc, `USEG`→Big Sky Industrial),
+confirming the pattern doesn't paper over real different-company cases.
+
+Added a third fallback pass to `utils.sec_name_cik_lookup.match_by_name`: a word-boundary prefix
+match on the same unambiguous index, requiring the shorter side to clear `MIN_PREFIX_TOKENS` (2)
+tokens so a single generic word can't over-match (the exact risk that sank the Phase 4 fuzzy
+matcher), and requiring exactly one distinct CIK across every candidate satisfying the relation —
+ambiguous still means no match. Building the mid-word-truncation case (`_is_prefix_relation`
+allowing a same-position final-token partial past `MIN_PARTIAL_TOKEN_CHARS`) surfaced a live
+false-positive risk before shipping: SPAC sequel numbering (`"...Acquisition Corp II"` vs
+`"...Corp III"`) is a genuine different company, not a truncation of each other, yet `"II"` is a
+literal string prefix of `"III"` — caught by testing the real `TMTSW`/`TVACU` worklist rows during
+implementation, not discovered live. Guarded by rejecting any partial match whose leftover
+characters are composed entirely of Roman-numeral letters. 5 new tests (truncation, abbreviation,
+the 2-token floor, the Roman-numeral guard, cross-CIK ambiguity); 480 tests pass (was 475); ruff
+and bandit clean (bandit's one finding is pre-existing and unrelated, in `sec_identity_sources.py`).
+
+Real run (`--skip-fetch`, zero network calls — Tier D only needs the already-cached SEC listing
+file): distinct CIKs resolved 8,201 → **8,276**; manual-research worklist 13,131 → **12,691 eras**,
+264M → **245.8M trade rows** (more than the 220-name estimate, since several recovered names repeat
+across multiple eras). Spot-checked several newly-resolved matches against known real companies
+(`HTZ`→Hertz Global Holdings CIK 1657853, `AMR`→Alpha Metallurgical Resources CIK 1704715,
+`CCC`→CCC Intelligent Solutions CIK 1818201, `JHX`→James Hardie Industries CIK 1159152) — all
+correct. `SG`/`ALIT` (a `" - CLASS A"` spacing variant with a space *before* the hyphen, distinct
+from the descriptor patterns already handled) remain unresolved, out of this phase's scope. SIC/
+sector coverage for the newly-resolved CIKs awaits a follow-up live SIC-fetch pass, same as every
+prior Tier-D-only phase. [CA][IV][REH][CDiP][KBT]
+
+**Phase 10 (Tier E `formerNames` validation).** User: "what else is next." The freshly-shrunk
+worklist's new top rows (`COG`, `ETRN`, `CPE`, `FRC`, `HZNP`, `PE`, `ABC`, `CDAY`, `RAD`, ...) all
+had EDGAR search finding the correct single-candidate CIK, but `edgar_company_search_match`
+rejected every one, because `_names_match` only ever checked a candidate's *current* SEC
+registrant name — and every one of these companies renamed or merged since the era's ticker was
+active (`"CABOT OIL & GAS CORP"` finds CIK 858470 immediately; that CIK is now `"Coterra Energy
+Inc."` post-2021-merger). SEC's submissions payload — already fetched for every validated
+candidate via `sec_sic_client.fetch_sic` — carries a `formerNames` array (exact historical name +
+date range) sitting completely unused next to `sic`/`name`.
+
+Quantified entirely from the existing SQLite request cache before writing any code (zero network
+calls): 515 unique names / 724 eras / 46.0M trade rows recoverable, with 9 names correctly staying
+ambiguous (genuine historical-name collisions between two real registrants) — confirming
+`formerNames` doesn't just loosen the match, it still separates real matches from real ambiguity.
+Spot-checked the case most likely to repeat this module's own documented false-lead warning
+("180 Life Sciences Corp" — see Phase 5): checked that CIK's `formerNames` directly and confirmed
+it genuinely *was* 180 Life Sciences 2019-2025 before two later unrelated renames, so today's fix
+doesn't reintroduce that risk. Also hand-verified `RITE AID CORP` -> CIK 84129, whose `formerNames`
+shows it held that exact name 1994-2024 before its post-bankruptcy reorg to `NEW RITE AID, LLC`
+(SIC 5912, Retail-Drug Stores) — a real, correct match that a 41-candidate ambiguous 2-word
+fallback query was previously masking.
+
+Added `former_names` to `sec_sic_client.fetch_sic`'s result dict (harmless to every existing
+caller — polars' schema-constrained `DataFrame` construction in `build_era_sector_enriched.py`
+drops unknown dict keys). `edgar_company_search_match._validate_candidates` now checks a
+candidate's `formerNames` whenever its current name doesn't match, gated by the same
+SIC-must-exist guard and the same 2-validated-matches-is-ambiguous rule as before — no new trust
+assumption, just more of the already-fetched authoritative payload. 5 new tests; 485 pass (was
+480); ruff/bandit clean.
+
+Real run (full recomputation, 4,342 names): only **21 new network requests** (8,330 cache hits) —
+Tier E matched 1,844/4,584 (40.2%) -> **2,287/4,342 (52.7%)**. Reconciled: distinct CIKs resolved
+8,276 (Phase 9) -> **8,351**; manual-research worklist 12,691 -> **12,007 eras**, 245.8M ->
+**210.3M trade rows**. Spot-checked several newly-resolved matches against known real corporate
+history (`COG`->Coterra Energy SIC 1311, `ETRN`->SIC 4922 Natural Gas Transmission, `ABC`->SIC 5122
+Wholesale-Drugs, `RAD`->SIC 5912 Retail-Drug Stores) — all correct. `HZNP`/`CPE`/`FRC` remain
+unresolved: candidates exist but none — current or former name — validate, a different, smaller
+gap than this phase targeted. Combined with Phase 9 in the same session: worklist
+13,131 -> **12,007 eras** (-8.6%), 264.1M -> **210.3M trade rows** (-20.3%). [CA][IV][REH][CDiP][KBT]
+
+**Phase 11 (Tier E 1-word query floor).** User: "what else is next," then approved running the
+full live quantification and building it after being shown the trade-off against this project's
+own prior `CFLT` decision (Phase 5/8: the query floor was deliberately held at 2 words "to limit
+over-broad-query collision risk"). Root cause: a name that's already exactly 2 words after
+descriptor-stripping (`"HOLOGIC INC"`, `"ZENDESK INC"`, `"ANAPLAN INC"`) could never truncate
+further under that floor — if the full 2-word query didn't literally prefix-match the registrant's
+real punctuation (EDGAR's `browse-edgar` search is a literal prefix match), the name got zero
+candidates at *every* query tried, with no shorter fallback possible. This was now the single
+largest remaining worklist bucket: 527 names / 1,800 eras / 58.7M trade rows.
+
+Before touching the floor, live-verified the specific risk it was guarding against no longer
+applies: querying `HOLOGIC`/`ZENDESK`/`ANAPLAN` (1 word) each found a real single candidate.
+`ZENDESK` and `ANAPLAN` validated correctly against their real SIC/name. `HOLOGIC` surfaced an
+unrelated blank-SIC limited partnership — and the existing SIC-must-exist guard *correctly
+rejected* it rather than accepting it, proving the guard (not the word count) was always what made
+a broad query trustworthy, exactly as the module's own docstring already argued for the 2-word
+case. Re-checked the actual `CONFLUENT` precedent live too: it now returns 9 candidates, over
+`MAX_CANDIDATES_TO_VALIDATE`, so `CFLT` still correctly stays unresolved via the existing
+candidate-count guard — the 1-word floor doesn't reopen that specific case, it just changes which
+guard catches it.
+
+`MIN_QUERY_WORDS` dropped from 2 to 1 in `edgar_company_search_match.py`; no other logic changed
+— the safety property was already carried by `_validate_candidates`, not the truncation floor. 3
+new tests (2-word-to-1-word truncation landing a real match, the blank-SIC guard still holding at
+the new floor, the over-candidate-cap guard still holding); 1 existing test's call-count
+assertion updated to reflect the now-correct extra query attempt for a 2-word name. 488 tests pass
+(was 485); ruff/bandit clean.
+
+Real run (full recomputation, 4,342 names): genuinely rate-limited this time, since most of the
+new 1-word queries were never cached — 54m20s wall-clock, matching SEC's guidance throughout.
+`no_candidates` 527 -> **54**; `no_validated_match` 1,265 -> **501**; `ambiguous_candidates` 263 ->
+**1,348** (the anticipated trade-off, documented up front: a 1-word query is more permissive, so
+many previously-zero-candidate names landed in genuine multi-candidate ambiguity — correctly not
+guessed between — rather than a clean match); `matched` 2,287 -> **2,438**. Reconciled: distinct
+CIKs resolved 8,351 -> **8,455**; manual-research worklist 12,007 -> **11,817 eras**, 210.3M ->
+**187.7M trade rows**. Spot-checked newly-resolved matches (`ZEN`->Zendesk CIK 1463172 SIC 7374,
+`PLAN`->Anaplan CIK 1540755 SIC 7372) — correct; confirmed `HOLX` (Hologic) stayed unresolved
+exactly as predicted by the blank-SIC guard rather than silently regressing. Combined across all
+three phases landed in this session: worklist 13,131 -> **11,817 eras** (-10.0%), 264.1M ->
+**187.7M trade rows** (-28.9%). [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

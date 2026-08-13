@@ -18,12 +18,32 @@ additional exact matches (299 era rows) with zero new ambiguity risk. A broader
 token-subset/fuzzy matcher was evaluated and rejected — on real data it matched names
 like "1895 Bancorp of Wisconsin" to an unrelated company simply named "Bancorp" (a
 single generic token satisfying a naive subset check), which is exactly the kind of
-wrong-company risk this module exists to avoid. [CA][IV][KBT]
+wrong-company risk this module exists to avoid.
+
+A third pass, still exact at the token level rather than fuzzy, handles two remaining
+structural gaps found by cross-checking the live worklist's still-unresolved
+googleable-issuer names against SEC's current listings for the same ticker: (1) OpenFIGI
+truncates its `name` field to a hard 28-character ceiling (`"ALPHA METALLURGICAL
+RESOURCE"` for Alpha Metallurgical Resources, even eating into the base name to fit a
+share-class suffix), and (2) un-expanded Bloomberg abbreviations survive normalization
+(`HLDGS` vs `HOLDINGS`, `INTL` vs `INTERNATIONAL`) because they aren't legal suffixes
+`normalize_name` knows to drop. Both collapse to the same rule: one normalized name is a
+word-boundary prefix of the other. This carries real over-match risk if applied loosely
+(a single short word like "Bancorp" would prefix-match hundreds of companies), so
+`_prefix_match_name` requires the *shorter* side to have at least `MIN_PREFIX_TOKENS`
+tokens and requires exactly one distinct CIK across every candidate that satisfies the
+prefix relation — ambiguous still means no match, never a guess. Measured on the live
+worklist: 220 additional unique-name matches (~21M trade rows) among names whose ticker
+was independently confirmed to be currently SEC-listed; the ticker-reuse cases (a
+different company now trading the same symbol, e.g. `IAC`, `USEG`) correctly stayed
+unmatched since a reused ticker's name shares no real prefix relation with the old one.
+[CA][IV][KBT]
 """
 
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 
 import polars as pl
 
@@ -54,6 +74,25 @@ LEGAL_SUFFIXES = frozenset(
     }
 )
 NON_ALNUM = re.compile(r"[^A-Z0-9 ]+")
+
+# Floor for the prefix-match fallback: the shorter of the two normalized names must have
+# at least this many tokens, so a single generic word (e.g. "Bancorp") can't prefix-match
+# an unrelated company — the same over-match risk the rejected fuzzy matcher hit on real
+# data.
+MIN_PREFIX_TOKENS = 2
+
+# OpenFIGI's 28-character name truncation sometimes lands mid-word ("RESOURCE" for
+# "RESOURCES") rather than on a token boundary. A same-position final-token truncation is
+# allowed, but only past this minimum length, so a short/generic partial token (e.g. a
+# lone "R") can't over-match.
+MIN_PARTIAL_TOKEN_CHARS = 3
+
+# Guards the one real false-positive risk a mid-word partial match introduces: SPAC
+# sequel numbering ("XYZ Acquisition Corp II" vs "...Corp III") is a genuine different
+# company, not a truncation of the same name — and "II" is a literal string prefix of
+# "III". Any leftover characters made up entirely of Roman-numeral letters blocks the
+# partial match rather than accepting it.
+ROMAN_NUMERAL_CHARS = frozenset("IVXLCDM")
 
 # SEC appends a trailing "/XX" state-of-incorporation tag to disambiguate identically
 # named registrants (e.g. "CORE SCIENTIFIC, INC./TX"). Left alone, NON_ALNUM turns the
@@ -133,8 +172,10 @@ def build_name_cik_index(sec_tickers: pl.DataFrame) -> pl.DataFrame:
 
 def match_by_name(era_identity: pl.DataFrame, name_index: pl.DataFrame) -> pl.DataFrame:
     """era_identity needs `symbol_era_id`, `identity_issuer`. Returns one row per era:
-    `symbol_era_id`, `name_matched_cik` (unpadded, null when neither the plain nor the
-    descriptor-stripped normalized name has an unambiguous match)."""
+    `symbol_era_id`, `name_matched_cik` (unpadded, null when none of the plain exact,
+    descriptor-stripped exact, or descriptor-stripped prefix passes has an unambiguous
+    match). Priority order: plain exact > stripped exact > stripped prefix — a cheaper,
+    more certain match always wins over a broader one."""
     require_columns(era_identity, ("symbol_era_id", "identity_issuer"))
     base = era_identity.select("symbol_era_id", "identity_issuer")
     plain_cik = _match_one_pass(base, name_index, "identity_issuer").rename(
@@ -148,9 +189,15 @@ def match_by_name(era_identity: pl.DataFrame, name_index: pl.DataFrame) -> pl.Da
     stripped_cik = _match_one_pass(stripped, name_index, "stripped_issuer").rename(
         {"name_matched_cik": "cik_stripped"}
     )
+    prefix_cik = _match_prefix_pass(stripped, name_index, "stripped_issuer").rename(
+        {"name_matched_cik": "cik_prefix"}
+    )
     return (
         plain_cik.join(stripped_cik, on="symbol_era_id", how="left")
-        .with_columns(pl.coalesce(["cik_plain", "cik_stripped"]).alias("name_matched_cik"))
+        .join(prefix_cik, on="symbol_era_id", how="left")
+        .with_columns(
+            pl.coalesce(["cik_plain", "cik_stripped", "cik_prefix"]).alias("name_matched_cik")
+        )
         .select("symbol_era_id", "name_matched_cik")
     )
 
@@ -165,6 +212,101 @@ def _match_one_pass(
     )
     joined = normalized.join(name_index, on="normalized_name", how="left")
     return joined.select("symbol_era_id", pl.col("cik").alias("name_matched_cik"))
+
+
+def _build_prefix_buckets(
+    name_index: pl.DataFrame,
+) -> dict[str, list[tuple[tuple[str, ...], str]]]:
+    """Group the unambiguous name index by first token, so prefix matching only compares
+    names that could plausibly share a prefix relation instead of a full cross product
+    over every index row."""
+    buckets: dict[str, list[tuple[tuple[str, ...], str]]] = defaultdict(list)
+    for normalized_name, cik in zip(
+        name_index["normalized_name"].to_list(), name_index["cik"].to_list(), strict=True
+    ):
+        tokens = tuple(normalized_name.split())
+        if tokens:
+            buckets[tokens[0]].append((tokens, cik))
+    return buckets
+
+
+def _is_prefix_relation(query_tokens: tuple[str, ...], candidate_tokens: tuple[str, ...]) -> bool:
+    """True when one token tuple is a prefix of the other: either a clean whole-token
+    prefix (extra trailing tokens on the longer side, e.g. "HERTZ GLOBAL" + "HLDGS"), or
+    — only when both sides have the *same* token count and every token but the last
+    matches exactly — a same-position final-token truncation past `MIN_PARTIAL_TOKEN_CHARS`
+    that isn't a Roman-numeral sequel suffix. The shorter side must clear
+    `MIN_PREFIX_TOKENS` either way."""
+    shorter, longer = (
+        (query_tokens, candidate_tokens)
+        if len(query_tokens) <= len(candidate_tokens)
+        else (candidate_tokens, query_tokens)
+    )
+    if len(shorter) < MIN_PREFIX_TOKENS or shorter[:-1] != longer[: len(shorter) - 1]:
+        return False
+    shorter_last, longer_last = shorter[-1], longer[len(shorter) - 1]
+    if shorter_last == longer_last:
+        return True
+    if len(shorter) != len(longer):
+        # Token-count mismatch already means "extra trailing tokens" is the only allowed
+        # shape; the token at shorter's last position must match exactly, not partially.
+        return False
+    partial, full = (
+        (shorter_last, longer_last)
+        if len(shorter_last) <= len(longer_last)
+        else (longer_last, shorter_last)
+    )
+    if len(partial) < MIN_PARTIAL_TOKEN_CHARS or not full.startswith(partial):
+        return False
+    remainder = full[len(partial) :]
+    return any(ch not in ROMAN_NUMERAL_CHARS for ch in remainder)
+
+
+def _prefix_match_name(
+    normalized_query: str, buckets: dict[str, list[tuple[tuple[str, ...], str]]]
+) -> str | None:
+    """One normalized name -> one CIK, only when exactly one distinct CIK in the index
+    has a name satisfying `_is_prefix_relation` with the query (covers both OpenFIGI's
+    28-character name truncation and un-stripped abbreviations like `HLDGS` left over
+    after `normalize_name`). More than one distinct CIK satisfying the relation is
+    genuine ambiguity, not a match."""
+    query_tokens = tuple(normalized_query.split())
+    if not query_tokens:
+        return None
+    matched_ciks: set[str] = set()
+    for tokens, cik in buckets.get(query_tokens[0], ()):
+        if _is_prefix_relation(query_tokens, tokens):
+            matched_ciks.add(cik)
+            if len(matched_ciks) > 1:
+                return None
+    if len(matched_ciks) == 1:
+        return next(iter(matched_ciks))
+    return None
+
+
+def _match_prefix_pass(
+    frame: pl.DataFrame, name_index: pl.DataFrame, name_column: str
+) -> pl.DataFrame:
+    """Same shape as `_match_one_pass` (`symbol_era_id` -> `name_matched_cik`), but via
+    `_prefix_match_name` instead of an exact-equality join. Resolved once per distinct
+    normalized name rather than per row, since the era population can repeat the same
+    issuer name many times."""
+    buckets = _build_prefix_buckets(name_index)
+    normalized = frame.select("symbol_era_id", name_column).with_columns(
+        pl.col(name_column)
+        .map_elements(normalize_name, return_dtype=pl.String)
+        .alias("normalized_name")
+    )
+    lookup = {
+        name: _prefix_match_name(name, buckets)
+        for name in normalized["normalized_name"].unique().to_list()
+        if name
+    }
+    return normalized.with_columns(
+        pl.col("normalized_name")
+        .map_elements(lambda name: lookup.get(name), return_dtype=pl.String)
+        .alias("name_matched_cik")
+    ).select("symbol_era_id", "name_matched_cik")
 
 
 def require_columns(frame: pl.DataFrame, columns: tuple[str, ...]) -> None:

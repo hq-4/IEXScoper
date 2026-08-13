@@ -158,6 +158,111 @@ def test_match_by_name_plain_match_wins_over_stripped() -> None:
     assert matched["name_matched_cik"][0] == "1"
 
 
+def test_match_by_name_falls_back_to_prefix_match_on_truncated_name() -> None:
+    """OpenFIGI truncates `name` to 28 characters — "ALPHA METALLURGICAL RESOURCE" for
+    the real "Alpha Metallurgical Resources, Inc." — which blocks both exact passes but
+    is an unambiguous word-boundary prefix of the real SEC name."""
+    sec_tickers = pl.DataFrame(
+        {
+            "sec_cik": ["0001803599"],
+            "sec_name": ["Alpha Metallurgical Resources, Inc."],
+            "sec_ticker": ["AMR"],
+        }
+    )
+    index = build_name_cik_index(sec_tickers)
+    era_identity = pl.DataFrame(
+        {
+            "symbol_era_id": ["AMR#001"],
+            "identity_issuer": ["ALPHA METALLURGICAL RESOURCE"],
+        }
+    )
+
+    matched = match_by_name(era_identity, index)
+
+    assert matched["name_matched_cik"][0] == "1803599"
+
+
+def test_match_by_name_falls_back_to_prefix_match_on_abbreviation() -> None:
+    """`HLDGS` isn't a legal suffix `normalize_name` strips, so "HERTZ GLOBAL HLDGS INC"
+    only reduces to "HERTZ GLOBAL HLDGS" while the real SEC name "Hertz Global Holdings,
+    Inc." reduces to "HERTZ GLOBAL" (HOLDINGS is stripped) — an unambiguous prefix."""
+    sec_tickers = pl.DataFrame(
+        {
+            "sec_cik": ["0001657853"],
+            "sec_name": ["Hertz Global Holdings, Inc."],
+            "sec_ticker": ["HTZ"],
+        }
+    )
+    index = build_name_cik_index(sec_tickers)
+    era_identity = pl.DataFrame(
+        {"symbol_era_id": ["HTZ#001"], "identity_issuer": ["HERTZ GLOBAL HLDGS INC"]}
+    )
+
+    matched = match_by_name(era_identity, index)
+
+    assert matched["name_matched_cik"][0] == "1657853"
+
+
+def test_match_by_name_prefix_match_requires_min_two_tokens() -> None:
+    """The exact over-match risk that sank the rejected fuzzy matcher: a single generic
+    word (sharing a first-token bucket with a real company's longer name) must not
+    prefix-match on its own."""
+    sec_tickers = pl.DataFrame(
+        {
+            "sec_cik": ["0000000001"],
+            "sec_name": ["Bancorp Financial Services Inc"],
+            "sec_ticker": ["BFS"],
+        }
+    )
+    index = build_name_cik_index(sec_tickers)
+    era_identity = pl.DataFrame({"symbol_era_id": ["X#001"], "identity_issuer": ["Bancorp"]})
+
+    matched = match_by_name(era_identity, index)
+
+    assert matched["name_matched_cik"][0] is None
+
+
+def test_match_by_name_prefix_match_rejects_roman_numeral_sequel() -> None:
+    """"XYZ Acquisition Corp II" and "...Corp III" are genuinely different SPACs, not a
+    truncation of each other — even though "II" is a literal string prefix of "III".
+    Real data surfaced this exact shape (Spartacus/Texas Ventures Acquisition)."""
+    sec_tickers = pl.DataFrame(
+        {
+            "sec_cik": ["0000000001"],
+            "sec_name": ["Spartacus Acquisition Corp. II"],
+            "sec_ticker": ["SRAC"],
+        }
+    )
+    index = build_name_cik_index(sec_tickers)
+    era_identity = pl.DataFrame(
+        {"symbol_era_id": ["SRAC#001"], "identity_issuer": ["SPARTACUS ACQUISITION CORP I"]}
+    )
+
+    matched = match_by_name(era_identity, index)
+
+    assert matched["name_matched_cik"][0] is None
+
+
+def test_match_by_name_prefix_match_ambiguous_across_two_ciks() -> None:
+    """Two distinct real companies both prefix-matching the same query name is genuine
+    ambiguity, not a match to guess between."""
+    sec_tickers = pl.DataFrame(
+        {
+            "sec_cik": ["0000000001", "0000000002"],
+            "sec_name": ["Example Global Holdings One Inc", "Example Global Holdings Two Inc"],
+            "sec_ticker": ["EX1", "EX2"],
+        }
+    )
+    index = build_name_cik_index(sec_tickers)
+    era_identity = pl.DataFrame(
+        {"symbol_era_id": ["EX#001"], "identity_issuer": ["Example Global Holdings"]}
+    )
+
+    matched = match_by_name(era_identity, index)
+
+    assert matched["name_matched_cik"][0] is None
+
+
 def test_require_columns_raises_on_missing() -> None:
     with pytest.raises(ValueError, match="missing required columns"):
         require_columns(

@@ -146,7 +146,10 @@ def test_build_edgar_company_search_matches_limit_names(tmp_path: Path, monkeypa
         )
     )
 
-    assert len(calls) == 1
+    # "Alpha Corp" truncates to "Alpha" (2 words -> 1-word floor) before giving up, so an
+    # always-empty search makes 2 calls for this one name — `names_searched` below is the
+    # real signal that `--limit-names 1` only processed one name, not the call count.
+    assert len(calls) == 2
     assert result["summary"]["total_unresolved_names"] == 2
     assert result["summary"]["names_searched"] == 1
 
