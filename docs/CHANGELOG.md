@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- perf: parallelize the test suite with `pytest-xdist` (`-n auto` in the default
+  `addopts`, so the canonical `uv run -m pytest -q` command runs parallel with no flag
+  change needed). Verified safe first: every test's file I/O is `tmp_path`-scoped, no
+  test `chdir`s the process, and no test mutates a shared real path or unguarded env var.
+  A real, if latent, test bug surfaced immediately on the first parallel run —
+  `test_workflow_emits_structured_progress_logs` set `caplog`'s level on the stale
+  pre-`utils/legacy/` reorg logger name (`"utils.sec_high_impact_workflow"` instead of
+  the real `"utils.legacy.sec_high_impact_workflow"`); it only ever passed under strict
+  serial execution because an earlier test's global root-logger level (mutable,
+  process-wide) happened to leak through in that fixed order. Fixed the logger name, not
+  the symptom. Wall-clock: 494 tests, ~10.8s serial -> ~6.5s parallel on this machine. All
+  494 tests pass 3x in a row post-fix; ruff/bandit clean. `[PA][REH][CDiP]`
+
 - fix: tolerate two spacing variants in `sec_name_cik_lookup` normalization that were blocking
   otherwise-exact matches — `DESCRIPTOR_PATTERNS`' `-CLASS [A-Z]$` pattern now mirrors the
   already-tolerant `-CL A` pattern's spacing (`"SWEETGREEN INC - CLASS A"`, `"FIRST DATA CORP-

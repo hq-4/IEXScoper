@@ -28,6 +28,7 @@ dev = [
   "ruff>=0.6.0",
   "bandit>=1.7.0",
   "tqdm>=4.62.3",
+  "pytest-xdist>=3.8.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -38,7 +39,10 @@ line-length = 100
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-q"
+# "-n auto" (pytest-xdist) runs the suite across all available CPU cores. Safe here:
+# every test's file I/O is scoped to the `tmp_path` fixture, nothing chdirs the process,
+# and no test mutates a shared real path (`reports/`, `data/`) or unguarded env var.
+addopts = "-q -n auto"
 
 [tool.bandit]
 skips = ["B101"]

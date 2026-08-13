@@ -164,7 +164,12 @@ def test_workflow_emits_structured_progress_logs(tmp_path: Path, caplog: Any) ->
         sleep_seconds=0,
     )
 
-    caplog.set_level(logging.INFO, logger="utils.sec_high_impact_workflow")
+    # Stale pre-`utils/legacy/` reorg logger name would silently no-op here — the real
+    # logger (see `utils/legacy/sec_high_impact_logging.py`) is
+    # "utils.legacy.sec_high_impact_workflow". This test only passed under strict serial
+    # execution because an earlier test's global root-logger level (mutable process-wide
+    # state) happened to leak through; parallelizing the suite (pytest-xdist) surfaced it.
+    caplog.set_level(logging.INFO, logger="utils.legacy.sec_high_impact_workflow")
     run_high_impact_workflow(config, NoSearchClient(), EmptySubmissionsClient())
 
     events = {getattr(record, "event", "") for record in caplog.records}
