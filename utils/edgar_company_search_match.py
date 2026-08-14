@@ -21,10 +21,12 @@ false-positive risk that motivated the floor (see the `CONFLUENT` case below): q
 `HOLOGIC`, `ZENDESK`, and `ANAPLAN` each found the real registrant as a validated match
 (`Hologic`'s own single-word search actually surfaces an unrelated blank-SIC limited
 partnership first, correctly rejected by the guard below rather than accepted); querying
-`MYLAN` returned 12 candidates, over `MAX_CANDIDATES_TO_VALIDATE`, so it's reported
-ambiguous exactly as the count guard already handles today, not a new risk. The 1-word
-floor is safe specifically because the guards below don't change — they were always
-what made a broad query trustworthy, not the word count.
+`MYLAN` returned 12 candidates, over the `MAX_CANDIDATES_TO_VALIDATE` cap at the time
+(8), so it was reported ambiguous exactly as the count guard already handled then, not a
+new risk — the cap has since been raised (Phase 15 below), and `MYLAN` now validates
+cleanly to a single real candidate, CIK 69499. The 1-word floor is safe specifically
+because the guards below don't change — they were always what made a broad query
+trustworthy, not the word count.
 
 A truncated query is more permissive, so it usually returns *more* candidates, not
 fewer — every candidate a query returns is validated against the real registrant name
@@ -44,9 +46,11 @@ the collision didn't — so a candidate with no SIC is never accepted, even if i
 matches exactly. This is free (the SIC is already fetched during validation), and safe
 by the same logic as everything else here: better genuinely unresolved than
 confidently wrong. (`CONFLUENT` alone, re-checked live after lowering the query floor,
-actually returns 9 candidates — over `MAX_CANDIDATES_TO_VALIDATE` — so `CFLT` still
-correctly stays unresolved today, just via the candidate-count guard instead of the word
-floor; the blank-SIC guard would also have rejected the shell on its own if it hadn't.)
+returned 9 candidates at the time — over the `MAX_CANDIDATES_TO_VALIDATE` cap then in
+effect (8) — so `CFLT` stayed correctly unresolved via the candidate-count guard, not a
+regression; once that cap was raised (Phase 15 below), all 9 got validated and exactly
+one — the real Confluent, Inc., CIK 1699838 — passed, with the blank-SIC shell correctly
+rejected by the guard right above rather than by candidate count.)
 
 A candidate also validates against any of its SEC `formerNames` entries, not just its
 *current* registrant name — a large share of real single-candidate hits were being
@@ -96,10 +100,25 @@ being `True` is treated as "can't tell" (`ACTIVITY_UNKNOWN`) rather than fetched
 `_validate_candidates` no longer stops at 2 validated candidates for the same reason —
 some real ties involve a 3rd+ candidate that needs to be seen to disambiguate correctly.
 Quantified from the existing request cache before shipping (zero network calls): of the
-74 names that reach a genuine 2-way validated tie, 38 resolve via this guard. The larger
-`ambiguous_candidates` bucket (over `MAX_CANDIDATES_TO_VALIDATE`, never individually
-validated at all) is a different, larger, out-of-scope problem this doesn't touch.
-[CA][IV][REH][KBT]
+74 names that reach a genuine 2-way validated tie, 38 resolve via this guard.
+
+`MAX_CANDIDATES_TO_VALIDATE` was raised from 8 to 20 once the filing-activity guard gave
+a real way to disambiguate a wider candidate set safely — the risk the original 8-cap
+guarded against was never really "validating more candidates is dangerous" (validation
+is exact-match, so a wrong candidate simply fails to validate, same as ever), it was
+"validating a implausibly generic query's candidates is wasted request cost." Unlike the
+filing-activity guard, this one genuinely couldn't be quantified for free first: names in
+the 9-20 candidate range had *never* been validated at all under the old cap (the count
+guard returns before fetching any of them), so there was nothing cached to replay.
+Shipped as a real, rate-limited live run instead, same request budget per candidate as
+always. Net result: 20 more names matched (18 by ordinary single-candidate validation, 2
+via the filing-activity tie-break), plus a valuable reclassification — 210 previously
+"ambiguous, never checked" names turned out to validate zero real candidates at all once
+actually looked at, correctly reclassified as `no_validated_match` rather than sitting in
+an falsely-alarming ambiguous bucket. This also finally resolved the two running examples
+this docstring has cited since Phase 5/7/11 as "correctly staying unresolved" — `CFLT`
+and `MYLAN` — both purely because their candidate counts (9 and 12) had never before fit
+under the cap, not because of any new logic. [CA][IV][REH][KBT]
 """
 
 from __future__ import annotations
@@ -125,7 +144,7 @@ ACTIVITY_PLAUSIBLE = "plausible"
 ACTIVITY_DISJOINT = "disjoint"
 ACTIVITY_UNKNOWN = "unknown"
 
-MAX_CANDIDATES_TO_VALIDATE = 8
+MAX_CANDIDATES_TO_VALIDATE = 20
 MIN_QUERY_WORDS = 1
 
 

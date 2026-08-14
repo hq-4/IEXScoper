@@ -535,6 +535,35 @@ correct. Open for follow-up: the deferred 81-name existing-match audit; the 1,26
 a separate larger phase); `filings.files` shard walking (measured to unblock exactly 1 name today,
 not built). [CA][IV][REH][CDiP][KBT]
 
+**Phase 15 (raise the candidate-validation cap).** Took up Phase 14's flagged follow-up: with the
+filing-activity guard proven safe at scale, `MAX_CANDIDATES_TO_VALIDATE` raised 8 -> 20 in
+`edgar_company_search_match.py`. The risk the original cap guarded against was never "validating
+more candidates is dangerous" (validation is exact-match; a wrong candidate simply fails to
+validate) — it was "validating an implausibly generic query's candidates wastes requests." Unlike
+every other phase, this one had no free quantification path: names with 9-20 candidates had never
+been validated at all under the old cap (the count guard returns before fetching any of them), so
+nothing sat in the cache to replay (verified: 972 cache misses across that population on the first
+attempt). Shipped as a genuine ~19-minute live SEC run instead, at the same per-candidate request
+budget as always.
+
+Real run: matched 2,495/4,339 -> **2,515/4,339** (+20: 18 ordinary single-candidate validations, 2
+more via the filing-activity tie-break); `ambiguous_candidates` 1,296 -> **1,066**;
+`no_validated_match` 494 -> **704** (+210, a valuable reclassification, not a regression — names
+previously sitting in "ambiguous, never actually checked" turned out, once validated, to contain
+zero real matching candidates, correctly reclassified rather than left in a falsely-alarming
+bucket). Distinct CIKs resolved 8,500 -> **8,517**; manual-research worklist 11,707 -> **11,683
+eras**, 169.7M -> **162.8M trade rows**. Notably resolved the two running examples this module's
+own docstring has cited since Phase 5/7/11 as "correctly staying unresolved" — `CFLT` (the real
+Confluent, Inc., CIK 1699838) and `MYLAN NV` (CIK 69499) — both purely because their candidate
+counts (9 and 12) had simply never fit under the cap before, not any new logic. Spot-checked
+additional new matches (`IAA INC` -> IAA, Inc., real, spun off from KAR Auction Services 2019;
+`NCI INC-A` -> NCI, Inc., a real government IT services company) — correct. 2 tests updated to
+derive their over-cap candidate count from the real constant rather than a hardcoded `9`, so they
+stay correct regardless of its value; 510 tests still pass, ruff/bandit clean. Open for follow-up:
+the still-deferred 81-name existing-match audit; whether to raise the cap further — 504 of the
+remaining 1,066 ambiguous names sit at the 100-candidate EDGAR API page cap, genuinely too generic
+to be worth validating at any reasonable cap. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.
