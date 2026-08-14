@@ -119,6 +119,223 @@ def test_match_issuer_name_two_candidates_both_validate_is_genuinely_ambiguous(
     assert result["matched_cik"] is None
 
 
+def _filings(dates: list[str], *, has_older_shards: bool = False) -> dict[str, Any]:
+    """Real shape: `filings.recent` is parallel columnar arrays."""
+    return {
+        "recent": {"form": ["10-K"] * len(dates), "filingDate": dates},
+        "files": [{"name": "shard-001.json"}] if has_older_shards else [],
+    }
+
+
+ERA_SPAN = ("2016-12-12", "2023-11-22")
+
+
+def test_match_issuer_name_disambiguates_two_way_tie_via_filing_activity(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The real case this targets: two genuinely different registrants both validate by
+    name (the real Continental Resources vs an unrelated "Continental Resources Group,
+    Inc." shell) — but only one of them has any real filing activity overlapping the
+    era. The shell's last filing (a 15-12G deregistration) predates the era entirely."""
+    atom = _atom(["732834", "1430975"])
+    submissions = {
+        "732834": {
+            "sic": "1311",
+            "sicDescription": "Crude Petroleum & Natural Gas",
+            "name": "Continental Resources, Inc.",
+            "filings": _filings(["2009-12-28", "2018-05-01", "2026-07-31"]),
+        },
+        "1430975": {
+            "sic": "1000",
+            "sicDescription": "Metal Mining",
+            "name": "Continental Resources, Inc.",
+            "filings": _filings(["2008-06-30", "2013-03-05"]),
+        },
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Continental Resources": atom}, submissions),
+    )
+
+    result = match_issuer_name(
+        _client(tmp_path), "Continental Resources Inc", era_span=ERA_SPAN
+    )
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "732834"
+    assert result["match_basis"] == "filing_activity_tiebreak"
+
+
+def test_match_issuer_name_filing_activity_both_plausible_stays_ambiguous(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    atom = _atom(["1", "2"])
+    submissions = {
+        "1": {"sic": "1000", "sicDescription": "A", "name": "Ambiguous Co",
+              "filings": _filings(["2018-01-01"])},
+        "2": {"sic": "2000", "sicDescription": "B", "name": "Ambiguous Co",
+              "filings": _filings(["2019-01-01"])},
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_without_era_span_ignores_filing_activity(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Backwards compatibility: no `era_span` supplied stays byte-identical to today's
+    ambiguous outcome, even with clearly disjoint filing histories present."""
+    atom = _atom(["732834", "1430975"])
+    submissions = {
+        "732834": {
+            "sic": "1311", "sicDescription": "A", "name": "Continental Resources, Inc.",
+            "filings": _filings(["2009-12-28", "2018-05-01"]),
+        },
+        "1430975": {
+            "sic": "1000", "sicDescription": "B", "name": "Continental Resources, Inc.",
+            "filings": _filings(["2008-06-30", "2013-03-05"]),
+        },
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Continental Resources": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Continental Resources Inc")
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_quiet_filer_inside_bracketing_history_stays_ambiguous(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The key fail-closed case: a candidate whose filing history brackets the era but
+    has no filing landing inside the window is `ACTIVITY_UNKNOWN`, not rejected — a real
+    filer can legitimately be quiet across a short era."""
+    atom = _atom(["1", "2"])
+    submissions = {
+        "1": {
+            "sic": "1000", "sicDescription": "A", "name": "Ambiguous Co",
+            "filings": _filings(["2010-01-01", "2025-01-01"]),  # brackets, nothing inside
+        },
+        "2": {
+            "sic": "2000", "sicDescription": "B", "name": "Ambiguous Co",
+            "filings": _filings(["2005-01-01", "2006-01-01"]),  # provably disjoint
+        },
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_unfetched_older_shard_stays_ambiguous(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A candidate whose known filings all postdate the era, but with older shard
+    history that wasn't fetched, is `ACTIVITY_UNKNOWN` — "didn't look back far enough"
+    is never treated as "no activity"."""
+    atom = _atom(["1", "2"])
+    submissions = {
+        "1": {
+            "sic": "1000", "sicDescription": "A", "name": "Ambiguous Co",
+            "filings": _filings(["2024-01-01"], has_older_shards=True),
+        },
+        "2": {
+            "sic": "2000", "sicDescription": "B", "name": "Ambiguous Co",
+            "filings": _filings(["2005-01-01"]),  # provably disjoint, no older shard
+        },
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_validates_all_candidates_before_tiebreak(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The early break at 2 validated candidates is gone: a 3rd name-validating
+    candidate is the real one, so the tie-break needs to see it."""
+    atom = _atom(["1", "2", "3"])
+    submissions = {
+        "1": {"sic": "1000", "sicDescription": "A", "name": "Ambiguous Co",
+              "filings": _filings(["2005-01-01"])},
+        "2": {"sic": "2000", "sicDescription": "B", "name": "Ambiguous Co",
+              "filings": _filings(["2006-01-01"])},
+        "3": {"sic": "3000", "sicDescription": "C", "name": "Ambiguous Co",
+              "filings": _filings(["2018-01-01"])},
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "3"
+
+
+def test_match_issuer_name_single_candidate_ignores_filing_activity(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Critical regression guard: a single validated candidate is still matched even
+    when its filing history is disjoint from a supplied `era_span` — the guard only ever
+    breaks an existing tie, it never demotes the single-candidate path."""
+    atom = _atom(["104599"])
+    submissions = {
+        "104599": {
+            "sic": "5731", "sicDescription": "Retail-Electronics", "name": "CIRCUIT CITY STORES INC",
+            "filings": _filings(["2005-01-01"]),  # disjoint from ERA_SPAN
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Circuit City Stores": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Circuit City Stores", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "104599"
+    assert result["match_basis"] == "single_validated_candidate"
+
+
+def test_match_issuer_name_both_candidates_disjoint_stays_ambiguous(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    atom = _atom(["1", "2"])
+    submissions = {
+        "1": {"sic": "1000", "sicDescription": "A", "name": "Ambiguous Co",
+              "filings": _filings(["2005-01-01"])},
+        "2": {"sic": "2000", "sicDescription": "B", "name": "Ambiguous Co",
+              "filings": _filings(["2006-01-01"])},
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["matched_cik"] is None
+
+
 def test_match_issuer_name_single_candidate_matches_on_first_query(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

@@ -1,5 +1,68 @@
 # Task List
 
+- 2026-08-14: SIC/sector classification, Phase 14 (Tier E filing-activity tie-break).
+  User: "look at all of these failed methods and think of better ways to resolve this
+  then execute." An Explore agent surveyed the existing SEC resolution tooling for a
+  reusable "was this CIK active on date X" signal and found `filings.recent` (and
+  `filings.files` for older shard history) sitting in the exact same submissions payload
+  `fetch_sic` already fetches for every candidate — completely unread until now. For the
+  real Continental Resources, Inc. (CIK 732834, ticker `CLR`, SIC 1311): filings span
+  2009-12-28 through 2026-07-31 continuously, plus a shard back to 1998, covering the
+  entire IEX TOPS data era (2016-12-12 onward). Its Phase-13 collision partner, an
+  unrelated junior-mining shell "Continental Resources Group, Inc." (CIK 1430975, SIC
+  1000 — a *real*, non-blank SIC, so the existing blank-SIC guard doesn't apply): last
+  filing a `15-12G` voluntary deregistration on 2013-03-05, permanently dark since —
+  structurally impossible to be the trading entity for any era after ~2013.
+  A Plan agent then ran a read-only cached-data probe (reading
+  `data/resolution/evidence_registry.sqlite` directly via `EvidenceRegistry.get(...)`,
+  never constructing a `CachedPrimaryClient`, so zero possibility of a network call) and
+  found real yield this time, unlike Phase 13's ticker attempt: of 1,340
+  `ambiguous_candidates` names, 74 enter via a genuine 2-way validated name tie; ~38 of
+  those resolve under a strict accept rule, confirmed correct for `CLR`. Scope confirmed
+  with the user: tie-break only, touching only the already-ambiguous names — the same
+  rule, applied to the 2,453 already-`matched` names, would separately flag 81 as having
+  disjoint filing history (e.g. `AETNA INC -> 1013761`, likely a genuine pre-existing
+  false positive — the operating Aetna for 2016-2018 eras is `1122304`) and 42 more as
+  inconclusive; that audit is explicitly deferred to a future phase, not touched here.
+  Built `sec_sic_client.fetch_filing_activity` (reuses the identical cache key `fetch_sic`
+  already populated — zero new network cost in practice), `edgar_company_search_match`'s
+  `_filing_activity_verdict` (three outcomes — plausible / provably disjoint / can't-tell
+  — a candidate whose history merely brackets the era without a filing landing inside it
+  is deliberately `unknown`, never rejected, since a real filer can be quiet across a
+  short window) and `_disambiguate_by_filing_activity` (accepts only when every tied
+  candidate gets a definite verdict and exactly one is plausible), wired into
+  `match_issuer_name` via a new optional `era_span` parameter mirroring the (reverted)
+  Phase 13 `symbol` shape. `_validate_candidates` no longer stops at 2 validated
+  candidates — checked live: 0 names currently sit at 3-8 validated candidates, proof the
+  break was binding; removing it cost 3 quantification-time accepts (41->38) that were
+  only "unambiguous" because a real 3rd candidate was never looked at, correctly traded
+  for full visibility into every genuine tie.
+  `build_edgar_company_search_matches.unresolved_issuer_era_spans` supplies the per-name
+  `(min(first_day), max(last_day))` union across every unresolved era sharing that name
+  (name-deduped, same granularity the module already runs at — a wider union only ever
+  makes the guard more permissive, never causes a false accept). 16 new tests (5
+  filing-activity extraction incl. a "reuses cached payload, zero new requests" proof, 8
+  tie-break scenarios incl. the CLR end-to-end case and the critical single-candidate
+  regression guard, 3 era-span plumbing); 510 pass (was 494); ruff/bandit clean.
+  Quantified via a throwaway script (not committed) against cached data before writing
+  the real integration — zero network calls, positive control (`CONTINENTAL RESOURCES
+  INC/OK -> 732834`, shell rejected) confirmed passing.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`, ~45s wall-clock, cache-heavy): **43 names**
+  resolved via `filing_activity_tiebreak` (slightly above the cache-only floor of ~38, as
+  expected — some ties had an uncached 3rd+ candidate the live run could finally see).
+  Tier E matched 2,453/4,342 -> **2,495/4,339**; distinct CIKs resolved 8,470 -> **8,500**;
+  manual-research worklist 11,791 -> **11,707 eras**, 180.8M -> **169.7M trade rows**.
+  Spot-checked all 43 newly-resolved matches by eye against known real companies (Raytheon
+  Company SIC 3812, CIT Group Inc SIC 6021, Mead Johnson Nutrition SIC 2000, Nuance
+  Communications SIC 7372, Sealed Air Corp SIC 2820, Callon Petroleum SIC 1311, IAC Inc
+  SIC 7370, Rexnord Corp SIC 3560, Vivint Smart Home SIC 7381, GCI Liberty SIC 4813, MB
+  Financial Inc SIC 6021, Renewable Energy Group SIC 2860, Welbilt Inc SIC 3580, among
+  others) — all correct. Next candidates, not started: the deferred 81-name existing-match
+  audit; the 1,266-name `>MAX_CANDIDATES_TO_VALIDATE` bucket (filing activity is a
+  plausible enabler for raising that cap, a separate larger phase); `filings.files` shard
+  walking (measured to unblock exactly 1 name today, not built). `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-13: SIC/sector classification, Phase 13 attempt (ticker-based ambiguity
   tie-break) — built, tested, then reverted after live quantification showed ~0 real
   yield. User: "what else is next," offered a scoped choice between the

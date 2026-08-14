@@ -6,7 +6,16 @@ periods; that dedup alone is usually a meaningful cut in request count on top of
 per-name search+validate design already being as cheap as it can be (one search
 request, plus a SIC/name-validation request that's a free cache hit whenever the CIK
 was already seen by the main SIC pass). No dry-run/apply gate — read-only against SEC,
-writes regenerable `reports/` output. [CA][REH][KBT]
+writes regenerable `reports/` output.
+
+`unresolved_issuer_era_spans` also derives each name's overall `(first_day, last_day)`
+span — the union across every unresolved era sharing that name, not any single era's own
+window — passed through to `match_issuer_name`'s filing-activity tie-break for genuine
+name collisions between two real registrants. Union rather than per-era, since this
+module runs at the name-deduped, not per-era, granularity: a wider span only ever makes
+the tie-break *more* permissive (more candidates read as plausible), never less, so it
+can't cause a false rejection, just occasionally leave a genuine tie unresolved rather
+than guess which era's exact window applies. [CA][REH][KBT]
 """
 
 from __future__ import annotations
@@ -49,6 +58,7 @@ RESULT_SCHEMA = {
     "candidate_name": pl.String,
     "sic": pl.String,
     "sic_description": pl.String,
+    "match_basis": pl.String,
 }
 
 
@@ -94,8 +104,9 @@ def build_edgar_company_search_matches(config: EdgarSearchConfig) -> dict[str, A
     validate_inputs(config)
     config.output_root.mkdir(parents=True, exist_ok=True)
     names = unresolved_issuer_names(config.eras_sector_enriched_path)
+    era_spans = unresolved_issuer_era_spans(config.eras_sector_enriched_path)
     search_names = names[: config.limit_names] if config.limit_names is not None else names
-    rows = [] if config.skip_fetch else _search_all(config, search_names)
+    rows = [] if config.skip_fetch else _search_all(config, search_names, era_spans)
     matches = pl.DataFrame(rows, schema=RESULT_SCHEMA) if rows else pl.DataFrame(schema=RESULT_SCHEMA)
     summary = build_summary(len(names), matches)
     write_outputs(config.output_root, matches, summary)
@@ -122,19 +133,52 @@ def unresolved_issuer_names(path: Path) -> list[str]:
     writing just the residual would silently drop every match a prior run already
     found. Cached search/validation responses make the redundant-looking rerun over
     already-matched names cheap, not wasteful."""
+    return sorted(_unresolved_pool(path)["identity_issuer"].unique().drop_nulls().to_list())
+
+
+def unresolved_issuer_era_spans(path: Path) -> dict[str, tuple[str, str]]:
+    """`identity_issuer` -> `(min(first_day), max(last_day))` across every era in the
+    same unresolved pool sharing that name, converted from the on-disk `YYYYMMDD` strings
+    to ISO `YYYY-MM-DD` so string comparison against SEC's `filingDate` works. A name
+    whose dates don't parse cleanly (wrong length) is simply absent from the dict, which
+    makes `match_issuer_name`'s `era_span` default to `None` — today's behavior, a safe
+    fallback rather than a guess. Degrades gracefully to no span data (empty dict) if
+    `first_day`/`last_day` aren't columns at all, same "optional side-input" philosophy
+    as `sector_enrichment_inputs.py`."""
+    pool = _unresolved_pool(path)
+    if "first_day" not in pool.columns or "last_day" not in pool.columns:
+        return {}
+    frame = pool.filter(
+        pl.col("first_day").str.len_chars().eq(8) & pl.col("last_day").str.len_chars().eq(8)
+    )
+    spans = frame.group_by("identity_issuer").agg(
+        pl.col("first_day").min().alias("span_start"), pl.col("last_day").max().alias("span_end")
+    )
+    return {
+        row["identity_issuer"]: (_iso_date(row["span_start"]), _iso_date(row["span_end"]))
+        for row in spans.to_dicts()
+    }
+
+
+def _iso_date(yyyymmdd: str) -> str:
+    return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
+
+
+def _unresolved_pool(path: Path) -> pl.DataFrame:
     frame = pl.read_parquet(path)
     not_resolved_by_earlier_tiers = pl.col("resolved_cik").is_null() | (
         pl.col("cik_source") == TIER_E_SOURCE
     )
-    pool = frame.filter(
+    return frame.filter(
         not_resolved_by_earlier_tiers
         & pl.col("identity_issuer").is_not_null()
         & (pl.col("sic_coverage_status") != "fund_no_sic_needed")
     )
-    return sorted(pool["identity_issuer"].unique().drop_nulls().to_list())
 
 
-def _search_all(config: EdgarSearchConfig, names: list[str]) -> list[dict[str, Any]]:
+def _search_all(
+    config: EdgarSearchConfig, names: list[str], era_spans: dict[str, tuple[str, str]]
+) -> list[dict[str, Any]]:
     if not names:
         return []
     logger = get_logger(__name__)
@@ -149,7 +193,14 @@ def _search_all(config: EdgarSearchConfig, names: list[str]) -> list[dict[str, A
         client = CachedPrimaryClient(network_config, registry)
         results = []
         for index, name in enumerate(names, start=1):
-            results.append(match_issuer_name(client, name, max_age_days=config.max_age_days))
+            results.append(
+                match_issuer_name(
+                    client,
+                    name,
+                    max_age_days=config.max_age_days,
+                    era_span=era_spans.get(name),
+                )
+            )
             if index % LOG_EVERY == 0 or index == len(names):
                 logger.info(
                     "EDGAR company search progress",
@@ -164,14 +215,14 @@ def _search_all(config: EdgarSearchConfig, names: list[str]) -> list[dict[str, A
 
 
 def build_summary(total_names: int, matches: pl.DataFrame) -> dict[str, Any]:
+    matched = matches.filter(pl.col("match_status") == STATUS_MATCHED) if matches.height else matches
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_unresolved_names": total_names,
         "names_searched": matches.height,
         "status_counts": _counts(matches, "match_status") if matches.height else {},
-        "matched_count": int((matches["match_status"] == STATUS_MATCHED).sum())
-        if matches.height
-        else 0,
+        "matched_count": matched.height,
+        "match_basis_counts": _counts(matched, "match_basis") if matched.height else {},
     }
 
 
@@ -202,6 +253,8 @@ def write_markdown(path: Path, matches: pl.DataFrame, summary: dict[str, Any]) -
         "",
     ]
     lines.extend(f"- `{key}`: `{value}`" for key, value in summary["status_counts"].items())
+    lines.extend(["", "## Matched-Via Breakdown", ""])
+    lines.extend(f"- `{key}`: `{value}`" for key, value in summary["match_basis_counts"].items())
     lines.extend(["", "## Sample Non-Matches (for review)", ""])
     non_matches = matches.filter(pl.col("match_status") != STATUS_MATCHED).head(20)
     lines.extend(

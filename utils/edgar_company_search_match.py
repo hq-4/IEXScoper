@@ -58,7 +58,48 @@ Same authority as `entity_name` (same already-fetched SEC submissions payload, j
 field nobody read before), same SIC-must-exist guard, so no new trust assumption:
 checked live on the real worklist before shipping — 515 names / 724 eras / 46.0M trade
 rows recoverable this way, with 9 names correctly staying ambiguous because more than one
-candidate's history matches. [CA][IV][REH][KBT]
+candidate's history matches.
+
+A genuine 2+-way name collision (real registrants, both with a real SIC, both matching
+the query name — the blank-SIC guard above can't help when both candidates actually have
+one) can still sometimes be broken by whether a candidate's real SEC filing history
+(`sec_sic_client.fetch_filing_activity`) is even consistent with it having been the
+operating entity during the era: "Continental Resources, Inc." (CIK 732834, ticker `CLR`,
+SIC 1311) collides by name with an unrelated same-named junior-mining shell,
+"Continental Resources Group, Inc." (CIK 1430975, SIC 1000 — a real, non-blank SIC, so
+the blank-SIC guard doesn't apply). The shell's last SEC filing is a `15-12G` voluntary
+deregistration filed 2013-03-05; it has been permanently dark since, so it cannot
+possibly be the real trading entity for any era in this repo's IEX TOPS data (2016-12-12
+onward), while the real Continental Resources filed continuously through the whole
+window. `_filing_activity_verdict` only ever accepts when it can *prove* a candidate is
+disjoint from the era (its newest filing predates the era's start, or every known filing
+postdates the era's end with no older shard history left uncertain) — a candidate whose
+history merely brackets the era without a filing actually landing inside it is left
+`ACTIVITY_UNKNOWN`, not rejected, since a real filer can legitimately be quiet across a
+short window (some worklist eras span under two weeks). `_disambiguate_by_filing_activity`
+then only accepts when every tied candidate got a definite verdict and exactly one came
+back plausible — a single `UNKNOWN` anywhere blocks acceptance, same "better genuinely
+unresolved than confidently wrong" posture as everything else here.
+
+A prior attempt at this same problem tried SEC's `tickers` field as the tie-break signal
+instead and found **zero real yield**: `tickers` only reflects a registrant's *current*
+listing state, and this entire population is, by construction, companies no longer
+trading — the real Continental Resources itself was taken private in 2023 and shows
+`tickers: []` today, identical to the unrelated shell it's tied with. Filing history
+survives delisting where current-listing state cannot: a company still files its
+deregistration paperwork on its way out, and that's exactly the signal that distinguishes
+it from a shell that's simply been dormant for over a decade. `filings.files` shard-
+walking for older history beyond `filings.recent`'s ~1000-row window was evaluated and
+not built: measured against the real worklist, it would unblock exactly one additional
+name — not worth the added network cost and complexity for that yield; `has_older_shards`
+being `True` is treated as "can't tell" (`ACTIVITY_UNKNOWN`) rather than fetched.
+`_validate_candidates` no longer stops at 2 validated candidates for the same reason —
+some real ties involve a 3rd+ candidate that needs to be seen to disambiguate correctly.
+Quantified from the existing request cache before shipping (zero network calls): of the
+74 names that reach a genuine 2-way validated tie, 38 resolve via this guard. The larger
+`ambiguous_candidates` bucket (over `MAX_CANDIDATES_TO_VALIDATE`, never individually
+validated at all) is a different, larger, out-of-scope problem this doesn't touch.
+[CA][IV][REH][KBT]
 """
 
 from __future__ import annotations
@@ -69,7 +110,7 @@ from utils.resolution_v2_network import CachedPrimaryClient, PrimarySourceError
 from utils.sec_company_search_client import search_company_ciks
 from utils.sec_name_cik_lookup import normalize_name, strip_security_descriptors
 from utils.sec_sic_client import STATUS_FETCH_ERROR as SIC_STATUS_FETCH_ERROR
-from utils.sec_sic_client import fetch_sic
+from utils.sec_sic_client import fetch_filing_activity, fetch_sic
 
 STATUS_MATCHED = "matched"
 STATUS_NO_CANDIDATES = "no_candidates"
@@ -77,19 +118,37 @@ STATUS_AMBIGUOUS = "ambiguous_candidates"
 STATUS_NO_VALIDATED_MATCH = "no_validated_match"
 STATUS_FETCH_ERROR = "fetch_error"
 
+BASIS_SINGLE_CANDIDATE = "single_validated_candidate"
+BASIS_FILING_ACTIVITY = "filing_activity_tiebreak"
+
+ACTIVITY_PLAUSIBLE = "plausible"
+ACTIVITY_DISJOINT = "disjoint"
+ACTIVITY_UNKNOWN = "unknown"
+
 MAX_CANDIDATES_TO_VALIDATE = 8
 MIN_QUERY_WORDS = 1
 
 
 def match_issuer_name(
-    client: CachedPrimaryClient, issuer_name: str, *, max_age_days: int = 90
+    client: CachedPrimaryClient,
+    issuer_name: str,
+    *,
+    max_age_days: int = 90,
+    era_span: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """One issuer name -> one result row (always the same set of keys, regardless of
     outcome — see `_result`). Never raises; every outcome is a structured status so a
     batch run over thousands of names continues past a transient SEC 5xx/timeout on one
     name instead of aborting and losing every result already collected — nothing is
     cached on a `PrimarySourceError`, so a `fetch_error` name is retried, not
-    permanently skipped, on the next run."""
+    permanently skipped, on the next run.
+
+    `era_span` is optional and only ever used as a tie-break, never a trust shortcut:
+    when 2+ candidates all validate (a genuine name collision between real registrants),
+    and the caller can supply the `(first_day, last_day)` window every era sharing this
+    issuer name actually traded in, `_disambiguate_by_filing_activity` may still resolve
+    it — see that function and the module docstring for the full Continental Resources
+    case this targets. No `era_span` supplied stays byte-identical to today's behavior."""
     saw_any_candidates = False
     for query in _search_query_variants(issuer_name):
         try:
@@ -114,8 +173,21 @@ def match_issuer_name(
                 candidate_name=matched_name,
                 sic=sic_result.get("sic"),
                 sic_description=sic_result.get("sic_description"),
+                match_basis=BASIS_SINGLE_CANDIDATE,
             )
         if len(validated) > 1:
+            resolved = _disambiguate_by_filing_activity(client, validated, era_span, max_age_days)
+            if resolved is not None:
+                cik, sic_result, matched_name = resolved
+                return _result(
+                    issuer_name,
+                    STATUS_MATCHED,
+                    matched_cik=cik,
+                    candidate_name=matched_name,
+                    sic=sic_result.get("sic"),
+                    sic_description=sic_result.get("sic_description"),
+                    match_basis=BASIS_FILING_ACTIVITY,
+                )
             return _result(issuer_name, STATUS_AMBIGUOUS, candidate_count=len(validated))
         # Zero candidates validated at this query — try a shorter one.
     status = STATUS_NO_VALIDATED_MATCH if saw_any_candidates else STATUS_NO_CANDIDATES
@@ -153,9 +225,14 @@ def _validate_candidates(
 ) -> list[tuple[str, dict[str, Any], str]] | None:
     """Every candidate's real registrant name (reusing `fetch_sic` — often a free cache
     hit) is checked against the query name — current name first, then any SEC
-    `formerNames` entry — and stops early once 2 validate, since that already proves
-    ambiguity without checking the rest. Returns `None` (not an empty list) on a fetch
-    error, so the caller reports `fetch_error` instead of a false negative."""
+    `formerNames` entry. Checks the *entire* candidate list (still bounded by the caller's
+    `MAX_CANDIDATES_TO_VALIDATE` cap, so no new network ceiling) rather than stopping at
+    the first 2 validated matches: `_disambiguate_by_filing_activity` needs to see every
+    tied candidate to know whether exactly one is plausible, and stopping early risked
+    missing the real match entirely if it happened to be candidate #3+ (measured live: 3
+    of the real worklist's 2-way ties were only "unambiguous" because a genuine 3rd
+    validating candidate was never looked at). Returns `None` (not an empty list) on a
+    fetch error, so the caller reports `fetch_error` instead of a false negative."""
     validated: list[tuple[str, dict[str, Any], str]] = []
     for cik in candidates:
         sic_result = fetch_sic(client, cik, max_age_days=max_age_days)
@@ -173,8 +250,6 @@ def _validate_candidates(
         matched_name = _matching_candidate_name(issuer_name, sic_result)
         if matched_name is not None:
             validated.append((cik, sic_result, matched_name))
-            if len(validated) >= 2:
-                break
     return validated
 
 
@@ -202,6 +277,73 @@ def _names_match(issuer_name: str, candidate_name: str | None) -> bool:
     return normalize_name(strip_security_descriptors(issuer_name)) == target
 
 
+def _filing_activity_verdict(activity: dict[str, Any], era_span: tuple[str, str]) -> str:
+    """Whether a candidate's real SEC filing history (`sec_sic_client.fetch_filing_activity`)
+    is consistent with it having actually been the operating entity during `era_span`
+    (`(first_day, last_day)`, ISO `YYYY-MM-DD`). Three outcomes, never a guess:
+
+    - `ACTIVITY_DISJOINT`: provably could not have been active during the era — either
+      its newest known filing predates the era (`filings.recent` always holds the
+      *newest* filings, so nothing newer exists regardless of unfetched older shards —
+      the CLR-shell case: last filing a 2013 `15-12G` deregistration, era starting
+      2016+), or every known filing postdates the era *and* there's no older shard left
+      to check (`has_older_shards` is `False`, so that's the candidate's entire known
+      SEC life).
+    - `ACTIVITY_PLAUSIBLE`: at least one filing date falls inside the era window.
+    - `ACTIVITY_UNKNOWN`: can't tell, and "can't tell" is never treated as a rejection.
+      Covers a missing/malformed `era_span`; a candidate with older shard history that
+      might contain the era but wasn't fetched (never guess about unfetched data); and —
+      the one that matters most — a candidate whose filing history *brackets* the era
+      but has no filing that actually lands inside it. That last case is deliberately
+      NOT a rejection: a real filer can legitimately be quiet across a short window (some
+      worklist eras span under two weeks)."""
+    first_day, last_day = era_span
+    if not first_day or not last_day or first_day > last_day:
+        return ACTIVITY_UNKNOWN
+    dates = activity.get("filing_dates") or ()
+    has_older_shards = bool(activity.get("has_older_shards"))
+    if not dates:
+        return ACTIVITY_UNKNOWN if has_older_shards else ACTIVITY_DISJOINT
+    if activity["latest_filing_date"] < first_day:
+        return ACTIVITY_DISJOINT
+    if activity["earliest_filing_date"] > last_day:
+        return ACTIVITY_UNKNOWN if has_older_shards else ACTIVITY_DISJOINT
+    if any(first_day <= day <= last_day for day in dates):
+        return ACTIVITY_PLAUSIBLE
+    return ACTIVITY_UNKNOWN
+
+
+def _disambiguate_by_filing_activity(
+    client: CachedPrimaryClient,
+    validated: list[tuple[str, dict[str, Any], str]],
+    era_span: tuple[str, str] | None,
+    max_age_days: int,
+) -> tuple[str, dict[str, Any], str] | None:
+    """Among 2+ already name-validated candidates (a genuine collision — see the module
+    docstring's Continental Resources / Continental Resources Group case), accept the one
+    whose real filing history is plausible for `era_span` when every other tied candidate
+    is definitively `ACTIVITY_DISJOINT` — never picking between two live possibilities.
+    A single `ACTIVITY_UNKNOWN` anywhere in the tie blocks acceptance entirely: partial
+    confidence isn't enough to break a tie, only full confidence is. A non-`ok` fetch
+    status is treated as `ACTIVITY_UNKNOWN` (fails closed) rather than a distinct
+    fetch-error signal — simpler, and this call is effectively always a cache hit since
+    `_validate_candidates` already fetched the identical payload via `fetch_sic` moments
+    earlier."""
+    if era_span is None:
+        return None
+    plausible: list[tuple[str, dict[str, Any], str]] = []
+    for cik, sic_result, matched_name in validated:
+        activity = fetch_filing_activity(client, cik, max_age_days=max_age_days)
+        if activity.get("fetch_status") != "ok":
+            return None
+        verdict = _filing_activity_verdict(activity, era_span)
+        if verdict == ACTIVITY_UNKNOWN:
+            return None
+        if verdict == ACTIVITY_PLAUSIBLE:
+            plausible.append((cik, sic_result, matched_name))
+    return plausible[0] if len(plausible) == 1 else None
+
+
 def _result(
     issuer_name: str,
     status: str,
@@ -211,6 +353,7 @@ def _result(
     candidate_name: str | None = None,
     sic: str | None = None,
     sic_description: str | None = None,
+    match_basis: str | None = None,
 ) -> dict[str, Any]:
     return {
         "identity_issuer": issuer_name,
@@ -220,4 +363,5 @@ def _result(
         "candidate_name": candidate_name,
         "sic": sic,
         "sic_description": sic_description,
+        "match_basis": match_basis,
     }
