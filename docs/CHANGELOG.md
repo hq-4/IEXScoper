@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- feat: raise `edgar_company_search_match.MAX_CANDIDATES_TO_VALIDATE` from 8 to 20, now that the
+  filing-activity guard (previous entry) proves candidates can be validated safely at scale — the
+  original cap guarded against wasted requests on implausibly generic queries, not against
+  validating more candidates being unsafe (validation is exact-match; a wrong candidate simply
+  fails to validate). Genuinely unquantifiable for free first (unlike every other phase this
+  session): names with 9-20 candidates were never validated at all under the old cap, so nothing
+  sat in the cache to replay. Shipped as a real ~19-minute live SEC run. 2 tests updated to derive
+  their over-cap candidate count from the real constant instead of a hardcoded `9`; 510 tests still
+  pass, ruff/bandit clean. Real run: Tier E matched 2,495/4,339 -> 2,515/4,339 (+20); distinct CIKs
+  resolved 8,500 -> 8,517; manual-research worklist 11,707 -> 11,683 eras, 169.7M -> 162.8M trade
+  rows. Resolved the two running examples this module's own docstring has cited since Phase 5/7/11
+  as "correctly staying unresolved" — `CFLT` (-> the real Confluent, Inc., CIK 1699838) and `MYLAN
+  NV` (-> CIK 69499) — purely because their candidate counts had never fit under the old cap.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - feat: add a filing-activity tie-break to `edgar_company_search_match` (Tier E) for genuine 2-way
   name collisions between real registrants — e.g. the real Continental Resources, Inc. (CIK 732834,
   ticker `CLR`) vs an unrelated same-named junior-mining shell whose last SEC filing was a 2013

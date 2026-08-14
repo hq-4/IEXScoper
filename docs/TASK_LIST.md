@@ -1,5 +1,48 @@
 # Task List
 
+- 2026-08-14: SIC/sector classification, Phase 15 (raise Tier E's candidate-validation
+  cap). User: "what else is next," offered a scoped choice after checking the freshly
+  Phase-14-shrunk worklist's top rows and finding most of them (`GPS`, `CFLT`, `HOLX`,
+  `FRC`, `HZNP`, `CDEV`, ...) were hitting the `>MAX_CANDIDATES_TO_VALIDATE` search-count
+  guard (9-100 candidates), explicitly flagged as out of scope in Phase 14's own docs.
+  Unlike every prior phase this session, this one genuinely couldn't be quantified for
+  free first: names with 9-20 candidates had *never* been validated at all under the old
+  cap of 8 (the count guard returns before fetching any of them), so nothing sat in the
+  cache to replay — verified this directly (972 cache misses across every candidate in
+  that population on a first quantification attempt). Presented the real trade-off
+  honestly (a genuine ~30-40 minute live SEC run needed just to learn the yield, no way to
+  know in advance); user: do the speculative live run.
+  `MAX_CANDIDATES_TO_VALIDATE` raised 8 -> 20 in `edgar_company_search_match.py` — one
+  constant, no other logic changed; the risk the original 8-cap guarded against was never
+  "validating more candidates is dangerous" (validation is exact-match, a wrong candidate
+  simply fails to validate), it was "validating an implausibly generic query's candidates
+  wastes requests," and Phase 14's filing-activity guard already proved candidates can be
+  validated safely at scale. 2 tests hardcoding a literal candidate count of 9 for the
+  over-cap case were parameterized off the real constant instead of a magic number so
+  they stay correct regardless of its value. 510 tests still pass; ruff/bandit clean.
+  Real run (~19 minutes wall-clock, genuinely rate-limited since this candidate
+  population was entirely uncached): matched 2,495/4,339 -> **2,515/4,339** (+20: 18
+  ordinary single-candidate validations, 2 more via the filing-activity tie-break);
+  `ambiguous_candidates` 1,296 -> **1,066**; `no_validated_match` 494 -> **704** (+210) —
+  a valuable reclassification, not a regression: names previously sitting in "ambiguous,
+  never actually checked" turned out, once validated, to contain zero real matching
+  candidates at all, correctly reclassified rather than left in a falsely-alarming
+  bucket. Reconciled: distinct CIKs resolved 8,500 -> **8,517**; manual-research worklist
+  11,707 -> **11,683 eras**, 169.7M -> **162.8M trade rows**. Notably resolved the two
+  running examples this module's docstring has cited since Phase 5/7/11 as "correctly
+  staying unresolved": `CFLT` (`CONFLUENT INC-CLASS A` -> the real Confluent, Inc., CIK
+  1699838, the blank-SIC shell correctly rejected same as always) and `MYLAN NV` (-> CIK
+  69499) — both purely because their candidate counts (9 and 12) had simply never fit
+  under the cap before, not because of any new logic. Spot-checked additional new matches
+  (`IAA INC` -> IAA, Inc. CIK 1745041, SIC 5500 Retail-Auto Dealers — real, spun off from
+  KAR Auction Services 2019; `NCI INC-A` -> NCI, Inc. CIK 1334478, SIC 7373 — real
+  government IT services company) — correct. Updated the module's own docstring, since
+  three prior phases' narrated examples (the exact `MYLAN`/`CONFLUENT` candidate counts)
+  were tied to the old cap value and would otherwise read as still-true. Next candidates,
+  not started: the deferred 81-name existing-match audit from Phase 14; whether to raise
+  the cap further (504 of the remaining 1,066 ambiguous names sit at the 100-candidate API
+  page cap — genuinely too generic, unlikely to be worth it at any cap). `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-14: SIC/sector classification, Phase 14 (Tier E filing-activity tie-break).
   User: "look at all of these failed methods and think of better ways to resolve this
   then execute." An Explore agent surveyed the existing SEC resolution tooling for a

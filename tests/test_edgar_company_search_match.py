@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from utils.edgar_company_search_match import (
+    MAX_CANDIDATES_TO_VALIDATE,
     STATUS_AMBIGUOUS,
     STATUS_FETCH_ERROR,
     STATUS_MATCHED,
@@ -84,7 +85,8 @@ def test_match_issuer_name_too_many_candidates_skips_validation(
     ambiguous without spending a single validation request — a shorter query would only
     return more, never fewer."""
     calls = []
-    atom = _atom([str(n) for n in range(1, 10)])  # 9 candidates > MAX_CANDIDATES_TO_VALIDATE
+    over_cap = MAX_CANDIDATES_TO_VALIDATE + 1
+    atom = _atom([str(n) for n in range(1, over_cap + 1)])
 
     def fake_get(url: str, **kwargs: Any) -> FakeResponse:
         calls.append(url)
@@ -95,7 +97,7 @@ def test_match_issuer_name_too_many_candidates_skips_validation(
     result = match_issuer_name(_client(tmp_path), "Ambiguous Co")
 
     assert result["match_status"] == STATUS_AMBIGUOUS
-    assert result["candidate_count"] == 9
+    assert result["candidate_count"] == over_cap
     assert result["matched_cik"] is None
     assert calls == [SEARCH_URL]  # no submissions fetches at all
 
@@ -695,7 +697,7 @@ def test_match_issuer_name_one_word_query_over_candidate_cap_stays_ambiguous(
     candidates than `MAX_CANDIDATES_TO_VALIDATE`, so it's reported ambiguous via the
     existing count guard exactly as a broad 2-word query already was — the 1-word floor
     doesn't bypass that guard."""
-    atom = _atom([str(n) for n in range(1, 10)])  # 9 candidates > MAX_CANDIDATES_TO_VALIDATE
+    atom = _atom([str(n) for n in range(1, MAX_CANDIDATES_TO_VALIDATE + 2)])
     monkeypatch.setattr(
         "utils.resolution_v2_network.requests.get",
         _fake_get({"CONFLUENT": atom}, {}),
