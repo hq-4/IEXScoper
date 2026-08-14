@@ -564,6 +564,36 @@ the still-deferred 81-name existing-match audit; whether to raise the cap furthe
 remaining 1,066 ambiguous names sit at the 100-candidate EDGAR API page cap, genuinely too generic
 to be worth validating at any reasonable cap. [CA][IV][REH][CDiP][KBT]
 
+**Phase 16 (81-name existing-match filing-activity audit).** Took up Phase 15's other flagged
+follow-up: the filing-activity guard (Phase 14) only ever ran when 2+ candidates validated by
+name — a *single* validated candidate was accepted on name+SIC alone, its filing history never
+checked against `era_span` at all, even when flatly disjoint. Quantified cache-only first
+(`EvidenceRegistry.get(...)` read directly, zero network calls): of the 2,515 then-`matched`
+names, 82 provably disjoint (e.g. `AETNA INC` -> CIK 1013761, filings 1996-2015 for an era
+starting 2016-12-12 — the real operating Aetna for those eras is a different CIK, 1122304), 42
+more `ACTIVITY_UNKNOWN` (correctly left alone, same "quiet filer" reasoning as the tie-break).
+
+Added `_provably_disjoint`, gating the single-candidate accept the same way
+`_disambiguate_by_filing_activity` already gates a multi-candidate one: `continue` to a shorter
+query instead of returning a confidently-wrong match, so a name whose only reachable candidate is
+disjoint gets a chance to resolve against a different candidate at a broader query. Fails open
+exactly like the tie-break guard: no `era_span` or a failed filing-activity fetch never rejects.
+This intentionally reverses a Phase 14 regression test that had locked the opposite behavior in --
+that test existed to keep the single-candidate path unchanged *until this exact audit ran*, not
+as a permanent guarantee. 5 new tests; 514 tests pass (was 510), ruff/bandit clean.
+
+Real run (two passes — the second cleared 8 transient SEC fetch errors from the first, nothing
+cached on `fetch_error` so they retried cleanly): all 82 cleared out of `single_validated_candidate`
+-- 8 resolved to a *different, correct* CIK via the tie-break (`EXTENDED STAY AMERICA INC`
+1002579 -> 1581164, the post-2013-bankruptcy-reorg entity; `OSIRIS THERAPEUTICS INC` 912815 ->
+1360886; six more), 45 honestly `no_validated_match`, 29 honestly `ambiguous_candidates`, zero
+left wrongly matched. Tier E matched 2,515/4,339 -> **2,441/4,339** (-74, expected — correctness
+over coverage, not a regression). Reconciled: distinct CIKs resolved 8,517 -> **8,448**;
+manual-research worklist 11,683 -> **11,783 eras**, 162.8M -> **166.4M trade rows** (all three
+moved in the expected direction). Open for follow-up: `GROUP`-suffix over-normalization (Phase
+12/13, still untouched); whether the 74 names this phase net-unmatched are recoverable some other
+way (not investigated — out of this phase's scope). [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

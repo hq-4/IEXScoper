@@ -140,7 +140,15 @@ def test_build_edgar_company_search_matches_end_to_end(tmp_path: Path, monkeypat
         "<company-info><cik>0000104599</cik></company-info>"
         "</content></entry></feed>"
     )
-    submissions = {"sic": "5731", "sicDescription": "Retail-Electronics", "name": "Alpha Corp"}
+    submissions = {
+        "sic": "5731",
+        "sicDescription": "Retail-Electronics",
+        "name": "Alpha Corp",
+        # A filing date inside "Alpha Corp"'s own era span (2017) keeps this basic
+        # wiring test clear of Phase 16's single-candidate filing-activity guard —
+        # dedicated coverage for that guard lives in test_edgar_company_search_match.py.
+        "filings": {"recent": {"form": ["10-K"], "filingDate": ["2017-06-15"]}, "files": []},
+    }
 
     def fake_get(url: str, **_: Any) -> FakeResponse:
         if url == SEARCH_URL:
