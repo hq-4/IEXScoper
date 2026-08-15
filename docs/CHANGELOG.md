@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- feat: surface `identity_disproven` on the manual-research worklist — a name whose Tier E
+  single-candidate match was proven filing-activity-disjoint (Phase 16) now carries that proof
+  through to the worklist instead of staying a silent internal rejection. Root case: `UTX` (real
+  ticker for United Technologies Corp, 919K trade rows) carries an OpenFIGI-asserted
+  `identity_issuer` of `"ULTRATREX INC-A"`, a real but unrelated shell — OpenFIGI's ticker-keyed
+  `/v3/mapping` isn't date-aware and now resolves `UTX` to whoever currently holds that ticker
+  string, the same current-listing bias this project has hit at every other layer, one step
+  further upstream (at the identity assertion itself, not CIK resolution). No available data
+  source can recover the correct name for this case, but the worklist can now warn a researcher
+  off it rather than presenting a plausible-looking wrong name. New `identity_disproven` field on
+  `match_issuer_name`'s result (purely additive, no matching-logic change), threaded through
+  `build_edgar_company_search_matches.py`, a new `apply_identity_disproven` side-channel in
+  `sector_enrichment_inputs.py` that never touches `resolved_cik`/`cik_source`, and surfaced as a
+  worklist column, summary count, and struck-through marker in the top-rows report. 8 new tests;
+  522 tests pass (was 514), ruff/bandit clean. Real run confirmed byte-identical match outcomes
+  except the new field: 82 names / 100 worklist eras flagged. `[CA][IV][REH][CDiP][KBT]`
+
 - fix: gate `edgar_company_search_match`'s single-candidate accept on filing activity, closing
   the one path the filing-activity guard never covered — a lone validated candidate was accepted
   on name+SIC alone, filing history unchecked, even when provably disjoint from the era. Audited

@@ -606,6 +606,27 @@ tie-break, an independent-evidence mechanism that doesn't touch `normalize_name`
 one real case motivating this fix no longer needs it. `GROUP` stays in `LEGAL_SUFFIXES`,
 unchanged; no code shipped. [CA][IV][REH][CDiP][KBT]
 
+**Phase 18 (`identity_disproven` worklist flag).** A fresh pass over the worklist's top rows
+found `UTX` (919K trade rows, the real United Technologies Corp) carrying an OpenFIGI-asserted
+`identity_issuer` of `"ULTRATREX INC-A"` — a real but unrelated shell. Root cause traced one
+layer upstream of anything Tier A-E touches: `openfigi_identity_core.py` queries OpenFIGI's
+`/v3/mapping` by bare ticker with no date awareness and takes the first FIGI unconditionally;
+OpenFIGI's own index now returns only Ultratrex for `"UTX"` since United Technologies' ticker was
+vacated by its 2020 merger into Raytheon — the same current-listing bias this project has hit at
+every other layer, one step further upstream. No available data source (OpenFIGI, IEX's own
+snapshot fallback) can recover the correct name here; this stays a genuine manual-research case.
+What *is* fixable: Phase 16's filing-activity guard already proves `"ULTRATREX INC-A"` can't be
+the operating entity for `UTX`'s era, but that proof was a silent internal rejection, never
+surfaced. Added `identity_disproven` (`edgar_company_search_match.match_issuer_name`, purely
+additive metadata, no matching-logic change), threaded through
+`build_edgar_company_search_matches.py`, a new `sector_enrichment_inputs.apply_identity_disproven`
+side-channel that never touches `resolved_cik`/`cik_source`, and surfaced in the manual-research
+worklist as a column, a summary count, and a struck-through marker in the top-rows table. 8 new
+tests; 522 pass (was 514), ruff/bandit clean. Real run confirmed byte-identical match outcomes
+(distinct CIKs resolved, worklist eras/trade-rows all unchanged) except the new field: 82 names /
+100 worklist eras flagged. See `docs/TASK_LIST.md`'s Phase 18 entry for full detail.
+[CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

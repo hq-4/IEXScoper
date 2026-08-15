@@ -840,3 +840,99 @@ def test_match_issuer_name_reuses_cached_sic_fetch(tmp_path: Path, monkeypatch: 
 
     assert result["match_status"] == STATUS_MATCHED
     assert calls == [SEARCH_URL]  # only the search call, submissions was a cache hit
+
+
+def test_match_issuer_name_flags_identity_disproven_when_single_candidate_rejected(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Phase 18: the real `UTX` case — the name is provably wrong for the era (its one
+    validated candidate's filing history is disjoint), and no shorter query finds a
+    replacement. `identity_disproven` surfaces that proof even though the final status
+    is the same `no_validated_match` a plain name-mismatch would also produce."""
+    atom = _atom(["104599"])
+    submissions = {
+        "104599": {
+            "sic": "5731", "sicDescription": "Retail-Electronics", "name": "CIRCUIT CITY STORES INC",
+            "filings": _filings(["2005-01-01"]),  # disjoint from ERA_SPAN
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Circuit City Stores": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Circuit City Stores", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["identity_disproven"] is True
+
+
+def test_match_issuer_name_identity_disproven_stays_true_after_tiebreak_recovery(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The disproven flag records that the *original* name-only candidate was rejected,
+    even when a later, broader query recovers a different, correct match via the
+    tie-break — both facts are true and both are worth keeping visible."""
+    full_atom = _atom(["1"])  # only the wrong shell reachable at the full query
+    short_atom = _atom(["1", "2"])  # the broader query also finds the real company
+    submissions = {
+        "1": {
+            "sic": "1000", "sicDescription": "A", "name": "Ambiguous Co Inc",
+            "filings": _filings(["2005-01-01"]),  # disjoint
+        },
+        "2": {
+            "sic": "2000", "sicDescription": "B", "name": "Ambiguous Co",
+            "filings": _filings(["2018-01-01"]),  # plausible
+        },
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Ambiguous Co Inc": full_atom, "Ambiguous Co": short_atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co Inc", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "2"
+    assert result["identity_disproven"] is True
+
+
+def test_match_issuer_name_identity_disproven_false_for_ordinary_mismatch(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The flag is specific to a *proven* rejection, not any unmatched outcome — a plain
+    name mismatch (no era_span involvement at all) leaves it False."""
+    atom = _atom(["999999"])
+    submissions = {"999999": {"sic": "1234", "sicDescription": "X", "name": "TOTALLY DIFFERENT CO"}}
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Circuit City": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Circuit City Stores")
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["identity_disproven"] is False
+
+
+def test_match_issuer_name_identity_disproven_false_for_ordinary_match(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A clean single-candidate match (nothing ever rejected) reports False, not just
+    absent — every result row carries the field regardless of outcome."""
+    atom = _atom(["104599"])
+    submissions = {
+        "104599": {
+            "sic": "5731", "sicDescription": "Retail-Electronics", "name": "CIRCUIT CITY STORES INC",
+            "filings": _filings(["2018-01-01"]),  # inside ERA_SPAN -- plausible, not disjoint
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Circuit City Stores": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Circuit City Stores", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["identity_disproven"] is False

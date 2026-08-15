@@ -57,6 +57,7 @@ def _write_enriched(path: Path) -> None:
                 "cik_no_sic",
                 "fund_no_sic_needed",
             ],
+            "identity_disproven": [False, True, False, False, False],
         }
     ).write_parquet(path)
 
@@ -80,12 +81,15 @@ def test_build_sector_worklist_ranks_by_trade_rows_and_excludes_resolved(tmp_pat
     assert rows[0]["priority_rank"] == 1
     assert rows[0]["has_googleable_name"] is True  # YYY has an OpenFIGI-asserted issuer
     assert rows[1]["has_googleable_name"] is False  # XXX has nothing to google by
+    assert rows[0]["identity_disproven"] is True  # YYY's issuer name is proven wrong
+    assert rows[1]["identity_disproven"] is False
     for column in ("manual_cik", "manual_sic", "manual_notes"):
         assert rows[0][column] is None
 
     assert result["summary"]["worklist_era_count"] == 3
     assert result["summary"]["excluded_fund_count"] == 1
     assert result["summary"]["has_googleable_name_count"] == 1
+    assert result["summary"]["identity_disproven_count"] == 1
     assert result["summary"]["top_n"] == 2
     assert (output_root / "sector_research_worklist_report.md").exists()
     assert (output_root / "sector_research_worklist_top.csv").exists()

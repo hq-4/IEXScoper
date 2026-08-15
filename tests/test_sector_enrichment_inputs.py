@@ -5,6 +5,7 @@ from pathlib import Path
 import polars as pl
 
 from utils.sector_enrichment_inputs import (
+    apply_identity_disproven,
     apply_iex_fallback_issuer,
     load_edgar_matches,
     load_iex_fallback_names,
@@ -36,7 +37,7 @@ def test_load_edgar_matches_missing_file_returns_none(tmp_path: Path) -> None:
     assert load_edgar_matches(tmp_path / "missing.parquet") is None
 
 
-def test_load_edgar_matches_reads_issuer_and_cik_columns(tmp_path: Path) -> None:
+def test_load_edgar_matches_reads_issuer_cik_and_disproven_columns(tmp_path: Path) -> None:
     path = tmp_path / "edgar_company_search_matches.parquet"
     pl.DataFrame(
         {
@@ -47,16 +48,62 @@ def test_load_edgar_matches_reads_issuer_and_cik_columns(tmp_path: Path) -> None
             "candidate_name": ["CIRCUIT CITY STORES INC"],
             "sic": ["5731"],
             "sic_description": ["Retail-Electronics"],
+            "identity_disproven": [False],
         }
     ).write_parquet(path)
 
     result = load_edgar_matches(path)
 
     assert result is not None
-    assert result.columns == ["identity_issuer", "matched_cik"]
+    assert result.columns == ["identity_issuer", "matched_cik", "identity_disproven"]
     assert result.to_dicts() == [
-        {"identity_issuer": "Circuit City Stores", "matched_cik": "104599"}
+        {"identity_issuer": "Circuit City Stores", "matched_cik": "104599", "identity_disproven": False}
     ]
+
+
+def test_load_edgar_matches_degrades_gracefully_without_disproven_column(tmp_path: Path) -> None:
+    """A matches file built before Phase 18 added `identity_disproven` shouldn't fail —
+    it degrades to `False` for every row rather than erroring."""
+    path = tmp_path / "edgar_company_search_matches.parquet"
+    pl.DataFrame(
+        {"identity_issuer": ["Circuit City Stores"], "matched_cik": ["104599"]}
+    ).write_parquet(path)
+
+    result = load_edgar_matches(path)
+
+    assert result is not None
+    assert result.to_dicts() == [
+        {"identity_issuer": "Circuit City Stores", "matched_cik": "104599", "identity_disproven": False}
+    ]
+
+
+def test_apply_identity_disproven_backfills_by_issuer_name(tmp_path: Path) -> None:
+    era_identity = pl.DataFrame(
+        {
+            "symbol_era_id": ["UTX#001", "AAPL#001", "ZZZ#001"],
+            "identity_issuer": ["ULTRATREX INC-A", "APPLE INC", None],
+        }
+    )
+    edgar_matches = pl.DataFrame(
+        {
+            "identity_issuer": ["ULTRATREX INC-A", "APPLE INC"],
+            "matched_cik": [None, "320193"],
+            "identity_disproven": [True, False],
+        }
+    )
+
+    result = apply_identity_disproven(era_identity, edgar_matches)
+
+    rows = {row["symbol_era_id"]: row["identity_disproven"] for row in result.to_dicts()}
+    assert rows == {"UTX#001": True, "AAPL#001": False, "ZZZ#001": False}
+
+
+def test_apply_identity_disproven_missing_edgar_matches_defaults_false(tmp_path: Path) -> None:
+    era_identity = pl.DataFrame({"symbol_era_id": ["UTX#001"], "identity_issuer": ["ULTRATREX INC-A"]})
+
+    result = apply_identity_disproven(era_identity, None)
+
+    assert result["identity_disproven"].to_list() == [False]
 
 
 def test_load_iex_fallback_names_missing_file_returns_none(tmp_path: Path) -> None:

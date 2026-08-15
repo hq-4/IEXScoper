@@ -40,10 +40,34 @@ def load_stable_classes(path: Path) -> pl.DataFrame:
 def load_edgar_matches(path: Path) -> pl.DataFrame | None:
     """Tier E (EDGAR company-search-matched CIKs, see `utils.sector_cik_reconcile`) is
     skipped, not an error, when `utils/build_edgar_company_search_matches.py` hasn't
-    been run yet."""
+    been run yet. Carries `identity_disproven` (Phase 18) alongside the CIK-matching
+    columns purely as informational metadata for `apply_identity_disproven` below —
+    `reconcile_cik` re-selects only the columns it needs, so this extra column never
+    reaches or affects CIK resolution. Degrades to an all-`False` column when reading an
+    older matches file built before Phase 18 added the field, rather than failing."""
     if not path.exists():
         return None
-    return pl.read_parquet(path).select("identity_issuer", "matched_cik")
+    frame = pl.read_parquet(path)
+    if "identity_disproven" not in frame.columns:
+        frame = frame.with_columns(pl.lit(False).alias("identity_disproven"))
+    return frame.select("identity_issuer", "matched_cik", "identity_disproven")
+
+
+def apply_identity_disproven(
+    era_identity: pl.DataFrame, edgar_matches: pl.DataFrame | None
+) -> pl.DataFrame:
+    """Backfills `identity_disproven` (Phase 18) onto every era sharing a Tier-E-searched
+    `identity_issuer`, `False` when no EDGAR search ever ran for that name (never
+    searched means never disproven, not "assumed fine"). Purely informational — doesn't
+    touch `resolved_cik`/`cik_source`, so it can't change what gets a CIK, only how a
+    still-unresolved name is presented to a human researcher."""
+    if edgar_matches is None or not edgar_matches.height:
+        return era_identity.with_columns(pl.lit(False).alias("identity_disproven"))
+    lookup = edgar_matches.select("identity_issuer", "identity_disproven").unique(
+        subset="identity_issuer", keep="first"
+    )
+    joined = era_identity.join(lookup, on="identity_issuer", how="left")
+    return joined.with_columns(pl.col("identity_disproven").fill_null(False))
 
 
 def load_iex_fallback_names(path: Path) -> pl.DataFrame | None:

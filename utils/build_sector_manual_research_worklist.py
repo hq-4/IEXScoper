@@ -46,6 +46,7 @@ REQUIRED_COLUMNS = (
     "cik_source",
     "resolved_cik",
     "sic_coverage_status",
+    "identity_disproven",
 )
 WORKLIST_COLUMNS = [
     "priority_rank",
@@ -59,6 +60,7 @@ WORKLIST_COLUMNS = [
     "identity_issuer",
     "instrument_class",
     "has_googleable_name",
+    "identity_disproven",
     "cik_source",
 ]
 FUND_NO_SIC_NEEDED = "fund_no_sic_needed"
@@ -148,12 +150,16 @@ def build_summary(
         "excluded_fund_count": excluded_fund_count,
         "top_n": min(config.top_n, worklist.height),
         "has_googleable_name_count": int(worklist["has_googleable_name"].sum()),
+        "identity_disproven_count": int(worklist["identity_disproven"].sum()),
         "classification_counts": count_by(worklist, "source_classification"),
         "top_classification_counts": count_by(worklist.head(config.top_n), "source_classification"),
         "sort_order": ["trade_rows descending"],
         "limitations": [
             "has_googleable_name only means an OpenFIGI-asserted issuer name exists — it is not "
             "proof of identity and may itself be wrong for a reused ticker.",
+            "identity_disproven=true (Phase 18) is stronger than a plain unmatched name: SEC's own "
+            "filing history proves the asserted issuer name can't be the operating entity for this "
+            "era — don't research the name as printed; research the ticker/date range instead.",
             "manual_cik/manual_sic/manual_notes are blank by design, for the researcher's own "
             "findings; there is no re-import tool for this file yet.",
             f"{excluded_fund_count} no-CIK eras were excluded entirely as funds/ETFs "
@@ -190,6 +196,8 @@ def write_markdown(path: Path, top_rows: pl.DataFrame, summary: dict[str, Any]) 
         f"- Excluded as funds/ETFs (not research targets): `{summary['excluded_fund_count']}`",
         f"- Worklist trade rows: `{summary['worklist_trade_rows']}`",
         f"- Rows with a googleable issuer name already asserted: `{summary['has_googleable_name_count']}`",
+        f"- Rows with a disproven issuer name (Phase 18 — don't trust it as printed): "
+        f"`{summary['identity_disproven_count']}`",
         f"- Top rows shown: `{summary['top_n']}`",
         "",
         "## Top Research Targets",
@@ -198,10 +206,13 @@ def write_markdown(path: Path, top_rows: pl.DataFrame, summary: dict[str, Any]) 
         "|---:|---|---|---|---|---:|---|---|",
     ]
     for row in top_rows.to_dicts():
+        issuer = row["identity_issuer"] or ""
+        if row["identity_disproven"] and issuer:
+            issuer = f"~~{issuer}~~ (disproven)"
         lines.append(
             "| {priority_rank} | {symbol} | {symbol_era_id} | {source_classification} | "
             "{identity_issuer} | {trade_rows} | {first_day} | {last_day} |".format(
-                **{**row, "identity_issuer": row["identity_issuer"] or ""}
+                **{**row, "identity_issuer": issuer}
             )
         )
     lines.extend(["", "## Caveats", ""])

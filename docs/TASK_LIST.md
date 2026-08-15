@@ -1,5 +1,67 @@
 # Task List
 
+- 2026-08-15: SIC/sector classification, Phase 18 (`identity_disproven` worklist flag). User:
+  "what else is next, i just merged" (after Phase 17's negative-result docs PR). Phase 17's own
+  conclusion was that no further quantified backlog item remained — the next lead would need a
+  fresh pass over the worklist's current top rows, the same method every prior phase used. Did
+  exactly that: checked the freshly-regenerated worklist's top rows and found `UTX` (priority
+  rank 29, 919,517 trade rows, era 2016-12-12..2020-04-03) carrying `identity_issuer =
+  "ULTRATREX INC-A"` — a real but obviously-unrelated shell. `UTX` is the historic ticker for
+  United Technologies Corp, a NYSE mega-cap that merged into Raytheon Technologies on 2020-04-03
+  — the exact `last_day` this era ends on.
+  Traced the root cause to the identity-assertion layer itself, one step upstream of anything
+  this project's Tier A-E work touches: `utils/openfigi_identity_core.py` queries OpenFIGI's
+  `/v3/mapping` by bare ticker string with no date awareness (`build_openfigi_job`), and
+  `build_era_rows` takes the *first* returned FIGI unconditionally. Confirmed directly against
+  the raw cached response (`data/openfigi/identity_cache.jsonl`): OpenFIGI's own index returns
+  exactly *one* FIGI for `"UTX"` today — `BBG01X4WM088`, `"ULTRATREX INC-A"` — not United
+  Technologies, because OpenFIGI's ticker index reflects current/latest ticker ownership and
+  `UTX` has since been reused. The same current-listing-bias root cause this project has hit at
+  every other layer (Tier C, `ticker_continuity`, the reverted Phase 13 ticker tie-break), now
+  found one layer further upstream, at the identity assertion itself rather than at CIK
+  resolution. Checked whether Phase 6's IEX-snapshot fallback (`apply_iex_fallback_issuer`)
+  could recover the real name instead: no — IEX's own local snapshot data has zero coverage for
+  `UTX` (`iex_entity_confidence: iex_snapshot_unmatched`), and the fallback only backfills a
+  *null* `identity_issuer` anyway, never overrides a wrong-but-present one. No available data
+  source in this repo can recover the correct name for this specific case — this is genuinely a
+  "no automatic answer, needs a human" case, exactly what the worklist exists for.
+  What *is* fixable: Phase 16's own filing-activity evidence already proves `"ULTRATREX INC-A"`
+  can't be the operating entity for `UTX`'s era (Ultratrex's real SEC filings are 2025-2026,
+  entirely outside the 2016-2020 window) — that proof existed internally as a silent rejection
+  reason but was never surfaced to the worklist, where a human researcher would see the name and
+  waste time googling the wrong company. Quantified the population before building: 74 names
+  still carry this exact proof after Phase 16 (82 originally flagged, 8 recovered via the
+  tie-break), touching 100 worklist eras and 3.66M trade rows — several in the top 200 priority
+  rows (`UTX` #29, `FIT`/Fitness Fanatics Ltd #52, `AET`/Aetna Inc #96, `JAG`/Job Aire Group Inc
+  #107).
+  Built `identity_disproven`: `edgar_company_search_match.match_issuer_name` now tracks whether
+  `_provably_disjoint` (Phase 16) rejected any single-candidate match at any truncation level,
+  surfaced as a new boolean field in the result dict regardless of final status — purely
+  additive metadata, no matching-logic change. Threaded through
+  `build_edgar_company_search_matches.py`'s `RESULT_SCHEMA` and summary,
+  `sector_enrichment_inputs.py`'s new `apply_identity_disproven` (backfills by `identity_issuer`
+  onto every era, `False` when a name was never searched — never assumed fine), wired into
+  `build_era_sector_enriched.py`'s orchestrator as a side-channel that never touches
+  `resolved_cik`/`cik_source` (informational only, can't change what gets a CIK), and surfaced in
+  the manual-research worklist (`build_sector_manual_research_worklist.py`) as a new column, a
+  summary count, and a struck-through `~~name~~ (disproven)` marker in the top-rows markdown
+  table. 8 new tests across the touched modules (the field's presence/defaults, tie-break
+  interaction, graceful degradation reading an older matches file built before this phase, and a
+  full orchestrator end-to-end proof using the real `UTX` shape); 522 tests pass (was 514);
+  ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`, ~90s wall-clock total, entirely cache hits since
+  nothing about matching itself changed): confirmed byte-identical match outcomes to before this
+  phase (`distinct_ciks_resolved` 8,448, worklist 11,783 eras / 166.4M trade rows, both
+  unchanged) except the new field — `identity_disproven_count: 82` in the EDGAR-search summary,
+  **100 worklist eras** flagged. Verified `UTX`'s worklist row now carries
+  `identity_disproven: True` and renders as `~~ULTRATREX INC-A~~ (disproven)` in the report.
+  Next candidates, not started: whether a similar "current-listing-bias, no available fallback"
+  pattern affects other still-unresolved names beyond this specific 74-name filing-activity-proof
+  population (not investigated — this phase only surfaced evidence already computed, it didn't go
+  looking for new instances); `GROUP`-suffix over-normalization remains closed (Phase 17,
+  negative result). `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-15: SIC/sector classification, Phase 17 attempt (`GROUP`-suffix over-normalization) —
   investigated, quantified, and **not shipped**: negative result, same shape as Phase 13's
   ticker-based tie-break attempt. Picked up as the last open thread from this session's earlier

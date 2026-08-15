@@ -59,6 +59,7 @@ RESULT_SCHEMA = {
     "sic": pl.String,
     "sic_description": pl.String,
     "match_basis": pl.String,
+    "identity_disproven": pl.Boolean,
 }
 
 
@@ -216,6 +217,7 @@ def _search_all(
 
 def build_summary(total_names: int, matches: pl.DataFrame) -> dict[str, Any]:
     matched = matches.filter(pl.col("match_status") == STATUS_MATCHED) if matches.height else matches
+    disproven = matches.filter(pl.col("identity_disproven")) if matches.height else matches
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_unresolved_names": total_names,
@@ -223,6 +225,10 @@ def build_summary(total_names: int, matches: pl.DataFrame) -> dict[str, Any]:
         "status_counts": _counts(matches, "match_status") if matches.height else {},
         "matched_count": matched.height,
         "match_basis_counts": _counts(matched, "match_basis") if matched.height else {},
+        # Phase 18: names where a single candidate provably couldn't be the operating
+        # entity for the era, even though the name itself came back unmatched or matched
+        # via a different candidate — see edgar_company_search_match's Phase 18 docstring.
+        "identity_disproven_count": disproven.height,
     }
 
 
