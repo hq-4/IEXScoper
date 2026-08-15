@@ -143,7 +143,26 @@ tie-break guard: no `era_span` or a failed filing-activity fetch never rejects. 
 supersedes the Phase 14 regression test asserting the opposite — that test existed to
 keep the single-candidate path unchanged *until this exact audit ran*, not as a permanent
 guarantee; the module docstring's Phase 14 entry above still narrates why the guard
-originally stopped short of this path. [CA][IV][REH][KBT]
+originally stopped short of this path.
+
+Phase 18 surfaces the Phase 16 guard's own evidence as a result field instead of just an
+internal rejection: `identity_disproven` is `True` whenever `_provably_disjoint` rejected
+a single candidate at any truncation level, even if the name ultimately stays unmatched
+(no shorter query finds a real replacement). Found by tracing a top-worklist row by hand —
+`UTX` (era 2016-12-12..2020-04-03, 919K trade rows, the real United Technologies Corp,
+delisted the day this era ends by its merger into Raytheon Technologies) carries an
+OpenFIGI-asserted `identity_issuer` of `"ULTRATREX INC-A"`, a real but unrelated shell.
+OpenFIGI's ticker-keyed `/v3/mapping` endpoint isn't date-aware and returns whatever
+entity currently (or most recently) holds a ticker string, the same current-listing bias
+this project has hit at every other layer (Tier C, `ticker_continuity`, the reverted
+Phase 13 attempt) — one layer further upstream than any of those, at the identity
+assertion itself rather than at CIK resolution. This module already independently proves
+`"ULTRATREX INC-A"` can't be the operating entity for `UTX`'s era (its real filing history
+is 2025-2026, entirely outside it), so the evidence to warn a researcher off the name
+already exists; it just wasn't surfaced. 74 names across the still-unresolved population
+carry this proof (100 worklist eras, 3.66M trade rows) — real research-quality value, not
+a one-off. No CIK-matching behavior changes: `identity_disproven` is purely additive
+metadata on the existing result dict. [CA][IV][REH][KBT]
 """
 
 from __future__ import annotations
@@ -192,25 +211,41 @@ def match_issuer_name(
     and the caller can supply the `(first_day, last_day)` window every era sharing this
     issuer name actually traded in, `_disambiguate_by_filing_activity` may still resolve
     it — see that function and the module docstring for the full Continental Resources
-    case this targets. No `era_span` supplied stays byte-identical to today's behavior."""
+    case this targets. No `era_span` supplied stays byte-identical to today's behavior.
+
+    `identity_disproven` (Phase 18) is `True` in the returned result whenever a
+    single-candidate match was rejected by `_provably_disjoint` at *any* truncation
+    level, even if a later, shorter query eventually finds a real (different) match —
+    see the module docstring's Phase 18 entry. It surfaces a stronger signal than a bare
+    unmatched status: not just "we couldn't confirm a CIK," but "the name string itself
+    is provably wrong for this era," which callers like the manual-research worklist can
+    use to warn a researcher off a misleading OpenFIGI-asserted name (e.g. `UTX`
+    resolving to `"ULTRATREX INC-A"`, a real but unrelated shell — see the docstring)."""
     saw_any_candidates = False
+    disproven = False
     for query in _search_query_variants(issuer_name):
         try:
             candidates = search_company_ciks(client, query, max_age_days=max_age_days)
         except PrimarySourceError:
-            return _result(issuer_name, STATUS_FETCH_ERROR)
+            return _result(issuer_name, STATUS_FETCH_ERROR, identity_disproven=disproven)
         if not candidates:
             continue
         saw_any_candidates = True
         if len(candidates) > MAX_CANDIDATES_TO_VALIDATE:
             # Further truncation only broadens the match set further — stop here.
-            return _result(issuer_name, STATUS_AMBIGUOUS, candidate_count=len(candidates))
+            return _result(
+                issuer_name,
+                STATUS_AMBIGUOUS,
+                candidate_count=len(candidates),
+                identity_disproven=disproven,
+            )
         validated = _validate_candidates(client, issuer_name, candidates, max_age_days)
         if validated is None:
-            return _result(issuer_name, STATUS_FETCH_ERROR)
+            return _result(issuer_name, STATUS_FETCH_ERROR, identity_disproven=disproven)
         if len(validated) == 1:
             cik, sic_result, matched_name = validated[0]
             if _provably_disjoint(client, cik, era_span, max_age_days):
+                disproven = True
                 continue  # provably wrong for this era; a shorter query may find another
             return _result(
                 issuer_name,
@@ -220,6 +255,7 @@ def match_issuer_name(
                 sic=sic_result.get("sic"),
                 sic_description=sic_result.get("sic_description"),
                 match_basis=BASIS_SINGLE_CANDIDATE,
+                identity_disproven=disproven,
             )
         if len(validated) > 1:
             resolved = _disambiguate_by_filing_activity(client, validated, era_span, max_age_days)
@@ -233,11 +269,17 @@ def match_issuer_name(
                     sic=sic_result.get("sic"),
                     sic_description=sic_result.get("sic_description"),
                     match_basis=BASIS_FILING_ACTIVITY,
+                    identity_disproven=disproven,
                 )
-            return _result(issuer_name, STATUS_AMBIGUOUS, candidate_count=len(validated))
+            return _result(
+                issuer_name,
+                STATUS_AMBIGUOUS,
+                candidate_count=len(validated),
+                identity_disproven=disproven,
+            )
         # Zero candidates validated at this query — try a shorter one.
     status = STATUS_NO_VALIDATED_MATCH if saw_any_candidates else STATUS_NO_CANDIDATES
-    return _result(issuer_name, status)
+    return _result(issuer_name, status, identity_disproven=disproven)
 
 
 def _search_query_variants(name: str) -> list[str]:
@@ -420,6 +462,7 @@ def _result(
     sic: str | None = None,
     sic_description: str | None = None,
     match_basis: str | None = None,
+    identity_disproven: bool = False,
 ) -> dict[str, Any]:
     return {
         "identity_issuer": issuer_name,
@@ -430,4 +473,5 @@ def _result(
         "sic": sic,
         "sic_description": sic_description,
         "match_basis": match_basis,
+        "identity_disproven": identity_disproven,
     }

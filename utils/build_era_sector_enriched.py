@@ -28,6 +28,7 @@ from utils.sec_sic_client import fetch_many
 from utils.sector_cik_reconcile import distinct_ciks, reconcile_cik
 from utils.sector_enrichment_inputs import (
     apply_iex_fallback_issuer,
+    apply_identity_disproven,
     load_edgar_matches,
     load_iex_fallback_names,
     load_name_matches,
@@ -139,6 +140,7 @@ def build_era_sector_enriched(config: SectorConfig) -> dict[str, Any]:
     stable_classes = load_stable_classes(config.stable_openfigi_path)
     enriched = _build_enriched(era_identity, cik_table, sic_lookup, stable_classes)
     enriched = apply_continuity_status(enriched, continuity_lookup)
+    enriched = apply_identity_disproven(enriched, edgar_matches)
     summary = build_summary(enriched, sic_lookup, len(ciks), len(sic_rows))
     write_outputs(config.output_root, enriched, sic_lookup, summary)
     return {"summary": summary}
