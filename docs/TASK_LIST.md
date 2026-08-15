@@ -1,5 +1,60 @@
 # Task List
 
+- 2026-08-14: SIC/sector classification, Phase 16 (81-name existing-match filing-activity
+  audit). User: "what else is next," offered a scoped choice between two threads Phase 14/15
+  left open — the deferred audit of already-`matched` names for filing-activity-disjoint false
+  positives, or fixing `normalize_name`'s `GROUP`-suffix over-normalization (Phase 12/13, still
+  untouched) — and picked the audit as lower-risk (bounded, cache-only to quantify) and
+  higher-value (hunting real errors already shipped in the resolved output).
+  Root cause: `_disambiguate_by_filing_activity` (Phase 14) only ever ran when 2+ candidates
+  validated by name — a *single* validated candidate was accepted on name+SIC alone, its filing
+  history never checked against `era_span` at all, even when flatly disjoint. Quantified first,
+  cache-only via a throwaway script (`EvidenceRegistry.get(...)` read directly, zero network
+  calls, mirroring `_filing_activity_verdict` exactly): of the 2,515 then-`matched` names, 82
+  provably disjoint (e.g. `AETNA INC` -> CIK 1013761, filings 1996-2015 for an era starting
+  2016-12-12 — the real operating Aetna for those eras is CIK 1122304; several modern-SPAC name
+  collisions like `ALBATROSS ACQUISITION CORP`, matched to a CIK whose entire filing history
+  postdates the era by years), 42 more `ACTIVITY_UNKNOWN` (bracketing history, no filing landing
+  inside a narrow era window — correctly left alone, same "quiet filer" reasoning as the
+  tie-break guard). Spot-checked a sample by hand before building — all genuinely wrong, not
+  edge cases (multi-year gaps between the matched CIK's filing history and the era, not narrow
+  misses).
+  Built `_provably_disjoint`, gating the single-candidate accept the same way
+  `_disambiguate_by_filing_activity` already gates a multi-candidate one: `continue` to a shorter
+  query instead of returning a confidently-wrong match — a name whose only reachable candidate is
+  disjoint gets a chance to resolve against a different candidate at a broader query rather than
+  simply losing its match outright. Fails open exactly like the tie-break guard: no `era_span` or
+  a failed filing-activity fetch never rejects. This intentionally reverses a Phase 14 regression
+  test that had locked in the opposite behavior — that test existed to keep the single-candidate
+  path unchanged *until this exact audit ran*, not as a permanent guarantee, per its own Phase 14
+  narrative explicitly deferring this audit. 5 new tests (rejection, no-era-span backward-compat,
+  quiet-filer-stays-matched, falls-through-to-a-broader-query-and-resolves-correctly, fetch-error
+  fails open); the old regression test rewritten to assert the new (correct) behavior. One
+  downstream integration test's submissions fixture needed a real filing date added (previously
+  missing `filings` entirely, an unrealistic shape no real SEC payload has) to stay clear of the
+  new guard, since it wasn't testing filing-activity behavior. 514 tests pass (was 510);
+  ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` x2 — second pass cleared 8 transient SEC
+  fetch errors from the first, nothing cached on `fetch_error` so they retried cleanly — then
+  `build_era_sector_enriched.py` + `build_sector_manual_research_worklist.py`; ~17 minutes
+  wall-clock total, genuinely rate-limited since the shorter-query retries for 82 names were
+  mostly uncached): all 82 cleared out of `single_validated_candidate` — **8 resolved to a
+  different, correct CIK** via the tie-break (`EXTENDED STAY AMERICA INC` 1002579 -> 1581164, the
+  post-2013-bankruptcy-reorg entity; `MERIDIAN BANCORP INC` -> 1600125; `NIELSEN HOLDINGS LTD` ->
+  1492633; `OSIRIS THERAPEUTICS INC` 912815 -> 1360886; `PEAK RESOURCES LP-A` -> 1393548;
+  `PINNACLE ENTERTAINMENT INC` -> 1656239; `SURGICAL CARE AFFILIATES INC` -> 1411574; `VIEWRAY
+  INC` -> 1597313), **45 honestly `no_validated_match`**, **29 honestly `ambiguous_candidates`**,
+  zero left wrongly matched. Tier E matched 2,515/4,339 -> **2,441/4,339** (-74, expected —
+  correctness over coverage, not a regression). Reconciled: distinct CIKs resolved 8,517 ->
+  **8,448**; manual-research worklist 11,683 -> **11,783 eras**, 162.8M -> **166.4M trade rows**
+  (all three moved in the expected direction — fewer resolved, more back on the research
+  worklist, since 74 fewer names are now confidently matched). Next candidates, not started:
+  `GROUP`-suffix over-normalization (Phase 12/13, still untouched — the other open thread from
+  this "what else is next" choice); whether the 71 still-`ambiguous`/`no_validated_match` names
+  from this audit's 82 are recoverable some other way (not investigated — this phase's scope was
+  the rejection guard itself, not chasing down replacements for every name it correctly
+  unmatched). `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-14: SIC/sector classification, Phase 15 (raise Tier E's candidate-validation
   cap). User: "what else is next," offered a scoped choice after checking the freshly
   Phase-14-shrunk worklist's top rows and finding most of them (`GPS`, `CFLT`, `HOLX`,

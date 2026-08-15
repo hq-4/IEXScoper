@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- fix: gate `edgar_company_search_match`'s single-candidate accept on filing activity, closing
+  the one path the filing-activity guard never covered — a lone validated candidate was accepted
+  on name+SIC alone, filing history unchecked, even when provably disjoint from the era. Audited
+  the 2,515 then-`matched` names cache-only (zero network calls): 82 provably disjoint (e.g.
+  `AETNA INC` -> CIK 1013761, filings ending 2015 for an era starting 2016-12-12 — the real
+  operating Aetna for those eras is a different CIK, 1122304), 42 more `ACTIVITY_UNKNOWN`
+  (correctly left alone, same "quiet filer" reasoning the tie-break already applies). New
+  `_provably_disjoint` rejects and falls through to a shorter query instead of returning a
+  confidently-wrong match — lets the existing tie-break resolve some of the 82 to the *correct*
+  CIK once the wrong one stops shadowing it, rather than just losing the match. 5 new tests,
+  including the Phase-14 regression test rewritten to assert the new (correct) behavior; 514
+  tests pass (was 510), ruff/bandit clean. Real run (two passes, second clearing 8 transient
+  fetch errors): all 82 cleared out of `single_validated_candidate` — 8 resolved to a different,
+  correct CIK via the tie-break (`EXTENDED STAY AMERICA INC` 1002579 -> 1581164 post-bankruptcy-
+  reorg entity; `OSIRIS THERAPEUTICS INC` 912815 -> 1360886), 45 honestly `no_validated_match`,
+  29 honestly `ambiguous_candidates`, zero left wrongly matched. Tier E matched 2,515/4,339 ->
+  2,441/4,339 (-74, expected — correctness over coverage); distinct CIKs resolved 8,517 -> 8,448;
+  manual-research worklist 11,683 -> 11,783 eras, 162.8M -> 166.4M trade rows.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - feat: raise `edgar_company_search_match.MAX_CANDIDATES_TO_VALIDATE` from 8 to 20, now that the
   filing-activity guard (previous entry) proves candidates can be validated safely at scale — the
   original cap guarded against wasted requests on implausibly generic queries, not against

@@ -293,12 +293,14 @@ def test_match_issuer_name_validates_all_candidates_before_tiebreak(
     assert result["matched_cik"] == "3"
 
 
-def test_match_issuer_name_single_candidate_ignores_filing_activity(
+def test_match_issuer_name_single_candidate_provably_disjoint_is_rejected(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """Critical regression guard: a single validated candidate is still matched even
-    when its filing history is disjoint from a supplied `era_span` — the guard only ever
-    breaks an existing tie, it never demotes the single-candidate path."""
+    """Phase 16: the real gap the 81-name existing-match audit found — a single
+    validated candidate whose own filing history provably can't overlap `era_span`
+    (real shape: `AETNA INC`, filings ending 2015 for an era starting 2016-12-12) is no
+    longer accepted on name+SIC alone. With no shorter query left to try, it correctly
+    falls through to `no_validated_match` rather than a confidently-wrong `matched`."""
     atom = _atom(["104599"])
     submissions = {
         "104599": {
@@ -313,9 +315,115 @@ def test_match_issuer_name_single_candidate_ignores_filing_activity(
 
     result = match_issuer_name(_client(tmp_path), "Circuit City Stores", era_span=ERA_SPAN)
 
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_single_candidate_without_era_span_still_matches(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Backwards compatibility: no `era_span` supplied means `_provably_disjoint` fails
+    open, so a single validated candidate matches exactly as before Phase 16 — same
+    "no era_span, no new behavior" contract the tie-break guard already honors."""
+    atom = _atom(["104599"])
+    submissions = {
+        "104599": {
+            "sic": "5731", "sicDescription": "Retail-Electronics", "name": "CIRCUIT CITY STORES INC",
+            "filings": _filings(["2005-01-01"]),
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Circuit City Stores": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Circuit City Stores")
+
     assert result["match_status"] == STATUS_MATCHED
     assert result["matched_cik"] == "104599"
     assert result["match_basis"] == "single_validated_candidate"
+
+
+def test_match_issuer_name_single_candidate_quiet_filer_still_matches(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Fail-closed-on-uncertainty guard: a single candidate whose filing history
+    brackets the era but has no filing landing inside it is `ACTIVITY_UNKNOWN`, not
+    `ACTIVITY_DISJOINT` — never rejected, same "a real filer can be quiet across a short
+    window" reasoning the tie-break guard already applies."""
+    atom = _atom(["104599"])
+    submissions = {
+        "104599": {
+            "sic": "5731", "sicDescription": "Retail-Electronics", "name": "CIRCUIT CITY STORES INC",
+            "filings": _filings(["2010-01-01", "2025-01-01"]),  # brackets, nothing inside
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Circuit City Stores": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Circuit City Stores", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "104599"
+
+
+def test_match_issuer_name_single_candidate_disjoint_falls_through_to_broader_query(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The upside this design enables: rejecting a provably-wrong single candidate
+    doesn't just lose the match — it lets the loop try a shorter query, which here
+    surfaces the real second candidate and resolves correctly via the existing
+    filing-activity tie-break instead of settling for the wrong CIK."""
+    full_atom = _atom(["1"])  # only the wrong shell reachable at the full query
+    short_atom = _atom(["1", "2"])  # the broader query also finds the real company
+    submissions = {
+        "1": {
+            "sic": "1000", "sicDescription": "A", "name": "Ambiguous Co Inc",
+            "filings": _filings(["2005-01-01"]),  # disjoint
+        },
+        "2": {
+            "sic": "2000", "sicDescription": "B", "name": "Ambiguous Co",
+            "filings": _filings(["2018-01-01"]),  # plausible
+        },
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Ambiguous Co Inc": full_atom, "Ambiguous Co": short_atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co Inc", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "2"
+    assert result["match_basis"] == "filing_activity_tiebreak"
+
+
+def test_match_issuer_name_single_candidate_fetch_error_fails_open(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A filing-activity fetch failure never rejects — the call is normally a guaranteed
+    cache hit (the identical payload `_validate_candidates` just fetched via `fetch_sic`
+    moments earlier), so an error here signals something unrelated, not evidence against
+    the candidate. Patched directly at `fetch_filing_activity`, since the real client
+    can't independently fail it without also failing the SIC fetch that runs first (both
+    read the identical cached payload)."""
+    atom = _atom(["104599"])
+    submissions = {"104599": {"sic": "5731", "sicDescription": "Retail", "name": "CIRCUIT CITY STORES INC"}}
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Circuit City Stores": atom}, submissions),
+    )
+    monkeypatch.setattr(
+        "utils.edgar_company_search_match.fetch_filing_activity",
+        lambda *a, **k: {"fetch_status": "fetch_error"},
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Circuit City Stores", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "104599"
 
 
 def test_match_issuer_name_both_candidates_disjoint_stays_ambiguous(

@@ -118,7 +118,32 @@ actually looked at, correctly reclassified as `no_validated_match` rather than s
 an falsely-alarming ambiguous bucket. This also finally resolved the two running examples
 this docstring has cited since Phase 5/7/11 as "correctly staying unresolved" — `CFLT`
 and `MYLAN` — both purely because their candidate counts (9 and 12) had never before fit
-under the cap, not because of any new logic. [CA][IV][REH][KBT]
+under the cap, not because of any new logic.
+
+Phase 16 closed a gap the filing-activity guard never covered: `_disambiguate_by_filing_activity`
+only ever ran when 2+ candidates validated by name, so a *single* validated candidate was
+accepted on name+SIC alone, with its filing history never checked against `era_span` at
+all — even when that history was flatly disjoint from the era. Quantified first, cache-only
+(zero network calls, `EvidenceRegistry.get(...)` read directly against the request cache
+already populated by every prior real run): applying the identical `ACTIVITY_DISJOINT`
+check to all 2,515 then-`matched` names found 82 with filing history that provably
+couldn't overlap their era (e.g. `AETNA INC` -> CIK 1013761, filings 1996-2015 for an era
+starting 2016-12-12 — the real operating Aetna for those eras is a different CIK,
+1122304 — and several modern-SPAC name collisions like `ALBATROSS ACQUISITION CORP`,
+matched to a CIK whose entire filing history postdates the era it was matched to by
+years), plus 42 more `ACTIVITY_UNKNOWN` (bracketing history, no filing landing inside a
+narrow era window — correctly left alone, same "quiet filer" reasoning as the tie-break
+guard). `_provably_disjoint` now gates the single-candidate accept the same way the tie-
+break already gated a 2+-way accept: `continue` to a shorter query instead of returning a
+confidently-wrong match, so a name whose only reachable candidate is disjoint gets a
+chance to resolve against a different candidate at a broader query (some of the 82 land on
+the *correct* CIK this way, via the existing tie-break, once the wrong one stops
+shadowing it) rather than simply losing its match outright. Fails open exactly like the
+tie-break guard: no `era_span` or a failed filing-activity fetch never rejects. This
+supersedes the Phase 14 regression test asserting the opposite — that test existed to
+keep the single-candidate path unchanged *until this exact audit ran*, not as a permanent
+guarantee; the module docstring's Phase 14 entry above still narrates why the guard
+originally stopped short of this path. [CA][IV][REH][KBT]
 """
 
 from __future__ import annotations
@@ -185,6 +210,8 @@ def match_issuer_name(
             return _result(issuer_name, STATUS_FETCH_ERROR)
         if len(validated) == 1:
             cik, sic_result, matched_name = validated[0]
+            if _provably_disjoint(client, cik, era_span, max_age_days):
+                continue  # provably wrong for this era; a shorter query may find another
             return _result(
                 issuer_name,
                 STATUS_MATCHED,
@@ -330,6 +357,26 @@ def _filing_activity_verdict(activity: dict[str, Any], era_span: tuple[str, str]
     if any(first_day <= day <= last_day for day in dates):
         return ACTIVITY_PLAUSIBLE
     return ACTIVITY_UNKNOWN
+
+
+def _provably_disjoint(
+    client: CachedPrimaryClient, cik: str, era_span: tuple[str, str] | None, max_age_days: int
+) -> bool:
+    """True only when the sole validated candidate's own SEC filing history *proves* it
+    could not have been the operating entity during `era_span` — the same
+    `ACTIVITY_DISJOINT` logic `_disambiguate_by_filing_activity` already applies to a
+    genuine name-collision tie, now also guarding the single-candidate path (see the
+    module docstring's Phase 16 entry for the audit that found this gap). Fails open —
+    never rejects — when `era_span` is missing or the filing-activity fetch itself
+    errors: this call is effectively always a free cache hit, since `_validate_candidates`
+    just fetched the identical payload via `fetch_sic` moments earlier, so a fetch
+    failure here signals a new, unrelated problem, not evidence against the candidate."""
+    if era_span is None:
+        return False
+    activity = fetch_filing_activity(client, cik, max_age_days=max_age_days)
+    if activity.get("fetch_status") != "ok":
+        return False
+    return _filing_activity_verdict(activity, era_span) == ACTIVITY_DISJOINT
 
 
 def _disambiguate_by_filing_activity(
