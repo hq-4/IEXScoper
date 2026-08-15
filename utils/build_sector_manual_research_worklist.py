@@ -47,6 +47,9 @@ REQUIRED_COLUMNS = (
     "resolved_cik",
     "sic_coverage_status",
     "identity_disproven",
+    "blank_sic_lead_cik",
+    "blank_sic_lead_name",
+    "blank_sic_lead_high_confidence",
 )
 WORKLIST_COLUMNS = [
     "priority_rank",
@@ -61,6 +64,9 @@ WORKLIST_COLUMNS = [
     "instrument_class",
     "has_googleable_name",
     "identity_disproven",
+    "blank_sic_lead_cik",
+    "blank_sic_lead_name",
+    "blank_sic_lead_high_confidence",
     "cik_source",
 ]
 FUND_NO_SIC_NEEDED = "fund_no_sic_needed"
@@ -151,6 +157,8 @@ def build_summary(
         "top_n": min(config.top_n, worklist.height),
         "has_googleable_name_count": int(worklist["has_googleable_name"].sum()),
         "identity_disproven_count": int(worklist["identity_disproven"].sum()),
+        "blank_sic_lead_count": int(worklist["blank_sic_lead_cik"].is_not_null().sum()),
+        "blank_sic_lead_high_confidence_count": int(worklist["blank_sic_lead_high_confidence"].sum()),
         "classification_counts": count_by(worklist, "source_classification"),
         "top_classification_counts": count_by(worklist.head(config.top_n), "source_classification"),
         "sort_order": ["trade_rows descending"],
@@ -160,6 +168,11 @@ def build_summary(
             "identity_disproven=true (Phase 18) is stronger than a plain unmatched name: SEC's own "
             "filing history proves the asserted issuer name can't be the operating entity for this "
             "era — don't research the name as printed; research the ticker/date range instead.",
+            "blank_sic_lead_cik (Phase 19) is a candidate CIK whose name matches and whose filing "
+            "history overlaps the era, but with no SIC on record — a research lead, not a confirmed "
+            "identity; verify before trusting, especially when blank_sic_lead_high_confidence=false "
+            "(its only filings may be ownership-disclosure forms an unrelated party filed, not proof "
+            "it was ever the operating entity).",
             "manual_cik/manual_sic/manual_notes are blank by design, for the researcher's own "
             "findings; there is no re-import tool for this file yet.",
             f"{excluded_fund_count} no-CIK eras were excluded entirely as funds/ETFs "
@@ -198,6 +211,9 @@ def write_markdown(path: Path, top_rows: pl.DataFrame, summary: dict[str, Any]) 
         f"- Rows with a googleable issuer name already asserted: `{summary['has_googleable_name_count']}`",
         f"- Rows with a disproven issuer name (Phase 18 — don't trust it as printed): "
         f"`{summary['identity_disproven_count']}`",
+        f"- Rows with a blank-SIC research lead (Phase 19), "
+        f"`{summary['blank_sic_lead_high_confidence_count']}` high-confidence: "
+        f"`{summary['blank_sic_lead_count']}`",
         f"- Top rows shown: `{summary['top_n']}`",
         "",
         "## Top Research Targets",
@@ -209,6 +225,9 @@ def write_markdown(path: Path, top_rows: pl.DataFrame, summary: dict[str, Any]) 
         issuer = row["identity_issuer"] or ""
         if row["identity_disproven"] and issuer:
             issuer = f"~~{issuer}~~ (disproven)"
+        if row["blank_sic_lead_cik"]:
+            mark = "✓" if row["blank_sic_lead_high_confidence"] else "?"
+            issuer += f" [lead: {row['blank_sic_lead_cik']} {row['blank_sic_lead_name']} {mark}]"
         lines.append(
             "| {priority_rank} | {symbol} | {symbol_era_id} | {source_classification} | "
             "{identity_issuer} | {trade_rows} | {first_day} | {last_day} |".format(

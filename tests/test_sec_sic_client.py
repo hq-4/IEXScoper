@@ -229,17 +229,24 @@ def test_fetch_sic_retries_exhausted_is_fetch_error(tmp_path, monkeypatch) -> No
     assert result["fetch_status"] == STATUS_FETCH_ERROR
 
 
-def _filings_payload(dates: list[str], *, files: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _filings_payload(
+    dates: list[str],
+    *,
+    files: list[dict[str, Any]] | None = None,
+    forms: list[str] | None = None,
+    entity_type: str | None = None,
+) -> dict[str, Any]:
     """Real shape: `filings.recent` is parallel columnar arrays (all the same length),
     keyed by form/filingDate/accessionNumber/primaryDocument/... `filings.files` lists
-    older-history shard filenames once `recent` exceeds ~1000 rows."""
-    return {
+    older-history shard filenames once `recent` exceeds ~1000 rows. `forms` defaults to
+    all-substantive (`10-K`) so existing callers are unaffected."""
+    payload = {
         "sic": "1311",
         "sicDescription": "Crude Petroleum & Natural Gas",
         "name": "Continental Resources, Inc.",
         "filings": {
             "recent": {
-                "form": ["10-K"] * len(dates),
+                "form": forms or (["10-K"] * len(dates)),
                 "filingDate": dates,
                 "accessionNumber": [f"000{i}" for i in range(len(dates))],
                 "primaryDocument": ["doc.htm"] * len(dates),
@@ -247,6 +254,9 @@ def _filings_payload(dates: list[str], *, files: list[dict[str, Any]] | None = N
             "files": files or [],
         },
     }
+    if entity_type is not None:
+        payload["entityType"] = entity_type
+    return payload
 
 
 def test_fetch_filing_activity_summarizes_recent_filings(tmp_path, monkeypatch) -> None:
@@ -293,6 +303,67 @@ def test_fetch_filing_activity_missing_filings_block_is_empty(tmp_path, monkeypa
     assert result["latest_filing_date"] is None
     assert result["has_older_shards"] is False
     assert result["fetch_status"] == STATUS_OK
+
+
+def test_fetch_filing_activity_extracts_substantive_dates_and_entity_type(
+    tmp_path, monkeypatch
+) -> None:
+    """Phase 19: `substantive_filing_dates` only includes dates whose form is a genuine
+    operating/registration disclosure (`SUBSTANTIVE_FORMS`) — an ownership-disclosure
+    form (`SC 13G`) is excluded even though it still counts toward `filing_dates`.
+    `entity_type` surfaces SEC's own `entityType` classification unchanged."""
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse(
+            _filings_payload(
+                ["2018-01-01", "2019-01-01", "2020-01-01"],
+                forms=["10-K", "SC 13G", "8-K"],
+                entity_type="operating",
+            )
+        ),
+    )
+    result = fetch_filing_activity(_client(tmp_path), "732834")
+
+    assert result["filing_dates"] == ("2018-01-01", "2019-01-01", "2020-01-01")
+    assert result["substantive_filing_dates"] == ("2018-01-01", "2020-01-01")
+    assert result["entity_type"] == "operating"
+
+
+def test_fetch_filing_activity_substantive_dates_empty_when_only_ownership_forms(
+    tmp_path, monkeypatch
+) -> None:
+    """The real `FIRST REPUBLIC BANK`-shaped case this guards against: a registrant
+    whose entire filing history is ownership-disclosure forms has an empty
+    `substantive_filing_dates` even though `filing_dates` is non-empty."""
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse(
+            _filings_payload(
+                ["2018-01-01", "2019-01-01"], forms=["SC 13G", "SC 13G/A"], entity_type="other"
+            )
+        ),
+    )
+    result = fetch_filing_activity(_client(tmp_path), "1132979")
+
+    assert result["filing_dates"] == ("2018-01-01", "2019-01-01")
+    assert result["substantive_filing_dates"] == ()
+    assert result["entity_type"] == "other"
+
+
+def test_fetch_filing_activity_missing_entity_type_and_forms_degrade_gracefully(
+    tmp_path, monkeypatch
+) -> None:
+    """A malformed/missing `filings.recent.form` column (never seen in real SEC data,
+    but this module never trusts payload shape blindly) degrades to an empty
+    `substantive_filing_dates` rather than raising; missing `entityType` -> `None`."""
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse({"sic": "1311", "sicDescription": "S", "name": "N"}),
+    )
+    result = fetch_filing_activity(_client(tmp_path), "1")
+
+    assert result["substantive_filing_dates"] == ()
+    assert result["entity_type"] is None
 
 
 def test_fetch_filing_activity_reuses_cached_submissions_payload(tmp_path, monkeypatch) -> None:

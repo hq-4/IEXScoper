@@ -1,5 +1,66 @@
 # Task List
 
+- 2026-08-15: SIC/sector classification, Phase 19 (`blank_sic_lead` research-lead flag —
+  built as auto-acceptance, redesigned to informational after due diligence). User: "what
+  else is next, i just merged" (after PR #22, Phase 18). Continued the same "fresh pass
+  over the worklist's top rows" method Phase 18 used.
+  Found `FIRST REPUBLIC BANK/CA` (priority rank 3, 1.86M trade rows): EDGAR's `"FIRST
+  REPUBLIC"` search surfaces CIK 1132979, current name the *exact* string `"FIRST
+  REPUBLIC BANK"`, but `_validate_candidates` rejects it outright for having a blank SIC
+  — the name falls through to a hopelessly generic 1-word `"FIRST"` query (100+
+  candidates, ambiguous). That CIK's own filing history has 42 filings spanning
+  2004-2024, squarely covering FRC's 2016-2023 era — looked like overwhelming evidence to
+  *auto-accept* the candidate, the same way `_provably_disjoint` (Phase 16) auto-*rejects*
+  one. Built exactly that: `_blank_sic_admissible` admitting a blank-SIC candidate when
+  its filing history is `ACTIVITY_PLAUSIBLE` for the era, a new `BASIS_BLANK_SIC_FILING_ACTIVITY`
+  match_basis, quantified cache-only against the 1,844 still-unresolved names: 34 hits.
+  **Before shipping**, spot-checked the resulting matches by hand (this project's
+  standing practice) and found a real, serious flaw: fetching the *full* filing-type
+  breakdown (not just dates) for all 34 candidates showed roughly half had
+  `entityType="other"` and **zero substantive filings ever** — their entire history was
+  ownership-disclosure forms (SC 13G, Form 3/4/5, 13F-NT) that any unrelated third party
+  can file *about* a CIK regardless of whether it was ever the real operating entity
+  (`BLACK KNIGHT INC`, `FARMER BROS CO`, `SHELL MIDSTREAM PARTNERS LP`, `STEEL PARTNERS
+  HOLDINGS LP`, `WELLESLEY BANK` among them — all real companies, but these specific
+  candidate CIKs are very likely the wrong entity). Worse: tightening the rule to require
+  a genuine substantive filing (10-K/10-Q/8-K/etc.) landing in the era — the obvious fix —
+  would have excluded `FIRST REPUBLIC BANK` itself too, since its entire 42-filing
+  history is also ownership-disclosure-only (plausibly explained by Section 12(i): some
+  banks file their real 10-Ks with their banking regulator instead of SEC, so SEC's own
+  EDGAR never sees them). No reliable way to distinguish "genuinely the right company,
+  files elsewhere" from "coincidental secondary filer" exists anywhere in this repo's
+  data — auto-acceptance was abandoned.
+  Redesigned as **informational-only**, mirroring Phase 18's already-proven-safe pattern:
+  `_find_blank_sic_lead` surfaces the same candidate as `blank_sic_lead_cik`/
+  `blank_sic_lead_name`/`blank_sic_lead_high_confidence` result fields, never changing
+  `match_status`/`matched_cik`. `blank_sic_lead_high_confidence` (from the new
+  `_is_high_confidence_lead`) requires both `entityType="operating"` *and* a substantive
+  filing (`sec_sic_client.SUBSTANTIVE_FORMS` — a new constant distinguishing real
+  operating/registration disclosure from ownership-disclosure forms) landing in the era —
+  so a researcher sees every lead but knows which ones are worth checking first, rather
+  than silently hiding the uncertain half or silently trusting them as fact.
+  Threaded through the same three-layer pipeline as Phase 18 (`build_edgar_company_search_matches.py`'s
+  schema/summary; a new `sector_enrichment_inputs.apply_blank_sic_lead` side-channel;
+  the manual-research worklist as new columns, a summary count split by confidence, and a
+  `[lead: CIK name ✓/?]` marker in the top-rows table). 12 new tests (auto-accept path
+  fully replaced with informational-path tests: lead surfaced without matching, disjoint/
+  unknown activity never leads, no era_span never leads, the Confluent shell regression
+  guard, high-vs-low-confidence flagging, `SUBSTANTIVE_FORMS`/`entity_type` extraction in
+  `sec_sic_client`); 535 tests pass (was 531 going into this phase); ruff/bandit clean.
+  Real run (three passes total): first pass confirmed match outcomes byte-identical to
+  pre-Phase-19 (`matched_count` 2,441 unchanged) but only found 9 leads — far short of the
+  34 quantified. Diagnosed live: a real bug in the loop's cap-carryforward — a lead found
+  at a narrower query level (`"FIRST REPUBLIC"`, 12 candidates) was silently discarded
+  when a later, broader query (`"FIRST"`, 100+ candidates) hit the `MAX_CANDIDATES_TO_VALIDATE`
+  cap and returned immediately without carrying `blank_sic_lead` forward — losing the
+  real `FIRST REPUBLIC BANK` lead itself, the phase's own motivating case. Fixed (one
+  missing `blank_sic_lead=blank_sic_lead` kwarg), added a regression test reproducing the
+  exact scenario, reran: **34 leads found (12 high-confidence)**, `FRC` correctly carries
+  `blank_sic_lead_cik=1132979`. Reconciled: `distinct_ciks_resolved` unchanged at 8,448;
+  manual-research worklist unchanged at 11,783 eras / 166.4M trade rows (fully expected —
+  informational-only, no CIK resolution changed); worklist-level lead count 53 across
+  eras (34 unique names, some spanning 2+ eras), 17 high-confidence. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-15: SIC/sector classification, Phase 18 (`identity_disproven` worklist flag). User:
   "what else is next, i just merged" (after Phase 17's negative-result docs PR). Phase 17's own
   conclusion was that no further quantified backlog item remained — the next lead would need a

@@ -41,6 +41,26 @@ STATUS_FETCH_ERROR = "fetch_error"
 
 FILING_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# Genuine operating/registration disclosure a real reporting company files about
+# *itself* — as opposed to secondary ownership-disclosure forms (SC 13G/13D, Form 3/4/5,
+# 13F-NT) that any outside investor can file *about* a CIK regardless of whether that CIK
+# is itself the real operating entity. Deliberately excludes the SC-13-family and
+# Form-3/4/5/13F forms: `edgar_company_search_match._blank_sic_admissible` (Phase 19)
+# found several worklist candidates whose *entire* filing history was ownership-disclosure
+# forms only (`entityType="other"`, zero 10-Ks/10-Qs ever) — a real but misleading signal
+# that any CIK can accumulate without ever having been an operating company itself.
+SUBSTANTIVE_FORMS = frozenset(
+    {
+        "10-K", "10-K/A", "10-KT", "10-KT/A", "10-Q", "10-Q/A",
+        "8-K", "8-K/A",
+        "S-1", "S-1/A", "S-3", "S-3/A", "S-4", "S-4/A", "S-11", "S-11/A",
+        "20-F", "20-F/A", "40-F", "40-F/A", "6-K", "6-K/A",
+        "N-2", "N-2/A", "N-CSR", "N-CSRS",
+        "DEF 14A", "DEFM14A", "DEFR14A",
+        "424B1", "424B2", "424B3", "424B4", "424B5", "POS AM", "ARS",
+    }
+)
+
 
 def fetch_sic(
     client: CachedPrimaryClient, cik: str, *, max_age_days: int = DEFAULT_MAX_AGE_DAYS
@@ -149,27 +169,42 @@ def _filing_activity_payload_result(cik: str, payload: Any, from_cache: bool) ->
     if not isinstance(payload, dict):
         return _base_filing_activity_result(cik, STATUS_FETCH_ERROR, from_cache)
     dates = _recent_filing_dates(payload)
+    substantive_dates = _recent_filing_dates(payload, forms=SUBSTANTIVE_FORMS)
     result = _base_filing_activity_result(cik, STATUS_OK, from_cache)
     result["filing_dates"] = dates
     result["earliest_filing_date"] = dates[0] if dates else None
     result["latest_filing_date"] = dates[-1] if dates else None
+    result["substantive_filing_dates"] = substantive_dates
+    result["entity_type"] = str(payload.get("entityType") or "").strip() or None
     result["has_older_shards"] = bool(payload.get("filings", {}).get("files"))
     return result
 
 
-def _recent_filing_dates(payload: dict[str, Any]) -> tuple[str, ...]:
+def _recent_filing_dates(payload: dict[str, Any], *, forms: frozenset[str] | None = None) -> tuple[str, ...]:
     """Sorted, distinct `YYYY-MM-DD` dates out of `filings.recent.filingDate` — SEC's
     parallel-array-of-columns shape (`form`/`filingDate`/`accessionNumber`/... all the
-    same length), so only the one column this needs is read. Malformed/blank entries are
+    same length), so only the columns this needs are read. Malformed/blank entries are
     dropped rather than raising, same "never trust the payload shape blindly" posture as
-    `_former_names`."""
+    `_former_names`. `forms`, if given, restricts to rows whose `form` value is in that
+    set (see `SUBSTANTIVE_FORMS`) — the parallel `form` column is only read when a filter
+    is actually requested, so the ordinary unrestricted call stays as cheap as before."""
     recent = payload.get("filings", {}).get("recent", {})
     if not isinstance(recent, dict):
         return ()
     raw_dates = recent.get("filingDate")
     if not isinstance(raw_dates, list):
         return ()
-    valid = {date for date in raw_dates if isinstance(date, str) and FILING_DATE_PATTERN.match(date)}
+    if forms is None:
+        valid = {date for date in raw_dates if isinstance(date, str) and FILING_DATE_PATTERN.match(date)}
+        return tuple(sorted(valid))
+    raw_forms = recent.get("form")
+    if not isinstance(raw_forms, list) or len(raw_forms) != len(raw_dates):
+        return ()
+    valid = {
+        date
+        for date, form in zip(raw_dates, raw_forms, strict=False)
+        if isinstance(date, str) and FILING_DATE_PATTERN.match(date) and form in forms
+    }
     return tuple(sorted(valid))
 
 
@@ -185,6 +220,8 @@ def _base_filing_activity_result(cik: str, fetch_status: str, from_cache: bool) 
         "filing_dates": (),
         "earliest_filing_date": None,
         "latest_filing_date": None,
+        "substantive_filing_dates": (),
+        "entity_type": None,
         "has_older_shards": False,
         "fetch_status": fetch_status,
         "from_cache": from_cache,

@@ -121,10 +121,14 @@ def test_match_issuer_name_two_candidates_both_validate_is_genuinely_ambiguous(
     assert result["matched_cik"] is None
 
 
-def _filings(dates: list[str], *, has_older_shards: bool = False) -> dict[str, Any]:
-    """Real shape: `filings.recent` is parallel columnar arrays."""
+def _filings(
+    dates: list[str], *, has_older_shards: bool = False, form: str = "10-K"
+) -> dict[str, Any]:
+    """Real shape: `filings.recent` is parallel columnar arrays. `form` defaults to a
+    substantive type (`10-K`); pass e.g. `"SC 13G"` to simulate an ownership-disclosure-
+    only filer for the Phase 19 `blank_sic_lead_high_confidence` tests."""
     return {
-        "recent": {"form": ["10-K"] * len(dates), "filingDate": dates},
+        "recent": {"form": [form] * len(dates), "filingDate": dates},
         "files": [{"name": "shard-001.json"}] if has_older_shards else [],
     }
 
@@ -936,3 +940,183 @@ def test_match_issuer_name_identity_disproven_false_for_ordinary_match(
 
     assert result["match_status"] == STATUS_MATCHED
     assert result["identity_disproven"] is False
+
+
+def test_match_issuer_name_surfaces_blank_sic_lead_without_matching(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Phase 19: the real `FIRST REPUBLIC BANK` case — an exact name match (after the
+    `/CA` jurisdiction tag strips, same as `Core Scientific, Inc./tx`) with a blank SIC
+    and plausible filing activity is surfaced as a research lead, never accepted as a
+    match. Auditing the real population before shipping found "blank SIC + a filing
+    lands in the era" too weak a signal to auto-accept on (see the module docstring's
+    Phase 19 entry) — this stays informational only."""
+    atom = _atom(["1132979"])
+    submissions = {
+        "1132979": {
+            "sic": "", "sicDescription": "", "name": "FIRST REPUBLIC BANK",
+            "entityType": "other",
+            "filings": _filings(["2014-02-12", "2018-05-01", "2022-02-10"], form="SC 13G"),
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"FIRST REPUBLIC BANK/CA": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "FIRST REPUBLIC BANK/CA", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+    assert result["blank_sic_lead_cik"] == "1132979"
+    assert result["blank_sic_lead_name"] == "FIRST REPUBLIC BANK"
+    assert result["blank_sic_lead_high_confidence"] is False  # entityType="other", no 10-K/10-Q
+
+
+def test_match_issuer_name_blank_sic_lead_high_confidence_when_operating_with_substantive_filing(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The other half of the real population: a blank-SIC candidate SEC itself
+    classifies as `entityType="operating"` with a genuine substantive filing (not just
+    an ownership-disclosure form) landing in the era is flagged high-confidence, so a
+    researcher knows which leads are worth checking first."""
+    atom = _atom(["1"])
+    submissions = {
+        "1": {
+            "sic": "", "sicDescription": "", "name": "Ambiguous Co",
+            "entityType": "operating",
+            "filings": _filings(["2018-05-01"], form="10-K"),  # substantive, inside era
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["blank_sic_lead_cik"] == "1"
+    assert result["blank_sic_lead_high_confidence"] is True
+
+
+def test_match_issuer_name_no_blank_sic_lead_without_era_span(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Backwards compatibility: with no `era_span` supplied, no lead is ever surfaced —
+    behavior stays byte-identical to before Phase 19."""
+    atom = _atom(["1132979"])
+    submissions = {
+        "1132979": {
+            "sic": "", "sicDescription": "", "name": "FIRST REPUBLIC BANK",
+            "filings": _filings(["2018-05-01"], form="SC 13G"),
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"FIRST REPUBLIC BANK/CA": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "FIRST REPUBLIC BANK/CA")
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+    assert result["blank_sic_lead_cik"] is None
+
+
+def test_match_issuer_name_blank_sic_lead_survives_a_later_over_cap_query(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Regression guard for the real `FIRST REPUBLIC BANK/CA` bug caught in Phase 19's
+    own real run: a lead found at a narrower, earlier query level ("FIRST REPUBLIC", 2
+    candidates) must survive the loop continuing to a broader, later query that hits the
+    over-`MAX_CANDIDATES_TO_VALIDATE` cap ("FIRST", 100 candidates) — losing it there
+    would silently drop a real research lead just because a less useful query ran after
+    the useful one."""
+    over_cap = MAX_CANDIDATES_TO_VALIDATE + 1
+    submissions = {
+        "1132979": {
+            "sic": "", "sicDescription": "", "name": "FIRST REPUBLIC BANK",
+            "filings": _filings(["2018-05-01"], form="SC 13G"),
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get(
+            {
+                "FIRST REPUBLIC": _atom(["1132979"]),
+                "FIRST": _atom([str(n) for n in range(1, over_cap + 1)]),
+            },
+            submissions,
+        ),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "FIRST REPUBLIC BANK/CA", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["blank_sic_lead_cik"] == "1132979"
+    assert result["blank_sic_lead_name"] == "FIRST REPUBLIC BANK"
+
+
+def test_match_issuer_name_no_blank_sic_lead_when_disjoint(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A blank-SIC candidate whose filing history is provably disjoint from the era
+    isn't surfaced as a lead either — only real evidence of era overlap counts."""
+    atom = _atom(["1"])
+    submissions = {
+        "1": {
+            "sic": "", "sicDescription": "", "name": "Ambiguous Co",
+            "filings": _filings(["2005-01-01"], form="SC 13G"),  # disjoint from ERA_SPAN
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["blank_sic_lead_cik"] is None
+
+
+def test_match_issuer_name_no_blank_sic_lead_when_unknown_activity(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A blank-SIC candidate whose filing history merely brackets the era (no filing
+    actually lands inside it) is `ACTIVITY_UNKNOWN`, not `ACTIVITY_PLAUSIBLE` — no lead
+    surfaced, same fail-closed posture as every other use of this signal."""
+    atom = _atom(["1"])
+    submissions = {
+        "1": {
+            "sic": "", "sicDescription": "", "name": "Ambiguous Co",
+            "filings": _filings(["2010-01-01", "2025-01-01"], form="SC 13G"),  # brackets
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["blank_sic_lead_cik"] is None
+
+
+def test_match_issuer_name_blank_sic_lead_never_becomes_a_match(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Critical regression guard: the module docstring's own motivating case for the
+    blank-SIC guard — a shell with zero real filing history — stays fully rejected, no
+    lead and no match, since it has no filings at all (ACTIVITY_DISJOINT)."""
+    atom = _atom(["1171179"])
+    submissions = {"1171179": {"sic": "", "sicDescription": "", "name": "CONFLUENT INC"}}
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"CONFLUENT INC": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "CONFLUENT INC-CLASS A", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+    assert result["blank_sic_lead_cik"] is None

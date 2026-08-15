@@ -37,20 +37,38 @@ def load_stable_classes(path: Path) -> pl.DataFrame:
     )
 
 
+EDGAR_METADATA_COLUMNS = (
+    "identity_disproven",
+    "blank_sic_lead_cik",
+    "blank_sic_lead_name",
+    "blank_sic_lead_high_confidence",
+)
+EDGAR_METADATA_DEFAULTS = {
+    "identity_disproven": False,
+    "blank_sic_lead_cik": None,
+    "blank_sic_lead_name": None,
+    "blank_sic_lead_high_confidence": False,
+}
+
+
 def load_edgar_matches(path: Path) -> pl.DataFrame | None:
     """Tier E (EDGAR company-search-matched CIKs, see `utils.sector_cik_reconcile`) is
     skipped, not an error, when `utils/build_edgar_company_search_matches.py` hasn't
-    been run yet. Carries `identity_disproven` (Phase 18) alongside the CIK-matching
-    columns purely as informational metadata for `apply_identity_disproven` below —
-    `reconcile_cik` re-selects only the columns it needs, so this extra column never
-    reaches or affects CIK resolution. Degrades to an all-`False` column when reading an
-    older matches file built before Phase 18 added the field, rather than failing."""
+    been run yet. Carries `EDGAR_METADATA_COLUMNS` (Phase 18/19) alongside the
+    CIK-matching columns purely as informational metadata for `apply_identity_disproven`/
+    `apply_blank_sic_lead` below — `reconcile_cik` re-selects only the columns it needs,
+    so these extra columns never reach or affect CIK resolution. Degrades to each
+    column's default when reading an older matches file built before it existed, rather
+    than failing."""
     if not path.exists():
         return None
     frame = pl.read_parquet(path)
-    if "identity_disproven" not in frame.columns:
-        frame = frame.with_columns(pl.lit(False).alias("identity_disproven"))
-    return frame.select("identity_issuer", "matched_cik", "identity_disproven")
+    missing = [column for column in EDGAR_METADATA_COLUMNS if column not in frame.columns]
+    if missing:
+        frame = frame.with_columns(
+            pl.lit(EDGAR_METADATA_DEFAULTS[column]).alias(column) for column in missing
+        )
+    return frame.select("identity_issuer", "matched_cik", *EDGAR_METADATA_COLUMNS)
 
 
 def apply_identity_disproven(
@@ -68,6 +86,27 @@ def apply_identity_disproven(
     )
     joined = era_identity.join(lookup, on="identity_issuer", how="left")
     return joined.with_columns(pl.col("identity_disproven").fill_null(False))
+
+
+def apply_blank_sic_lead(
+    era_identity: pl.DataFrame, edgar_matches: pl.DataFrame | None
+) -> pl.DataFrame:
+    """Backfills the Phase 19 `blank_sic_lead_*` research-lead fields onto every era
+    sharing a Tier-E-searched `identity_issuer` — `None`/`False` when no EDGAR search
+    ever ran, or it ran but found no lead. Purely informational, same "never touches
+    `resolved_cik`/`cik_source`" contract as `apply_identity_disproven`."""
+    lead_columns = ("blank_sic_lead_cik", "blank_sic_lead_name", "blank_sic_lead_high_confidence")
+    if edgar_matches is None or not edgar_matches.height:
+        return era_identity.with_columns(
+            pl.lit(None, dtype=pl.String).alias("blank_sic_lead_cik"),
+            pl.lit(None, dtype=pl.String).alias("blank_sic_lead_name"),
+            pl.lit(False).alias("blank_sic_lead_high_confidence"),
+        )
+    lookup = edgar_matches.select("identity_issuer", *lead_columns).unique(
+        subset="identity_issuer", keep="first"
+    )
+    joined = era_identity.join(lookup, on="identity_issuer", how="left")
+    return joined.with_columns(pl.col("blank_sic_lead_high_confidence").fill_null(False))
 
 
 def load_iex_fallback_names(path: Path) -> pl.DataFrame | None:
