@@ -594,6 +594,18 @@ moved in the expected direction). Open for follow-up: `GROUP`-suffix over-normal
 12/13, still untouched); whether the 74 names this phase net-unmatched are recoverable some other
 way (not investigated — out of this phase's scope). [CA][IV][REH][CDiP][KBT]
 
+**Phase 17 attempt (`GROUP`-suffix over-normalization) — negative result, not shipped** (see
+`docs/TASK_LIST.md`'s Phase 17 entry for full detail). Quantified removing `"GROUP"` from
+`sec_name_cik_lookup.LEGAL_SUFFIXES` against both tiers that share it, entirely from local
+data/cache: Tier D would lose 54 currently-correct matches for only 9 gained (the losses are real
+same-company matches depending on `GROUP`-stripping to bridge SEC's own short-name vs. market-name
+convention gap, or to prefix-match financial products issued under a parent holding company's
+CIK); Tier E gained 1 of 1,095 currently-ambiguous names. The `CLR`/Continental Resources
+collision this thread originally targeted was already solved by Phase 14's filing-activity
+tie-break, an independent-evidence mechanism that doesn't touch `normalize_name` at all — so the
+one real case motivating this fix no longer needs it. `GROUP` stays in `LEGAL_SUFFIXES`,
+unchanged; no code shipped. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

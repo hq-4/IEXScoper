@@ -1,5 +1,52 @@
 # Task List
 
+- 2026-08-15: SIC/sector classification, Phase 17 attempt (`GROUP`-suffix over-normalization) —
+  investigated, quantified, and **not shipped**: negative result, same shape as Phase 13's
+  ticker-based tie-break attempt. Picked up as the last open thread from this session's earlier
+  "what else is next" choice (the alternative to Phase 16's audit).
+  Root hypothesis (Phase 12): `sec_name_cik_lookup.normalize_name`'s legal-suffix-strip loop
+  treats `"GROUP"` as droppable, so unrelated companies whose names differ only by that word
+  (`"Continental Resources, Inc."` vs `"Continental Resources Group, Inc."`) collapse to the same
+  normalized string and cause false collisions.
+  Quantified both tiers that share `normalize_name`, entirely from local data/cache (zero network
+  calls):
+  - **Tier D** (SEC current-listing name index, `sec_name_cik_lookup.build_name_cik_index` +
+    `match_by_name`): rebuilt the index and replayed every era with `GROUP` removed from
+    `LEGAL_SUFFIXES`. Result: **54 currently-correct matches would be LOST**, only **9 gained** —
+    a clear net negative, not a wash. The losses aren't bugs being fixed; they're genuine
+    same-company matches that depend on `GROUP`-stripping to bridge a real naming-convention gap
+    — SEC's own `sec_name` field is sometimes shorter than the market name (`"BRP Inc."` for the
+    real "BRP Group, Inc.", CIK 1748797; `"FG Holdings Ltd"` for "FG Group Holdings Inc") — or to
+    correctly prefix-match a family of SEC-registered financial products issued under a parent
+    holding company's own CIK (13 of the 54 are Goldman Sachs Group-issued structured
+    notes/ETFs correctly resolving to CIK 886982; without `GROUP` stripped, `"GOLDMAN SACHS
+    GROUP"` (3 tokens) no longer satisfies the prefix-match's exact-trailing-token rule against
+    `"GOLDMAN SACHS ACCESS ..."`, so the match is lost). Separately checked how often `GROUP`
+    itself is even the cause of a raw SEC-universe name collision (the theorized mechanism): only
+    **4 of 13** total ambiguous-normalized-name collisions in the whole SEC current-listing table
+    involve `GROUP` at all (`QVC`, `UBS`, `BRC`, `TARGET`) — and all 4 are already safely excluded
+    from the Tier D index today by the existing "2+ CIKs collapse -> drop, never guess" design, so
+    they were never a false-match risk to begin with, only a lost-match one.
+  - **Tier E** (`edgar_company_search_match._names_match`, live EDGAR search + validate): replayed
+    all 1,095 currently-`ambiguous_candidates` names against the existing SQLite request cache
+    (network calls forcibly blocked via a monkeypatched `requests.get` that raises, to prove
+    nothing live was needed) with `GROUP` removed from `LEGAL_SUFFIXES`. Result: **1 of 1,095**
+    newly resolved (`MOXIAN INC` -> CIK 1516805, via the existing filing-activity tie-break).
+    Essentially zero yield — the specific case this thread was originally about, `CLR`/Continental
+    Resources, was already solved by Phase 14's filing-activity tie-break (an independent-evidence
+    disambiguator that doesn't touch `normalize_name` at all), so the collision-avoidance benefit
+    this fix would have provided for Tier E was already captured by a safer mechanism before this
+    phase even started.
+  Conclusion: shipping this would cost real, verified-correct matches (mostly in Tier D) for
+  essentially no yield in either tier. Not built — no code changed, only throwaway quantification
+  scripts (not committed), same "quantify before touching shared logic" discipline the module's
+  own history already demands of any change to `normalize_name`. `GROUP` stays in
+  `LEGAL_SUFFIXES`, unchanged. With this and Phase 16 both closed, every specific lead this session
+  identified is now either shipped or ruled out with evidence — no further concrete, quantified
+  candidate remains queued; the next step is a fresh pass over the current worklist's top rows
+  (the same method every prior "what else is next" phase used to find its lead in the first
+  place), not a known backlog item. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-14: SIC/sector classification, Phase 16 (81-name existing-match filing-activity
   audit). User: "what else is next," offered a scoped choice between two threads Phase 14/15
   left open — the deferred audit of already-`matched` names for filing-activity-disjoint false
