@@ -1,5 +1,42 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 31 (whitespace-tolerant bare
+  share-class-letter descriptor). Continuing the autonomous "/goal ... then merge, then
+  continue the cycle" directive after PR #34, Phase 30. Directly traced Phase 30's one
+  residual open case: `TUSIMPLE HOLDINGS INC - A` still failed to validate even after
+  the ticker fallback correctly resolved its real CIK (1823593). Root cause:
+  `DESCRIPTOR_PATTERNS`' bare trailing share-class-letter pattern (`-[A-Z]$`, added
+  earlier for `"EVERPURE INC-A"`-shaped names) requires the hyphen directly against the
+  letter with no whitespace tolerance — unlike the `-CL A`/`-CLASS A` patterns, which
+  already got this exact spacing fix back in Phase 12/24. Left un-stripped, the
+  trailing `" - A"` survived into `normalize_name`, where it blocked the legal-suffix
+  pop loop from ever reaching `"INC"`/`"HOLDINGS"` underneath it — comparing a
+  4-token stripped issuer name against a 1-token fully-popped candidate name
+  (`"TUSIMPLE"`), which fails even the broad `_is_prefix_relation` check's
+  `MIN_PREFIX_TOKENS` floor.
+  Widened the pattern to tolerate whitespace on both sides of the hyphen. Scanned the
+  full unresolved population for the same shape: 23 names carry a `" - X"` trailing
+  letter. Cache-only quantification (zero network calls, zero cache misses): 17 newly
+  resolve (`TUSIMPLE HOLDINGS INC - A`, `SWITCH INC - A`, `ATRECA INC - A`, `COWEN INC
+  - A`, `TRIBUNE MEDIA CO - A`, `TERRAFORM POWER INC - A`, `VERSO CORP - A`, `ZENVIA
+  INC - A`, among others), spot-checked against cached SIC data, all correct. No
+  full-index collision-risk replay needed here (unlike shared `normalize_name`
+  changes): `DESCRIPTOR_PATTERNS` only ever strips OpenFIGI's query-side name, never
+  SEC's own registered names, so it structurally cannot create a new ambiguity within
+  the SEC index itself. 3 new test cases; 581 tests pass (was 578); ruff/bandit clean
+  (fixed a `SyntaxWarning` from an un-escaped `\s` in the module docstring along the
+  way — described the pattern in words instead, matching every prior phase's
+  convention of avoiding literal regex syntax in docstring prose).
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`, ~13 second Tier E pass — almost entirely
+  cache hits, only the 23 affected names' query variants changed): Tier E matched
+  3,130/4,314 -> **3,153/4,314** (+23). All 17 quantified names confirmed resolved with
+  the predicted CIK, zero still unresolved. Reconciled: resolved-CIK era rows 14,536 ->
+  **14,565** (+29); distinct CIKs resolved 8,750 -> **8,766** (+16); manual-research
+  worklist 10,790 -> **10,761 eras**, 127.4M -> **123.9M** trade rows. Confirmed
+  `TUSIMPLE HOLDINGS INC - A`'s ticker (`TSP`) no longer appears in the manual-research
+  worklist — Phase 30's residual case fully closed. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 30 (Tier E ticker-lookup fallback — new
   capability, not a constant tweak). Continuing the autonomous "/goal ... then merge,
   then continue the cycle" directive after PR #33, Phase 29. With Phase 27's `INTL`

@@ -104,7 +104,22 @@ Added `"PUBLIC"` to `LEGAL_SUFFIXES`. Checked first: every current-listings name
 others) — never a genuine distinguishing final word on its own. Collision check: zero new
 ambiguous-name collisions (16 either way). Cache-only Tier E quantification: 2 names newly
 resolve (`HORIZON THERAPEUTICS PLC`, `KALERA PLC`), zero network calls, zero cache misses;
-both spot-checked against cached SIC data, correct. [CA][IV][KBT]
+both spot-checked against cached SIC data, correct.
+
+Phase 31: `TUSIMPLE HOLDINGS INC - A` (Phase 30's residual open case) traced to the bare
+trailing share-class-letter descriptor pattern (`-[A-Z]$`) requiring the hyphen directly
+against the letter, with no tolerance for surrounding whitespace — unlike the `-CL A`/
+`-CLASS A` patterns, which already got this same spacing fix in Phase 12. Left un-stripped,
+the trailing `" - A"` blocked the legal-suffix pop loop from ever reaching `"INC"`/
+`"HOLDINGS"` underneath it. Widened to tolerate whitespace on both sides of the hyphen,
+same as the `-CL A`/`-CLASS A` fix. Cache-only quantification: 17 of
+23 names carrying this shape newly resolve (`TUSIMPLE HOLDINGS INC - A`, `SWITCH INC - A`,
+`ATRECA INC - A`, `COWEN INC - A`, `TRIBUNE MEDIA CO - A`, `TERRAFORM POWER INC - A`,
+among others), zero network calls, zero cache misses; spot-checked against cached SIC
+data, all correct. No collision-risk replay needed here (unlike `JURISDICTION_SUFFIX`/
+`LEGAL_SUFFIXES`): `DESCRIPTOR_PATTERNS` only ever strips OpenFIGI's query-side name, not
+SEC's own registered names, so it cannot create a new ambiguity within the SEC index
+itself. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -241,7 +256,12 @@ DESCRIPTOR_PATTERNS = (
     # A bare trailing "-A"/"-B" share-class letter with no "CL"/"CLASS" word attached —
     # e.g. "EVERPURE INC-A", "C3.AI INC-A". Requires exactly one letter after the
     # hyphen so it can't accidentally eat a real two-letter word ending like "-CO".
-    re.compile(r"-[A-Z]$", re.IGNORECASE),
+    # Phase 31: tolerates whitespace around the hyphen too ("TUSIMPLE HOLDINGS INC - A",
+    # "SWITCH INC - A"), the same spacing-tolerance precedent as the `-CL A`/`-CLASS A`
+    # patterns above — the tight form left this real, common share-class shape
+    # un-stripped, which then blocked the legal-suffix pop loop below from ever
+    # reaching "INC"/"HOLDINGS".
+    re.compile(r"\s*-\s*[A-Z]$", re.IGNORECASE),
 )
 
 

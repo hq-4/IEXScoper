@@ -164,6 +164,13 @@ def test_match_by_name_no_match_for_unknown_issuer() -> None:
         ("EVERPURE INC-A", "EVERPURE INC"),
         ("C3.AI INC-A", "C3.AI INC"),
         ("MOBILEYE GLOBAL INC-A", "MOBILEYE GLOBAL INC"),
+        # Phase 31: the same bare-letter rule, but with whitespace around the hyphen --
+        # left un-stripped, this blocked the legal-suffix pop loop from ever reaching
+        # "INC"/"HOLDINGS" underneath it (found tracing TUSIMPLE HOLDINGS INC - A, a
+        # Phase 30 residual case).
+        ("TUSIMPLE HOLDINGS INC - A", "TUSIMPLE HOLDINGS INC"),
+        ("SWITCH INC - A", "SWITCH INC"),
+        ("FORUM MERGER II CORP -   W", "FORUM MERGER II CORP"),
         # A genuine two-letter trailing word must not be eaten by the bare-letter rule.
         ("SOME COMPANY-CO", "SOME COMPANY-CO"),
         # No descriptor suffix present -> unchanged.
