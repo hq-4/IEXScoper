@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- feat: a blank-SIC candidate that clears the existing `blank_sic_lead_high_confidence`
+  bar (`entityType="operating"` + a substantive filing landing in the era) *and* has
+  ever filed Form N-54A — the formal, self-filed, one-time legal election to be
+  regulated as a Business Development Company — is now promoted from an informational
+  research lead to an accepted `matched` result (`BASIS_VERIFIED_BDC_ELECTION`),
+  revisiting Phase 19's deliberate decision to never auto-accept a blank-SIC candidate
+  with genuinely new evidence. Unlike every prior signal, N-54A can only ever be filed
+  by the registrant itself, never by an unrelated third party about a CIK — closing
+  the exact gap Phase 19's own docstring named ("no reliable way to tell 'genuinely the
+  right company, files elsewhere' from 'coincidental secondary filer'"). Blank SIC is
+  structurally expected for a BDC (an investment vehicle, not classified by product/
+  service industry). `sec_sic_client.fetch_filing_activity` gained `bdc_election_filed`;
+  `edgar_company_search_match._find_verified_bdc_match` applies the promotion. Every
+  other blank-SIC lead (BDC-shaped or not) that doesn't also clear this bar stays
+  exactly as informational-only as before. Downstream needed zero changes:
+  `build_era_sector_enriched.py` already has a dedicated `cik_no_sic` coverage status
+  for "CIK resolved, SIC genuinely absent." Live-confirmed all 13 then-current
+  high-confidence leads have exactly one N-54A filing each, zero archived-shard risk.
+  6 new tests (including an explicit regression proving a lead without N-54A stays
+  informational, unchanged); 600 pass (was 596), ruff/bandit clean. Real run: 14 BDCs
+  promoted to matches (13 from the sample plus `MVC CAPITAL INC`, live-spot-checked
+  correct). `blank_sic_lead_high_confidence_count` dropped from 13 to 0. Resolved-CIK
+  era rows 14,616 -> 14,635 (+19); distinct CIKs resolved 8,792 -> 8,799; `cik_no_sic`
+  coverage now 590 era rows; manual-research worklist 10,710 -> 10,691 eras, 121.4M ->
+  120.8M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - fix: `sec_name_cik_lookup.normalize_name` now fuses a possessive-contraction
   apostrophe (`"CONN'S"` -> `"CONNS"`) before general punctuation-stripping would
   otherwise split it into a stray one-letter `"S"` token — SEC's own registered names

@@ -17,7 +17,14 @@ function rather than folded into `fetch_sic`'s result: `fetch_many` runs `fetch_
 every resolved CIK for the main SIC pass, which never needs filing dates, and embedding
 up to ~1,000 date strings per row there would be pure dead weight. Calling it right after
 `fetch_sic` for the same CIK is a guaranteed cache hit (identical `SEC_SUBMISSIONS_SOURCE`
-request shape), never a second real network call. [CA][REH][KBT]
+request shape), never a second real network call.
+
+Phase 35: `fetch_filing_activity` also reports `bdc_election_filed` — whether Form
+N-54A (`BDC_ELECTION_FORMS`) ever appears in the same filing history, the same free
+read of an already-fetched payload. See that constant's own comment and
+`edgar_company_search_match._find_verified_bdc_match` for why this is a structurally
+stronger identity signal than any of the timing-based ones this module already
+provides. [CA][REH][KBT]
 """
 
 from __future__ import annotations
@@ -60,6 +67,17 @@ SUBSTANTIVE_FORMS = frozenset(
         "424B1", "424B2", "424B3", "424B4", "424B5", "POS AM", "ARS",
     }
 )
+
+# Phase 35: "Notification of Election to be Subject to Sections 55 through 65 of the
+# Investment Company Act of 1940" — the formal, one-time, self-filed legal election
+# that makes a registrant a Business Development Company. Unlike every other signal
+# `edgar_company_search_match` uses to vouch for a blank-SIC candidate, this form can
+# never be filed by an unrelated third party *about* a CIK the way an ownership-
+# disclosure form can (SC 13G, Form 3/4/5) — its mere presence is structural,
+# unambiguous proof this CIK really is a registered BDC, which also explains why its
+# SIC is blank in the first place (BDCs are investment vehicles, not classified by
+# product/service industry the way operating companies are).
+BDC_ELECTION_FORMS = frozenset({"N-54A"})
 
 
 def fetch_sic(
@@ -177,6 +195,7 @@ def _filing_activity_payload_result(cik: str, payload: Any, from_cache: bool) ->
     result["substantive_filing_dates"] = substantive_dates
     result["entity_type"] = str(payload.get("entityType") or "").strip() or None
     result["has_older_shards"] = bool(payload.get("filings", {}).get("files"))
+    result["bdc_election_filed"] = bool(_recent_filing_dates(payload, forms=BDC_ELECTION_FORMS))
     return result
 
 
@@ -223,6 +242,7 @@ def _base_filing_activity_result(cik: str, fetch_status: str, from_cache: bool) 
         "substantive_filing_dates": (),
         "entity_type": None,
         "has_older_shards": False,
+        "bdc_election_filed": False,
         "fetch_status": fetch_status,
         "from_cache": from_cache,
     }

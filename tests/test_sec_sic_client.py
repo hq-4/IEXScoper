@@ -329,6 +329,33 @@ def test_fetch_filing_activity_extracts_substantive_dates_and_entity_type(
     assert result["entity_type"] == "operating"
 
 
+def test_fetch_filing_activity_flags_bdc_election(tmp_path, monkeypatch) -> None:
+    """Phase 35: `bdc_election_filed` is `True` only when Form N-54A -- the formal,
+    self-filed election to be a Business Development Company -- ever appears in the
+    filing history, regardless of when."""
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse(
+            _filings_payload(
+                ["2012-10-09", "2018-01-01"], forms=["N-54A", "10-K"], entity_type="operating"
+            )
+        ),
+    )
+    result = fetch_filing_activity(_client(tmp_path), "1509892")
+
+    assert result["bdc_election_filed"] is True
+
+
+def test_fetch_filing_activity_no_bdc_election_when_absent(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda url, **_: FakeResponse(_filings_payload(["2018-01-01"], entity_type="operating")),
+    )
+    result = fetch_filing_activity(_client(tmp_path), "732834")
+
+    assert result["bdc_election_filed"] is False
+
+
 def test_fetch_filing_activity_substantive_dates_empty_when_only_ownership_forms(
     tmp_path, monkeypatch
 ) -> None:

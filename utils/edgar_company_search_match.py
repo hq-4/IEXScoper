@@ -54,6 +54,18 @@ was tried and found too weak to trust blindly). `blank_sic_lead_high_confidence`
 *substantive* filing (`sec_sic_client.SUBSTANTIVE_FORMS` — 10-K/10-Q/8-K/etc., not just
 an ownership-disclosure form any outside party can file) inside the era.
 
+**Verified BDC elections (Phase 35).** `_find_verified_bdc_match` promotes a subset of
+otherwise-blank-SIC leads all the way to an accepted match: one that also clears
+`_is_high_confidence_lead` *and* has ever filed Form N-54A
+(`sec_sic_client.BDC_ELECTION_FORMS`) — the formal, self-filed, one-time legal election
+to be regulated as a Business Development Company. Unlike every timing-based signal
+above, N-54A can never be filed by an unrelated third party *about* a CIK, so its
+presence is structural, unambiguous proof of genuine identity — exactly the "reliable
+way to tell 'genuinely the right company, files elsewhere' from 'coincidental secondary
+filer'" `_find_blank_sic_lead`'s own docstring says doesn't otherwise exist in this
+repo's data. Blank SIC is expected, not suspicious, for a real BDC: they're investment
+vehicles, not classified by product/service industry the way operating companies are.
+
 **Query-level abbreviation expansion.** Since search is a literal string prefix, a query
 containing an OpenFIGI/Bloomberg abbreviation that isn't itself a literal prefix of the
 spelled-out word (`"COS"` vs `"Companies"`, `"HLDGS"` vs `"Holdings"`, `"INTL"` vs
@@ -133,6 +145,7 @@ BASIS_SINGLE_CANDIDATE = "single_validated_candidate"
 BASIS_FILING_ACTIVITY = "filing_activity_tiebreak"
 BASIS_FILING_WINDOW_CONTAINMENT = "filing_window_containment_tiebreak"
 BASIS_TICKER_LOOKUP = "ticker_lookup"
+BASIS_VERIFIED_BDC_ELECTION = "verified_bdc_election"
 
 ACTIVITY_PLAUSIBLE = "plausible"
 ACTIVITY_DISJOINT = "disjoint"
@@ -261,6 +274,19 @@ def _match_by_name(
             return _result(issuer_name, STATUS_FETCH_ERROR, identity_disproven=disproven)
         if blank_sic_lead is None:
             blank_sic_lead = _find_blank_sic_lead(client, issuer_name, candidates, era_span, max_age_days)
+        verified_bdc = _find_verified_bdc_match(client, issuer_name, candidates, era_span, max_age_days)
+        if verified_bdc is not None:
+            cik, sic_result, matched_name = verified_bdc
+            return _result(
+                issuer_name,
+                STATUS_MATCHED,
+                matched_cik=cik,
+                candidate_name=matched_name,
+                sic=sic_result.get("sic"),
+                sic_description=sic_result.get("sic_description"),
+                match_basis=BASIS_VERIFIED_BDC_ELECTION,
+                identity_disproven=disproven,
+            )
         if len(validated) == 1:
             cik, sic_result, matched_name = validated[0]
             if _provably_disjoint(client, cik, era_span, max_age_days):
@@ -476,6 +502,53 @@ def _find_blank_sic_lead(
         if _filing_activity_verdict(activity, era_span) != ACTIVITY_PLAUSIBLE:
             continue
         return cik, matched_name, _is_high_confidence_lead(activity, era_span)
+    return None
+
+
+def _find_verified_bdc_match(
+    client: CachedPrimaryClient,
+    issuer_name: str,
+    candidates: list[str],
+    era_span: tuple[str, str] | None,
+    max_age_days: int,
+) -> tuple[str, dict[str, Any], str] | None:
+    """Phase 35: a blank-SIC candidate that name-matches, clears the same
+    `_is_high_confidence_lead` bar `_find_blank_sic_lead` already uses (SEC classifies
+    it `entityType="operating"` and it has a substantive filing landing in `era_span`),
+    and — the new signal — has *ever* filed Form N-54A
+    (`sec_sic_client.BDC_ELECTION_FORMS`), the formal, self-filed, one-time legal
+    election to be regulated as a Business Development Company. That form is exactly
+    the piece of "reliable way to tell 'genuinely the right company, files elsewhere'
+    from 'coincidental secondary filer'" `_find_blank_sic_lead`'s own docstring says
+    doesn't exist in this repo's data — unlike an ownership-disclosure form, N-54A can
+    never be filed by an unrelated third party *about* a CIK, so its presence is
+    structural proof of genuine identity, not filing-timing coincidence. It also
+    explains *why* the SIC is blank in the first place: BDCs are investment vehicles,
+    not classified by product/service industry the way operating companies are. Live-
+    confirmed (Phase 35): every one of the 13 real, well-known BDCs in the then-current
+    `blank_sic_lead_high_confidence` population (`AFC Gamma`, `Apollo Investment Corp`,
+    `BlackRock Capital Investment Corp`, `Owl Rock Capital Corp`, among others) has
+    exactly one N-54A filing, none archived in an older shard this doesn't read (same
+    "recent window only" convention `fetch_filing_activity` already uses everywhere).
+    Returns a ready-to-accept `(cik, sic_result, matched_name)` tuple — the same shape
+    `_validate_candidates` returns for a single match — or `None`."""
+    if era_span is None:
+        return None
+    for cik in candidates:
+        sic_result = fetch_sic(client, cik, max_age_days=max_age_days)
+        if sic_result.get("fetch_status") == SIC_STATUS_FETCH_ERROR or sic_result.get("sic"):
+            continue
+        matched_name = _matching_candidate_name(issuer_name, sic_result)
+        if matched_name is None:
+            continue
+        activity = fetch_filing_activity(client, cik, max_age_days=max_age_days)
+        if activity.get("fetch_status") != "ok":
+            continue
+        if not activity.get("bdc_election_filed"):
+            continue
+        if not _is_high_confidence_lead(activity, era_span):
+            continue
+        return cik, sic_result, matched_name
     return None
 
 

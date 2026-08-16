@@ -928,6 +928,30 @@ manual-research worklist 10,728 -> 10,710 eras, 122.2M -> 121.4M trade rows. Als
 traced `MYLAN NV` (structurally hard tie, correctly left ambiguous) as a negative
 result. [CA][IV][REH][CDiP][KBT]
 
+**Phase 35 (verified BDC-election auto-accept).** Revisits Phase 19's deliberate
+decision to never auto-accept a blank-SIC lead, with genuinely new evidence. Phase
+19's own docstring found even the strengthened bar (`entityType="operating"` +
+substantive filing in era) insufficient, since a real match (`FIRST REPUBLIC BANK`)
+also fails it (files its 10-Ks with its banking regulator, not SEC). Found that all 13
+of the current `blank_sic_lead_high_confidence` population are real, well-known
+Business Development Companies — a regulated structure under the Investment Company
+Act of 1940 that legitimately carries no conventional SIC. BDCs file Form N-54A, a
+formal, one-time, self-filed legal election that (unlike every prior signal) can never
+be filed by an unrelated third party about a CIK — closing the exact "coincidental
+secondary filer" gap Phase 19 named. Live-confirmed all 13 have exactly one N-54A
+filing, zero archived-shard risk. `sec_sic_client.fetch_filing_activity` gained
+`bdc_election_filed`; `edgar_company_search_match._find_verified_bdc_match` promotes a
+lead to `STATUS_MATCHED` (`BASIS_VERIFIED_BDC_ELECTION`, SIC left honestly blank) only
+when it also clears the existing high-confidence bar. Every other blank-SIC lead stays
+exactly as informational as before. Downstream needed zero changes:
+`build_era_sector_enriched.py` already has a `cik_no_sic` coverage status for exactly
+this shape. 6 new tests (including an explicit no-N-54A regression case); 600 pass
+(was 596), ruff/bandit clean. Real run: 14 BDCs promoted (13 from the sample plus `MVC
+CAPITAL INC`, live-spot-checked correct); `blank_sic_lead_high_confidence_count`
+dropped 13 -> 0. Resolved-CIK era rows 14,616 -> 14,635 (+19); distinct CIKs resolved
+8,792 -> 8,799; `cik_no_sic` coverage now 590 era rows; manual-research worklist
+10,710 -> 10,691 eras, 121.4M -> 120.8M trade rows. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.
