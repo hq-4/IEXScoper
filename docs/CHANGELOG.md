@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- feat: tolerate OpenFIGI's 28-character `identity_issuer` truncation in
+  `edgar_company_search_match`'s name validation — the same gap Phase 9 already closed for
+  Tier D (`sec_name_cik_lookup._is_prefix_relation`), never carried over to Tier E. EDGAR's
+  own search already tolerates a truncated query (literal prefix matching finds the real
+  registrant regardless), but exact-normalized-equality validation was rejecting the one
+  real candidate it found anyway. Built the obvious fix (reuse `_is_prefix_relation`
+  directly) and quantified 562 new matches cache-only, then caught two real, confirmed
+  false positives before shipping via random-sampling the result set: `"TPG Pace Holdings
+  Corp."` normalizes down to just `"TPG PACE"` (both `"Holdings"` and `"Corp."` are legal
+  suffixes) and spuriously prefixed the unrelated sibling SPAC `"TPG Pace Beneficial
+  Finance Corp."`; `"Prime Number Holding Ltd"` similarly collapsed to `"PRIME NUMBER"` and
+  spuriously prefixed `"Prime Number Acquisition..."` — both real instances of the
+  2020-2022 SPAC boom's pattern of one sponsor launching many similarly-named vehicles from
+  a shared short prefix. That branch is only safe in Tier D because it additionally
+  requires uniqueness across the *entire* SEC index; Tier E validates one
+  already-EDGAR-searched candidate at a time with no equivalent check. New
+  `_is_safe_final_token_truncation` keeps only the narrower "same token count, exact match
+  on every token but the last" sub-case — a genuine mid-word cutoff of the final word only,
+  never an entirely extra trailing word. Deliberately does not recover this fix's own
+  original motivating example (`"INTERCEPT PHARMACEUTICALS IN"`, a whole extra token, not
+  a same-position partial truncation) — no structural way to tell truncation noise apart
+  from a real distinguishing word, so it stays unresolved rather than risk the unsafe
+  branch. Re-quantified: 345 names under the safe rule (871 under the rejected broader
+  rule); 80 fresh random samples of the safe-only result set found zero remaining false
+  positives. 5 new tests; 542 pass (was 537), ruff/bandit clean. Real run: Tier E matched
+  2,459/4,339 -> 2,804/4,339 (+345, exactly matching quantification — the largest
+  single-phase yield this session); a fresh spot-check sample of 25 from the full matched
+  population all correct. Distinct CIKs resolved 8,463 -> 8,572; manual-research worklist
+  11,748 -> 11,300 eras, 161.1M -> 154.6M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - feat: add a filing-window-containment tie-break to `edgar_company_search_match` for
   genuine mid-era CIK successions the original disjoint-based tie-break can't resolve — e.g.
   `LAREDO PETROLEUM INC`'s original CIK (last filing 2019) vs. its holdco-reorg successor

@@ -736,6 +736,138 @@ def test_match_issuer_name_validation_fetch_error_does_not_raise(
     assert result["matched_cik"] is None
 
 
+def test_match_issuer_name_does_not_recover_extra_trailing_token_truncation(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Documents a real, deliberate limit: `INTERCEPT PHARMACEUTICALS IN` was this fix's
+    original motivating example (OpenFIGI's 28-char ceiling cut "INC" down to "IN"), but
+    it turns out to need the *same* "extra trailing token" mechanism that produces the
+    confirmed `TPG PACE`/`PRIME NUMBER` false positives — "IN" is a whole extra token
+    relative to the candidate's suffix-stripped name, not a same-position partial
+    truncation of an existing token, and there is no structural way to tell "IN is
+    truncation noise" apart from "BENEFICIAL FIN is a real distinguishing name" from
+    token shape alone. Correctly stays unmatched — same "better genuinely unresolved
+    than confidently wrong" posture as everything else here — rather than risk
+    reintroducing the false-positive branch to recover this one case."""
+    atom = _atom(["1270073"])
+    submissions = {
+        "1270073": {
+            "sic": "2834", "sicDescription": "Pharmaceutical Preparations",
+            "name": "INTERCEPT PHARMACEUTICALS, INC.",
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"INTERCEPT PHARMACEUTICALS IN": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "INTERCEPT PHARMACEUTICALS IN")
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_matches_mid_word_truncation_not_just_trailing_letter(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The real `TPG PACE BENEFICIAL FIN` case — "FIN" is a partial truncation of
+    "FINANCE" at the same token position, not a bare extra letter."""
+    atom = _atom(["1819399"])
+    submissions = {
+        "1819399": {
+            "sic": "6770", "sicDescription": "Blank Checks",
+            "name": "TPG Pace Beneficial Finance Corp.",
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"TPG PACE BENEFICIAL FIN": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "TPG PACE BENEFICIAL FIN")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1819399"
+
+
+def test_match_issuer_name_rejects_short_candidate_prefixing_a_different_sibling(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Critical regression guard: the real false positive this fix's own quantification
+    caught before shipping. "TPG Pace Holdings Corp." normalizes down to just "TPG PACE"
+    (both "Holdings" and "Corp." are legal suffixes) — it must NOT spuriously match the
+    unrelated sibling SPAC "TPG PACE BENEFICIAL FIN" just because it's a short prefix of
+    that name. Different token count at the divergence point (not a same-position
+    partial-truncation of the final word), so `_is_safe_final_token_truncation` must
+    reject it even though `sec_name_cik_lookup._is_prefix_relation` (Tier D's broader,
+    index-uniqueness-guarded version) would accept it."""
+    atom = _atom(["1"])
+    submissions = {
+        "1": {
+            "sic": "6770", "sicDescription": "Blank Checks",
+            "name": "TPG Pace Holdings Corp.",
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"TPG PACE BENEFICIAL FIN": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "TPG PACE BENEFICIAL FIN")
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_rejects_short_candidate_prefixing_unrelated_company(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The other real false positive caught: "Prime Number Holding Ltd" collapses to
+    "PRIME NUMBER" and must not spuriously match the unrelated "Prime Number
+    Acquisition..." family."""
+    atom = _atom(["1"])
+    submissions = {
+        "1": {
+            "sic": "6770", "sicDescription": "Blank Checks",
+            "name": "Prime Number Holding Ltd",
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"PRIME NUMBER ACQUISITIO": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "PRIME NUMBER ACQUISITIO")
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_truncation_requires_minimum_partial_length(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """SPAC-sequel-numbering guard, same floor Tier D already relies on: "II" is a
+    literal string prefix of "III", but a genuinely different company, not a truncation
+    of the same name — `MIN_PARTIAL_TOKEN_CHARS` blocks matching on a token this short
+    regardless of what it contains."""
+    atom = _atom(["1"])
+    submissions = {
+        "1": {
+            "sic": "6770", "sicDescription": "Blank Checks",
+            "name": "Example Acquisition Corp III",
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"EXAMPLE ACQUISITION CORP II": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "EXAMPLE ACQUISITION CORP II")
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
+
+
 def test_match_issuer_name_matches_via_former_name(tmp_path: Path, monkeypatch: Any) -> None:
     """The real gap this fix targets: the registrant's *current* name no longer matches
     the era's historical issuer name because the company renamed or merged since, but
