@@ -1,5 +1,64 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 20 (filing-window-containment tie-break).
+  User: "what else is next, i just merged" (after PR #23, Phase 19). Continued the same
+  "fresh pass over the worklist's top rows" method.
+  Found two small (2-candidate), non-generic ties still sitting in `ambiguous_candidates`:
+  `LAREDO PETROLEUM INC` (priority rank 22) and `LIFE STORAGE INC` (rank 44). Traced both by
+  hand. `LAREDO PETROLEUM`: EDGAR surfaces CIK 1519352 (current name still literally `"Laredo
+  Petroleum, Inc."`, but last filing 2019-01-31) and CIK 1528129 (`formerNames` carries
+  `"Laredo Petroleum, Inc."` and `"Laredo Petroleum Holdings, Inc."`, now `"Vital Energy,
+  Inc."`, filing continuously 2016-2025) — a genuine mid-era holdco-reorg succession, both
+  read `ACTIVITY_PLAUSIBLE` (each has some filing landing in the era) so the existing
+  "exactly one plausible, others disjoint" tie-break can't separate them. `LIFE STORAGE`:
+  EDGAR surfaces CIK 1060224 (`LIFE STORAGE LP`, the operating partnership, SIC 6500) and CIK
+  944314 (`LIFE STORAGE, INC.`, the actual REIT parent, SIC 6798) — both file continuously
+  through and past the whole era (a normal REIT/UPREIT co-filing pattern), also both
+  plausible, but for a structurally different reason (two legitimately co-existing real
+  entities, not a succession).
+  Quantified before building: replayed all 34 currently-`ambiguous_candidates` names with a
+  small (<=20) raw candidate count against the existing cache (zero network calls). 18 have
+  exactly one candidate whose own filing window (earliest to latest) fully spans the era
+  while the tied candidate's doesn't — the `LAREDO PETROLEUM` shape, a real, generalizable
+  signal. 10 have all plausible candidates' windows equally containing (or failing to
+  contain) the era — the `LIFE STORAGE` shape, no containment difference, would need a
+  different signal (e.g. SIC specificity, `6798`-REIT vs. a sibling's generic `6500`) not
+  built here. 4 already correctly blocked by an `ACTIVITY_UNKNOWN` candidate.
+  Built `_fully_contains_era` and extended `_disambiguate_by_filing_activity`: among
+  candidates that are all `ACTIVITY_PLAUSIBLE` (a strictly higher bar than the original
+  rule's single-plausible case), accept the one whose own filing window fully contains
+  `era_span` when exactly one does — never loosens what the single-candidate path or the
+  original tie-break already trust (both accept on a weaker "any filing lands inside" bar),
+  only resolves a narrower case those couldn't reach. Labeled with a new, distinct
+  `match_basis` (`filing_window_containment_tiebreak`) rather than folded into the existing
+  `filing_activity_tiebreak`, since containment evidence doesn't *prove* the other candidate
+  was never active, only that its own history doesn't span the whole era — real but
+  meaningfully different confidence. `LIFE STORAGE`'s shape deliberately still resolves to
+  nothing (both candidates fully contain the era too) — correctly left ambiguous, not a
+  regression, not this phase's target. 2 new tests (the resolving `LAREDO PETROLEUM` shape,
+  the still-ambiguous `LIFE STORAGE` shape as a critical regression guard against
+  over-picking); 537 tests pass (was 535); ruff/bandit clean. Flagged, not acted on:
+  `edgar_company_search_match.py` is now 669 lines, over the 300-line CSD review threshold
+  (though the hard 1600-line cap is far off) — the bulk is this file's own deliberately-kept
+  phase-by-phase narrative docstring (Phase 5 through 20), not code complexity; a future
+  phase could extract that history into `docs/` if it keeps growing, not done here.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`, ~11 minutes wall-clock total, essentially all
+  cache hits): matched 2,441/4,339 -> **2,459/4,339** (+18, exactly matching quantification);
+  `ambiguous_candidates` 1,095 -> **1,077**. All 18 spot-checked by eye against known real
+  companies via their resolved SIC — correct (`DCP MIDSTREAM LP` -> SIC 4922 Natural Gas
+  Transmission; `TRAVELCENTERS OF AMERICA INC` -> SIC 5500 Retail-Auto/Gasoline; `COLONY
+  CAPITAL INC` -> SIC 6282 Investment Advice, its real post-DigitalBridge-rename
+  classification; four different bank names each resolving to the correct banking SIC —
+  `CINCINNATI BANCORP`, `HAMILTON BANCORP INC/MD`, `MSB FINANCIAL CORP/MD`, `ORITANI
+  FINANCIAL CORP`, `TCF FINANCIAL CORP`, `XENITH BANKSHARES INC`; three pharma names -> SIC
+  2834/2836; `WILLIAM LYON HOMES-CL A` -> SIC 1531 Operative Builders; `VIACOM INC-CLASS B`
+  -> SIC 4841 Cable & Other Pay TV). Reconciled: `distinct_ciks_resolved` 8,448 -> **8,463**;
+  manual-research worklist 11,783 -> **11,748 eras**, 166.4M -> **161.1M trade rows**. Next
+  candidate, not started: the 10-name `LIFE STORAGE`-shaped population (SIC-specificity
+  disambiguation, a genuinely different signal, not attempted this phase).
+  `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-15: SIC/sector classification, Phase 19 (`blank_sic_lead` research-lead flag —
   built as auto-acceptance, redesigned to informational after due diligence). User: "what
   else is next, i just merged" (after PR #22, Phase 18). Continued the same "fresh pass

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- feat: add a filing-window-containment tie-break to `edgar_company_search_match` for
+  genuine mid-era CIK successions the original disjoint-based tie-break can't resolve — e.g.
+  `LAREDO PETROLEUM INC`'s original CIK (last filing 2019) vs. its holdco-reorg successor
+  (`formerNames` carries the same name, now `Vital Energy, Inc.`, filing continuously
+  2016-2025); both read `ACTIVITY_PLAUSIBLE` so the "exactly one plausible, others disjoint"
+  rule can't separate them. New `_fully_contains_era` accepts the one candidate (among
+  several plausible) whose own filing window fully spans the era — strictly stricter
+  evidence than the "any filing lands inside" bar the single-candidate path and original
+  tie-break already trust, so this never loosens acceptance, only resolves a narrower case.
+  Labeled with a distinct `match_basis` (`filing_window_containment_tiebreak`). Deliberately
+  doesn't resolve the sibling `LIFE STORAGE INC` shape (a REIT parent and its operating
+  partnership, both filing continuously through and past the era — two legitimately
+  co-existing entities, not a succession) since both candidates' windows fully contain the
+  era there too; stays correctly ambiguous. Quantified cache-only first: 18 of 34 small
+  (<=20-candidate) ambiguous ties resolve this way. 2 new tests; 537 pass (was 535),
+  ruff/bandit clean. Real run: Tier E matched 2,441/4,339 -> 2,459/4,339 (+18, exactly
+  matching quantification); all 18 spot-checked against known real companies via their
+  resolved SIC — correct. Distinct CIKs resolved 8,448 -> 8,463; manual-research worklist
+  11,783 -> 11,748 eras, 166.4M -> 161.1M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - feat: surface `blank_sic_lead_*` research-lead fields on the manual-research worklist for
   blank-SIC candidates with plausible filing activity — built first as auto-acceptance
   (`FIRST REPUBLIC BANK`, CIK 1132979, blank SIC, 42 filings spanning 2004-2024 covering its

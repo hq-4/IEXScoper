@@ -647,6 +647,29 @@ REPUBLIC BANK` lead itself. Fixed, regression test added, rerun: 34 leads (12 hi
 match outcomes and CIK-resolution counts fully unchanged. See `docs/TASK_LIST.md`'s Phase 19
 entry for full detail. [CA][IV][REH][CDiP][KBT]
 
+**Phase 20 (filing-window-containment tie-break).** A fresh worklist pass found two small
+2-candidate ties the original disjoint-based tie-break can't resolve: `LAREDO PETROLEUM INC`
+(a genuine mid-era holdco-reorg succession — an original CIK whose filings stop in 2019, and
+its successor, `formerNames`-linked, later renamed `Vital Energy, Inc.`, filing continuously
+2016-2025) and `LIFE STORAGE INC` (a REIT parent and its operating partnership, both filing
+continuously through and past the era — two legitimately co-existing entities, not a
+succession). Both candidates read `ACTIVITY_PLAUSIBLE` in each case, so "exactly one
+plausible, others disjoint" can't separate them. New `_fully_contains_era` accepts the one
+plausible candidate (among several) whose own filing window fully spans the era, when exactly
+one does — strictly stricter than the "any filing lands inside" bar already trusted
+elsewhere, so it only resolves a narrower case, never loosens acceptance. Labeled with a
+distinct `match_basis` (`filing_window_containment_tiebreak`). Correctly leaves `LIFE
+STORAGE`'s shape (10 of 34 quantified names) unresolved — both candidates' windows fully
+contain the era there too, needing a different signal (SIC specificity) not built here. 2 new
+tests; 537 pass (was 535), ruff/bandit clean. Real run: Tier E matched 2,441/4,339 ->
+2,459/4,339 (+18, exactly matching cache-only quantification); all 18 spot-checked against
+known real companies via resolved SIC — correct. Distinct CIKs resolved 8,448 -> 8,463;
+manual-research worklist 11,783 -> 11,748 eras, 166.4M -> 161.1M trade rows. Flagged (not
+acted on): `edgar_company_search_match.py` is now 669 lines, over the 300-line CSD review
+threshold — almost entirely this file's own deliberately-kept phase-by-phase narrative
+docstring, not code complexity. See `docs/TASK_LIST.md`'s Phase 20 entry for full detail.
+[CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.
