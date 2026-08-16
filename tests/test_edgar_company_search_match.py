@@ -5,6 +5,7 @@ from typing import Any
 
 from utils.edgar_company_search_match import (
     BASIS_TICKER_LOOKUP,
+    BASIS_VERIFIED_BDC_ELECTION,
     MAX_CANDIDATES_TO_VALIDATE,
     STATUS_AMBIGUOUS,
     STATUS_FETCH_ERROR,
@@ -1443,6 +1444,72 @@ def test_match_issuer_name_blank_sic_lead_high_confidence_when_operating_with_su
     result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
 
     assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["blank_sic_lead_cik"] == "1"
+    assert result["blank_sic_lead_high_confidence"] is True
+
+
+def test_match_issuer_name_verified_bdc_election_becomes_a_match(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Phase 35: a blank-SIC, `entityType="operating"` candidate that clears the
+    existing high-confidence bar *and* has ever filed Form N-54A (the formal, self-
+    filed, one-time election to be a Business Development Company) is promoted all the
+    way to an accepted match, not just a research lead -- N-54A can never be filed by
+    an unrelated third party about a CIK the way an ownership-disclosure form can, so
+    its presence is structural proof of genuine identity."""
+    atom = _atom(["1509892"])
+    submissions = {
+        "1509892": {
+            "sic": "", "sicDescription": "", "name": "Garrison Capital Inc.",
+            "entityType": "operating",
+            "filings": {
+                "recent": {
+                    "form": ["N-54A", "10-K"],
+                    "filingDate": ["2012-10-09", "2018-05-01"],
+                },
+                "files": [],
+            },
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Garrison Capital Inc.": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Garrison Capital Inc.", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1509892"
+    assert result["match_basis"] == BASIS_VERIFIED_BDC_ELECTION
+    assert result["sic"] is None
+    # Not surfaced as a lead anymore -- it's a confirmed match now.
+    assert result["blank_sic_lead_cik"] is None
+
+
+def test_match_issuer_name_high_confidence_lead_without_bdc_election_stays_a_lead(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The existing `blank_sic_lead_high_confidence` bar alone is still not enough --
+    without an N-54A filing, a high-confidence lead stays informational only, exactly
+    like before Phase 35. Same fixture as
+    `test_match_issuer_name_blank_sic_lead_high_confidence_when_operating_with_substantive_filing`
+    but named explicitly to show the new mechanism doesn't loosen this case."""
+    atom = _atom(["1"])
+    submissions = {
+        "1": {
+            "sic": "", "sicDescription": "", "name": "Ambiguous Co",
+            "entityType": "operating",
+            "filings": _filings(["2018-05-01"], form="10-K"),  # substantive, no N-54A
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_NO_VALIDATED_MATCH
+    assert result["matched_cik"] is None
     assert result["blank_sic_lead_cik"] == "1"
     assert result["blank_sic_lead_high_confidence"] is True
 

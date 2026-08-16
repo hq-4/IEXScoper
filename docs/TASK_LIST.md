@@ -1,5 +1,67 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 35 (verified BDC-election auto-accept —
+  revisits a deliberate Phase 19 decision with new evidence). User: "/goal do this:
+  sourcing names for the no-identity-issuer population, or building the blank-SIC/BDC
+  verification path properly." After Phase 34 exhausted the narrow-normalize_name vein
+  (found only 2 names for a new suffix-based tie-break, too small a yield to justify a
+  new inference mechanism; found `blank_sic_lead_high_confidence`'s existing 13 leads
+  were all real, well-known Business Development Companies — a coherent pattern worth
+  investigating further), the user redirected explicitly toward the BDC path.
+  Phase 19's own docstring already extensively evaluated and explicitly *rejected*
+  auto-accepting blank-SIC leads: even the strengthened "entityType=operating +
+  substantive filing in era" bar (`_is_high_confidence_lead`) was found insufficient,
+  because the real `FIRST REPUBLIC BANK` case — genuinely correct — fails that same
+  bar too (it files its real 10-Ks with its banking regulator, not SEC; SEC only ever
+  sees ownership-disclosure forms for it). "No reliable way to tell 'genuinely the
+  right company, files elsewhere' from 'coincidental secondary filer' exists in this
+  repo's data" — until now. Investigated whether Business Development Companies (BDCs,
+  a specific regulated structure under the Investment Company Act of 1940 — which
+  explains why they legitimately carry no conventional industry SIC code, unlike an
+  operating company) have an independent, structural, unforgeable identity signal:
+  Form N-54A, the formal, self-filed, one-time legal election to be regulated as a
+  BDC. Unlike every signal `_find_blank_sic_lead` already considers (which are all
+  either timing-based or, worse, forms *any unrelated third party can file about a
+  CIK* — SC 13G, Form 3/4/5), N-54A can only ever be filed by the registrant itself
+  about itself. Live-confirmed all 13 of the then-current `blank_sic_lead_high_confidence`
+  population have exactly one N-54A filing each (`AFC Gamma`, `Apollo Investment Corp`,
+  `BlackRock Capital Investment Corp`, `Owl Rock Capital Corp`, among others), zero
+  with older filing-history shards this repo's convention doesn't read anyway (so no
+  risk of a real N-54A rolling off an unfetched archive for this specific population).
+  This is genuinely new evidence beyond what motivated Phase 19's caution: a
+  structural, non-timing-based signal that specifically rules out the "coincidental
+  secondary filer" risk that made the earlier, weaker bar untrustworthy.
+  **Implementation**: `sec_sic_client.py` gained `BDC_ELECTION_FORMS = {"N-54A"}` and a
+  new `bdc_election_filed` field on `fetch_filing_activity`'s result (a free re-read of
+  the already-fetched submissions payload, same pattern as every other field there).
+  `edgar_company_search_match.py` gained `_find_verified_bdc_match` — requires
+  everything `_find_blank_sic_lead`'s existing high-confidence bar already requires
+  (name match, `entityType="operating"`, a substantive filing landing in `era_span`)
+  *plus* an N-54A filing ever on record — and a new `BASIS_VERIFIED_BDC_ELECTION`
+  match basis. When found, this now returns an accepted `STATUS_MATCHED` result
+  (`sic`/`sic_description` left honestly blank, not fabricated) instead of an
+  informational lead — the *only* candidate class promoted this way; every other
+  blank-SIC lead (BDC-shaped or not) that doesn't also clear the N-54A bar stays
+  exactly as informational as before Phase 19 originally decided. Downstream handling
+  needed zero changes: `build_era_sector_enriched.py`'s `sic_coverage_status` already
+  has a dedicated `cik_no_sic` state (CIK resolved, SIC genuinely absent) distinct from
+  both `sic_and_sector` and `no_cik`, precisely for this shape.
+  6 new test cases (a positive case proving the promotion, and an explicit regression
+  case proving a high-confidence lead *without* N-54A still stays informational-only,
+  unchanged from before); 600 tests pass (was 596); ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`): **14** BDCs verified and promoted to
+  matches (13 from the original sample plus `MVC CAPITAL INC`, CIK 1099941, found
+  fresh in the wider run and live-spot-checked correct: real BDC, blank SIC,
+  `entityType=operating`, N-54A filed 1999-12-07). `blank_sic_lead_high_confidence_count`
+  correctly dropped from 13 to 0 (every prior high-confidence lead that also had N-54A
+  graduated out of the "lead" category entirely). Reconciled: resolved-CIK era rows
+  14,616 -> **14,635** (+19); distinct CIKs resolved 8,792 -> **8,799** (+7);
+  `cik_no_sic` coverage status now covers **590** era rows total; manual-research
+  worklist 10,710 -> **10,691 eras**, 121.4M -> **120.8M** trade rows. All 14 BDC
+  symbols confirmed correctly removed from the manual-research worklist.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 34 (fuse a possessive-contraction
   apostrophe in `normalize_name`). Continuing the autonomous "/goal ... then merge,
   then continue the cycle" directive after PR #37, Phase 33. Investigated the
