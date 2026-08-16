@@ -10,6 +10,8 @@ from utils.edgar_company_search_match import (
     STATUS_MATCHED,
     STATUS_NO_CANDIDATES,
     STATUS_NO_VALIDATED_MATCH,
+    _expand_query_abbreviations,
+    _search_query_variants,
     match_issuer_name,
 )
 from utils.resolution_v2_network import CachedPrimaryClient, NetworkConfig
@@ -67,6 +69,30 @@ def _fake_get(search_by_query: dict[str, str], submissions_by_cik: dict[str, dic
     return fake_get
 
 
+def test_expand_query_abbreviations_substitutes_known_tokens() -> None:
+    assert _expand_query_abbreviations("MICHAELS COS INC") == "MICHAELS COMPANIES INC"
+    assert _expand_query_abbreviations("NORTHERN TECHNOLOGIES INTL") == (
+        "NORTHERN TECHNOLOGIES INTERNATIONAL"
+    )
+    # Case-insensitive token match, but the expansion itself is always uppercase.
+    assert _expand_query_abbreviations("Juniper Industrial Hldgs") == (
+        "Juniper Industrial HOLDINGS"
+    )
+
+
+def test_expand_query_abbreviations_returns_none_when_nothing_to_expand() -> None:
+    # No caller adds a redundant identical variant when there's no abbreviation present.
+    assert _expand_query_abbreviations("MICHAELS STORES INC") is None
+
+
+def test_search_query_variants_includes_abbreviation_expansion() -> None:
+    variants = _search_query_variants("MICHAELS COS INC/THE")
+    assert "MICHAELS COMPANIES INC/THE" in variants
+    # The expanded form sits right after its source variant, not at the very end.
+    source_index = variants.index("MICHAELS COS INC/THE")
+    assert variants[source_index + 1] == "MICHAELS COMPANIES INC/THE"
+
+
 def test_match_issuer_name_no_candidates_at_any_truncation_level(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -119,6 +145,26 @@ def test_match_issuer_name_two_candidates_both_validate_is_genuinely_ambiguous(
     assert result["match_status"] == STATUS_AMBIGUOUS
     assert result["candidate_count"] == 2
     assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_finds_candidate_only_via_abbreviation_expansion(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """"MICHAELS COS INC/THE" itself (and every unexpanded truncation) returns zero
+    EDGAR candidates -- only the "COS" -> "COMPANIES" expanded query has a fake
+    response wired at all, proving the match genuinely depends on
+    `_search_query_variants`'s abbreviation expansion, not some other fallback."""
+    atom = _atom(["1593936"])
+    submissions = {"1593936": {"sic": "5945", "sicDescription": "Hobby Stores", "name": "Michaels Companies Inc"}}
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"MICHAELS COMPANIES INC/THE": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "MICHAELS COS INC/THE")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1593936"
 
 
 def _filings(

@@ -1,5 +1,63 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 27 (Tier E query-level abbreviation
+  expansion: `COS`/`HLDGS`/`INTL`). Continuing the autonomous "/goal ... then merge, then
+  continue the cycle" directive after PR #30, Phase 26. Investigated `MICHAELS COS
+  INC/THE` (priority-rank-adjacent `MIK`, unresolved even after Phase 26): its EDGAR
+  registrant is `"Michaels Companies, Inc."`, but `"MICHAELS COS"` returns **zero**
+  candidates from EDGAR's `browse-edgar` search — confirmed live (`curl`) that
+  `"michaels+comp"` finds it while `"michaels+cos"` doesn't. Root cause: EDGAR's company
+  search is a literal string-prefix match against the real registered name, and `"COS"`
+  isn't a character-prefix of `"COMPANIES"` (mismatch at the 3rd letter) the way `"CORP"`/
+  `"INC"`/`"CO"` already are prefixes of their expansions — so the *search itself* finds
+  nothing, at every truncation level, regardless of how the candidate would later
+  validate. Same root cause for `"HLDGS"` (vs `"HOLDINGS"`) and `"INTL"` (vs
+  `"INTERNATIONAL"`).
+  Scanned the full unresolved population for these three abbreviations as standalone
+  tokens: `INTL` (13), `COS` (6), `HLDGS` (3) — 22 names. Also found `MGMT`/`SVCS`/`LABS`
+  (1 occurrence each) but didn't pursue them further this phase (lower volume, and
+  `SIGMA LABS INC - CW22`'s real registrant traces to a *rename*, `NextTrip, Inc.`, a
+  `formerNames`-lookup case unrelated to abbreviation expansion — separate investigation).
+  Added `QUERY_ABBREVIATION_EXPANSIONS` to `edgar_company_search_match.py` and
+  `_expand_query_abbreviations`, wired into `_search_query_variants` so every variant
+  containing a known abbreviation is immediately followed by its spelled-out equivalent.
+  **Caught a real design gap before shipping**: expanding the *search* query alone isn't
+  enough — `"COS"` isn't a string-prefix truncation of `"COMPANIES"` either
+  (`_is_safe_final_token_truncation` requires the shorter side to literally prefix the
+  longer, and `"COS"` fails `"COMPANIES".startswith("COS")` at the 3rd letter), so
+  `_names_match` would have *rejected* the very candidate the expanded search found. A
+  regression test written against the real Michaels case caught this immediately. Fixed
+  by applying the identical `_expand_query_abbreviations` substitution inside
+  `_names_match` too, before the final-token-truncation fallback — query-only in intent,
+  but validation needs the same substitution to accept what the expanded search finds.
+  Live-verified (real EDGAR queries, not cache-only — these are new query strings with no
+  prior cache entry, same "genuinely can't quantify for free" situation as Phase
+  15/24): 17 of the 22 sampled names find exactly one unambiguous EDGAR candidate once
+  expanded (`BIODELIVERY SCIENCES INTL`, `BONSO ELECTRONICS INTL`, `CSG SYSTEMS INTL`,
+  `DECOMA INTL`, `NORTHERN TECHNOLOGIES INTL`, `NEO-CONCEPT INTL GROUP`,
+  `INTERNATIONAL SPEEDWAY`, `HAVERTY FURNITURE COS`, `HUNT COS ACQUISITION`,
+  `KINDERCARE LEARNING COS`, `MICHAELS COS`, `STATE NATIONAL COS`, `TRC COS`, `JUNIPER
+  INDUSTRIAL HLDGS`, `NATIONAL GENERAL HLDGS`, `TRISTATE CAPITAL HLDGS`, `INTL TOWER HILL
+  MINES`). 3 new/changed unit tests plus 1 end-to-end regression test (the one that
+  caught the validation gap); 557 tests pass (was 553); ruff/bandit clean.
+  Real run: Tier E matched 2,843/4,322 -> **2,856/4,321** (+13, not all 17 sampled —
+  4 turned out to be genuinely different, narrower gaps once the real run's live data was
+  in hand: `HUNT COS ACQUISITION CORP-A` is a SPAC where OpenFIGI's 28-char truncation cut
+  a trailing roman-numeral sequel token (`"Corp. I"`) down to nothing, correctly blocked
+  by the existing `ROMAN_NUMERAL_CHARS` guard rather than risk a wrong-sequel match;
+  `TRC COS INC`'s real single valid candidate carries a `"TRC COMPANIES INC /DE/"`
+  jurisdiction tag with a trailing slash *after* the code, a shape `JURISDICTION_SUFFIX`
+  doesn't strip (it anchors to end-of-string, and this name doesn't end there) — a real,
+  separate, narrow gap, next investigation; `NEO-CONCEPT INTL GROUP HLD-A` combines the
+  28-char truncation with a *compound* trailing-suffix mismatch (`"GROUP HOLDINGS LTD"`
+  vs `"GROUP HLD"`) too deep/narrow to chase for one name; `DECOMA INTL INC` needs
+  further tracing, not yet diagnosed). 13 confirmed-correct real matches spot-checked via
+  `resolved_cik`/`cik_source` in `eras_sector_enriched.parquet`.
+  Reconciled: resolved-CIK era rows 14,130 -> **14,160** (+30); distinct CIKs resolved
+  8,612 -> **8,625**; manual-research worklist 11,196 -> **11,166 eras**, 149.2M ->
+  **146.9M** trade rows. Confirmed `MIK`/`HVT.A`/`JIH`/etc. no longer appear in the
+  manual-research worklist. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 26 (`normalize_name` "AND"/"&" joiner-word
   asymmetry). Continuing the autonomous "/goal ... then merge, then continue the cycle"
   directive after PR #29, Phase 25. Investigated the current worklist's top-priority

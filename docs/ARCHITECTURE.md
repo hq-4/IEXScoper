@@ -764,6 +764,26 @@ resolved-CIK era rows 14,107 -> 14,130 (+23); distinct CIKs resolved 8,607 -> 8,
 manual-research worklist 11,213 -> 11,196 eras, 150.7M -> 149.2M trade rows.
 [CA][IV][REH][CDiP][KBT]
 
+**Phase 27 (Tier E query-level abbreviation expansion).** `MICHAELS COS INC/THE` traced
+the gap: EDGAR's search is a literal string-prefix match against the real registered
+name, and `"COS"` isn't a character-prefix of `"COMPANIES"` (unlike `"CORP"`/`"INC"`/
+`"CO"`, which already are prefixes of their expansions) — so the search itself found
+nothing at any truncation level. Same shape for `"HLDGS"`/`"HOLDINGS"` and
+`"INTL"`/`"INTERNATIONAL"`. Added `QUERY_ABBREVIATION_EXPANSIONS` +
+`_expand_query_abbreviations`, wired into `_search_query_variants`. Caught mid-build that
+expanding the search alone wasn't enough — `_names_match` needed the identical
+substitution too, since `"COS"` isn't a string-prefix truncation of `"COMPANIES"` either;
+a regression test against the real Michaels case caught it before shipping. Live-verified
+17 of 22 sampled abbreviation-shaped names (new query strings, no prior cache — same
+"can't quantify for free" situation as Phase 15/24). 4 new/changed tests; 557 pass (was
+553), ruff/bandit clean. Real run: Tier E matched 2,843/4,322 -> 2,856/4,321 (+13; 4 of
+the 17 sampled turned out to be separate, narrower gaps — SPAC roman-numeral sequel
+truncation, a `"/DE/"` trailing-slash jurisdiction-tag shape `JURISDICTION_SUFFIX`
+doesn't cover, a compound-suffix truncation mismatch — each a future lead, not this
+fix's shape). Resolved-CIK era rows 14,130 -> 14,160 (+30); distinct CIKs resolved
+8,612 -> 8,625; manual-research worklist 11,196 -> 11,166 eras, 149.2M -> 146.9M trade
+rows. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

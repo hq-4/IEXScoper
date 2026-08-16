@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- fix: `edgar_company_search_match._search_query_variants` now also tries an
+  abbreviation-expanded form of every query (`QUERY_ABBREVIATION_EXPANSIONS`: `"COS"` ->
+  `"COMPANIES"`, `"HLDGS"` -> `"HOLDINGS"`, `"INTL"` -> `"INTERNATIONAL"`). EDGAR's
+  company search is a literal string-prefix match against the real registered name, and
+  these three abbreviations (unlike `"CORP"`/`"INC"`/`"CO"`) aren't themselves a
+  character-prefix of their spelled-out form, so the search found nothing at any
+  truncation level even though the real registrant was an exact, unambiguous match once
+  the right string was searched (`"MICHAELS COS INC/THE"` vs EDGAR's own `"Michaels
+  Companies, Inc."`). Expanding the search query alone wasn't sufficient — `_names_match`
+  needed the identical substitution applied during validation too, since `"COS"` isn't a
+  string-prefix truncation of `"COMPANIES"` either; a regression test against the real
+  Michaels case caught this gap before shipping. 4 new/changed tests; 557 pass (was
+  553), ruff/bandit clean. Real run: Tier E matched 2,843/4,322 -> 2,856/4,321 (+13);
+  13 of 17 sampled names confirmed correct via `eras_sector_enriched.parquet`. Resolved
+  -CIK era rows 14,130 -> 14,160 (+30); distinct CIKs resolved 8,612 -> 8,625;
+  manual-research worklist 11,196 -> 11,166 eras, 149.2M -> 146.9M trade rows.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - fix: `sec_name_cik_lookup.normalize_name` now drops the spelled-out word `"AND"` the
   same way a literal `"&"` already vanishes under punctuation-stripping
   (`JOINER_WORDS`), filtered anywhere in the token stream. `"PETCO HEALTH AND WELLNESS

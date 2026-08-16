@@ -54,6 +54,17 @@ was tried and found too weak to trust blindly). `blank_sic_lead_high_confidence`
 *substantive* filing (`sec_sic_client.SUBSTANTIVE_FORMS` — 10-K/10-Q/8-K/etc., not just
 an ownership-disclosure form any outside party can file) inside the era.
 
+**Query-level abbreviation expansion.** Since search is a literal string prefix, a query
+containing an OpenFIGI/Bloomberg abbreviation that isn't itself a literal prefix of the
+spelled-out word (`"COS"` vs `"Companies"`, `"HLDGS"` vs `"Holdings"`, `"INTL"` vs
+`"International"` — unlike `"CORP"`/`"INC"`/`"CO"`, which already *are* prefixes) finds
+zero candidates at every truncation level, even though the real registrant is an exact,
+unambiguous match once the right string is searched. `_search_query_variants` adds each
+variant's abbreviation-expanded form (`QUERY_ABBREVIATION_EXPANSIONS`,
+`_expand_query_abbreviations`) immediately after it. Query-only: `_validate_candidates`
+still applies the identical exact/safe-truncation acceptance check, so this only ever
+surfaces more candidates to consider, never loosens what gets accepted.
+
 Every guard here follows the same posture: better genuinely unresolved than confidently
 wrong. Every acceptance rule was quantified against the cached request history before
 shipping, and every new signal was spot-checked against real, known companies — several
@@ -96,6 +107,22 @@ ACTIVITY_UNKNOWN = "unknown"
 
 MAX_CANDIDATES_TO_VALIDATE = 20
 MIN_QUERY_WORDS = 1
+
+# EDGAR's company search is a literal string-prefix match against the real registered
+# name, so an OpenFIGI/Bloomberg abbreviation that isn't itself a literal prefix of its
+# spelled-out form makes the *search* fail outright (zero candidates, at every
+# truncation level) even though the real registrant is an exact, unambiguous match once
+# found. "CORP"/"INC"/"CO" survive as-is because they *are* literal prefixes of
+# "Corporation"/"Incorporated"/"Company"; these three don't. Confirmed on live EDGAR
+# (Phase 27): "MICHAELS COS INC" finds nothing, "MICHAELS COMPANIES" finds exactly
+# "Michaels Companies, Inc." Query-only — `_validate_candidates` still requires the
+# same exact/safe-truncation name match before accepting anything, so expanding the
+# query only ever adds candidates to consider, never loosens acceptance.
+QUERY_ABBREVIATION_EXPANSIONS = {
+    "COS": "COMPANIES",
+    "HLDGS": "HOLDINGS",
+    "INTL": "INTERNATIONAL",
+}
 
 
 def match_issuer_name(
@@ -205,11 +232,22 @@ def match_issuer_name(
     return _result(issuer_name, status, identity_disproven=disproven, blank_sic_lead=blank_sic_lead)
 
 
+def _expand_query_abbreviations(candidate: str) -> str | None:
+    """Substitute any word matching `QUERY_ABBREVIATION_EXPANSIONS`, or `None` if no
+    word needs it — lets callers skip adding a redundant identical variant."""
+    words = candidate.split()
+    expanded = [QUERY_ABBREVIATION_EXPANSIONS.get(word.upper(), word) for word in words]
+    return " ".join(expanded) if expanded != words else None
+
+
 def _search_query_variants(name: str) -> list[str]:
     """Most-specific query first, then progressively fewer trailing words down to a
     `MIN_QUERY_WORDS` (single-word) floor — safe because `_validate_candidates` below
-    never trusts a query result on its own, regardless of how broad the query was.
-    Deduped and whitespace-normalized so a name with no descriptor suffix to strip
+    never trusts a query result on its own, regardless of how broad the query was. Every
+    variant that contains a known abbreviation (`QUERY_ABBREVIATION_EXPANSIONS`) is
+    immediately followed by its spelled-out equivalent, since EDGAR's search can't find
+    a candidate at all when the query isn't a literal prefix of the real registered
+    name. Deduped and whitespace-normalized so a name with no descriptor suffix to strip
     doesn't waste a redundant identical search."""
     variants: list[str] = []
     seen: set[str] = set()
@@ -220,6 +258,9 @@ def _search_query_variants(name: str) -> list[str]:
         if normalized and key not in seen:
             seen.add(key)
             variants.append(normalized)
+            expanded = _expand_query_abbreviations(normalized)
+            if expanded:
+                add(expanded)
 
     add(name)
     stripped = strip_security_descriptors(name)
@@ -354,6 +395,14 @@ def _names_match(issuer_name: str, candidate_name: str | None) -> bool:
         return True
     stripped = normalize_name(strip_security_descriptors(issuer_name))
     if stripped == target:
+        return True
+    # "COS"/"HLDGS"/"INTL" aren't string-prefix truncations of "COMPANIES"/"HOLDINGS"/
+    # "INTERNATIONAL" (different letters, not just fewer of the same ones), so the
+    # query-side expansion that lets the *search* find this candidate at all
+    # (`_search_query_variants`) doesn't also make `_is_safe_final_token_truncation`
+    # accept it below — needs the identical substitution applied here too.
+    expanded = _expand_query_abbreviations(stripped)
+    if expanded and normalize_name(expanded) == target:
         return True
     return _is_safe_final_token_truncation(tuple(stripped.split()), tuple(target.split()))
 
