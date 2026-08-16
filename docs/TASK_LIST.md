@@ -1,5 +1,66 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 22 (Tier E OpenFIGI-truncation-tolerant
+  name matching — the largest single-phase yield of this session). User: "what else is
+  next, i just merged" (after PR #25, Phase 21). Continued the fresh-worklist-pass method.
+  Found `INTERCEPT PHARMACEUTICALS IN` (rank ~50s): EDGAR's own search finds exactly one
+  real candidate (CIK 1270073, SIC 2834, current name `"Intercept Pharmaceuticals,
+  Inc."`), but `_names_match` requires exact normalized equality, and OpenFIGI's
+  28-character field ceiling had cut `"...INC"` down to `"...IN"` — the query's leftover
+  `"IN"` token doesn't match anything, so a real single-candidate search result was
+  reported `no_validated_match`. The same gap Phase 9 already fixed for Tier D
+  (`sec_name_cik_lookup._is_prefix_relation`), never carried over to Tier E.
+  Built the obvious fix first — reuse `_is_prefix_relation` directly — and quantified
+  cache-only: **562 names** gain a validated match. Before shipping, random-sampled the
+  result set by hand (standing practice) and found a real, confirmed false positive:
+  `TPG PACE BENEFICIAL FIN-CL A` resolved to `"TPG Pace Holdings Corp."` — a
+  *different*, unrelated sibling SPAC from the same sponsor family. Root cause:
+  `"TPG Pace Holdings Corp."` normalizes down to just `"TPG PACE"` (both `"Holdings"`
+  and `"Corp."` are legal suffixes), short enough to spuriously prefix *any* longer
+  `"TPG Pace ..."` name via `_is_prefix_relation`'s "extra trailing tokens, exact match
+  at that position" branch — the same branch that legitimately lets `"HERTZ GLOBAL"`
+  match `"HLDGS"` in Tier D, safe there only because Tier D additionally requires
+  uniqueness across the *entire* SEC index before accepting. Tier E has no equivalent
+  global check (it validates one already-EDGAR-searched candidate at a time), so that
+  branch is unsafe here. A second sampling pass, after excluding that branch, found a
+  second confirmed false positive of the identical shape: `"Prime Number Holding Ltd"`
+  (-> `"PRIME NUMBER"`) spuriously prefixing the unrelated `"Prime Number
+  Acquisition..."`. Both are real instances of the 2020-2022 SPAC boom's common
+  pattern — one sponsor launching many similarly-named vehicles from a short shared
+  prefix.
+  Built `_is_safe_final_token_truncation`: a narrower, Tier-E-specific subset of
+  `_is_prefix_relation` keeping only the "same token count, exact match on every token
+  but the last" case — a genuine mid-word cutoff of the final word only
+  (`"...FIN"` for `"...FINANCE"`), never an entirely extra trailing word. This
+  deliberately does **not** recover the original `INTERCEPT PHARMACEUTICALS IN`
+  motivating case (`"IN"` is a whole extra token, structurally identical to the
+  confirmed false positives, not a same-position partial truncation) — no way to tell
+  "IN is truncation noise" apart from "BENEFICIAL FIN is a real distinguishing name"
+  from token shape alone, so it correctly stays unresolved rather than risk
+  reintroducing the unsafe branch to recover one case. Re-quantified under the safe
+  rule: **345 names** (871 under the rejected broader rule — confirming the unsafe
+  branch alone accounted for more than half the naive yield). 80 fresh random samples
+  of the safe-only result set found zero remaining false positives, a sharp contrast to
+  2 found in ~100 samples of the broader rule.
+  5 new tests (the safe mid-word-truncation case, both confirmed-false-positive
+  regression guards, the length-floor guard, and an explicit test documenting that the
+  original motivating case deliberately stays unresolved); 542 tests pass (was 537);
+  ruff/bandit clean. Flagged again, not acted on: `edgar_company_search_match.py` is now
+  767 lines (was 669 after Phase 20), continuing to grow past the 300-line CSD review
+  threshold — still almost entirely accumulated phase-history docstring.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`, ~7 minutes wall-clock total, essentially
+  all cache hits): matched 2,459/4,339 -> **2,804/4,339** (+345, exactly matching
+  quantification); `single_validated_candidate` 2,388 -> 2,725; `filing_activity_tiebreak`
+  53 -> 59 and `filing_window_containment_tiebreak` 18 -> 20 (+8 combined — the improved
+  name-matching also surfaces new candidates into existing tie-breaks). A fresh random
+  sample of 25 from the full matched population spot-checked by eye — all correct real
+  companies with sensible SIC codes (`WEBMD HEALTH CORP`, `ANIXTER INTERNATIONAL INC`,
+  `ALMOST FAMILY INC`, `JUNIPER PHARMACEUTICALS INC`, `HOLLYSYS AUTOMATION
+  TECHNOLOGIES`, `MEDICINES COMPANY`, `CHINA UNICOM HONG KONG-ADR`, dozens of SPAC
+  names). Reconciled: `distinct_ciks_resolved` 8,463 -> **8,572**; manual-research
+  worklist 11,748 -> **11,300 eras**, 161.1M -> **154.6M trade rows**. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 21 attempt (SIC-specificity tie-break for
   the `LIFE STORAGE`-shaped population) — investigated, **not built**: negative result,
   same shape as Phase 13/17. Picked up the explicit "next candidate, not started" Phase 20

@@ -683,6 +683,32 @@ candidates matching via current name on both sides; genuinely complex multi-enti
 history) — no single safe, generalizable signal covers this population. No code shipped; see
 `docs/TASK_LIST.md`'s Phase 21 entry for full detail. [CA][IV][REH][CDiP][KBT]
 
+**Phase 22 (Tier E OpenFIGI-truncation-tolerant name matching — largest single-phase yield
+this session).** Found `INTERCEPT PHARMACEUTICALS IN`: EDGAR's search finds the one real
+candidate, but OpenFIGI's 28-character field ceiling cut `"...INC"` to `"...IN"`, and exact
+normalized-equality validation rejected it anyway — the same gap Phase 9 already closed for
+Tier D (`sec_name_cik_lookup._is_prefix_relation`), never carried to Tier E. Built the obvious
+fix (reuse `_is_prefix_relation` directly, 562 matches quantified cache-only), then caught two
+real, confirmed false positives via random-sampling before shipping: `"TPG Pace Holdings
+Corp."` normalizes down to just `"TPG PACE"` (both `"Holdings"` and `"Corp."` are legal
+suffixes) and spuriously prefixed the unrelated sibling SPAC `"TPG Pace Beneficial Finance
+Corp."`; `"Prime Number Holding Ltd"` similarly collapsed to `"PRIME NUMBER"` and spuriously
+prefixed `"Prime Number Acquisition..."` — both real instances of the 2020-2022 SPAC boom's
+pattern of one sponsor launching many similarly-named vehicles from a shared short prefix.
+That branch is only safe in Tier D because it additionally requires uniqueness across the
+*entire* SEC index; Tier E validates one already-searched candidate at a time with no
+equivalent check. New `_is_safe_final_token_truncation` keeps only the narrower "same token
+count, exact match on every token but the last" sub-case, deliberately not recovering the
+fix's own original motivating example (no structural way to tell truncation noise apart from
+a real distinguishing word). Re-quantified: 345 names under the safe rule (871 under the
+rejected broader rule); 80 fresh random samples found zero remaining false positives. 5 new
+tests; 542 pass (was 537), ruff/bandit clean. Real run: Tier E matched 2,459/4,339 ->
+2,804/4,339 (+345, exactly matching quantification); a fresh spot-check of 25 from the full
+matched population all correct. Distinct CIKs resolved 8,463 -> 8,572; manual-research
+worklist 11,748 -> 11,300 eras, 161.1M -> 154.6M trade rows. Flagged again: the module file is
+now 767 lines, continuing to grow past the CSD review threshold. See `docs/TASK_LIST.md`'s
+Phase 22 entry for full detail. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

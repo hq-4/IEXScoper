@@ -227,7 +227,49 @@ names with a small, already-fully-fetched candidate set): 18 resolve via window
 containment (`BLACK KNIGHT INC`, `DCP MIDSTREAM LP`, `TRAVELCENTERS OF AMERICA INC`,
 `COLONY CAPITAL INC` -> now `DigitalBridge Group, Inc.`, `TCF FINANCIAL CORP`, among
 others), 10 stay ambiguous with the `LIFE STORAGE`-shaped no-containment-difference,
-4 already correctly blocked by an `ACTIVITY_UNKNOWN` candidate. [CA][IV][REH][KBT]
+4 already correctly blocked by an `ACTIVITY_UNKNOWN` candidate.
+
+Phase 21 investigated (but didn't build) a SIC-specificity signal for the `LIFE STORAGE`
+shape and found it unsafe — a real REIT parent can carry the *generic* SIC while its
+operating-partnership sibling carries the specific one, the opposite of what the idea
+needed. Negative result; see `docs/TASK_LIST.md`'s Phase 21 entry, no code here.
+
+Phase 22 closes part of a gap between Tier D and Tier E that Phase 9 only ever fixed on
+one side: OpenFIGI truncates `identity_issuer` to a hard 28-character ceiling, sometimes
+mid-word (`"10X CAPITAL VENTURE ACQUISIT"` for the real `"...Acquisition Corp"`). EDGAR's
+own search already tolerates this (literal prefix matching finds the real registrant
+regardless), but `_names_match` required *exact* normalized equality, so the single
+correct candidate it found was rejected anyway — `no_validated_match`, not `matched`.
+
+The original motivating example, `INTERCEPT PHARMACEUTICALS IN` (OpenFIGI cut `"INC"`
+down to `"IN"`), turned out to need `sec_name_cik_lookup._is_prefix_relation`'s *broader*
+"extra trailing tokens, exact match at that position" case (`"INTERCEPT
+PHARMACEUTICALS"` cleanly prefixes the query with `"IN"` left over) — the same branch,
+built and quantified here first, that produced two confirmed false positives before any
+code shipped: `"TPG Pace Holdings Corp."` normalizes down to just `"TPG PACE"` (both
+`"Holdings"` and `"Corp."` are legal suffixes) and spuriously prefixes the unrelated
+sibling SPAC `"TPG Pace Beneficial Finance Corp."`; `"Prime Number Holding Ltd"`
+similarly collapses to `"PRIME NUMBER"` and spuriously prefixes `"Prime Number
+Acquisition..."` — both real instances of the 2020-2022 SPAC boom's common pattern, one
+sponsor launching many similarly-named vehicles from the same short prefix. That branch
+is only safe in Tier D because it additionally requires uniqueness across the *entire*
+SEC index; Tier E validates one already-EDGAR-searched candidate at a time with no
+equivalent global-uniqueness check available, and there's no way to structurally tell
+"IN is truncation noise of INC" apart from "BENEFICIAL FIN is a real distinguishing
+name" from token shape alone — so that branch was dropped entirely for this module,
+including the case that originally motivated it.
+
+`_is_safe_final_token_truncation` keeps only the narrower "same token count, exact match
+on every token but the last" sub-case (`sec_name_cik_lookup`'s
+`MIN_PARTIAL_TOKEN_CHARS`/`ROMAN_NUMERAL_CHARS` constants, reused directly) — a genuine
+mid-word cutoff of the *final* word only, never an entirely extra word. Quantified before
+shipping (zero network calls, replaying the existing search+validate sequence against
+the SQLite request cache): of 1,826 still-unresolved names, 345 gain a validated match
+under the safe rule (871 under the broader, rejected rule — confirming the unsafe branch
+alone would have accounted for more than half the naive yield). 80 fresh random samples
+of the safe-only result set spot-checked by hand found zero remaining false positives, a
+sharp contrast to 2 found in the first ~100 samples of the broader rule.
+[CA][IV][REH][KBT]
 """
 
 from __future__ import annotations
@@ -236,7 +278,13 @@ from typing import Any
 
 from utils.resolution_v2_network import CachedPrimaryClient, PrimarySourceError
 from utils.sec_company_search_client import search_company_ciks
-from utils.sec_name_cik_lookup import normalize_name, strip_security_descriptors
+from utils.sec_name_cik_lookup import (
+    MIN_PARTIAL_TOKEN_CHARS,
+    MIN_PREFIX_TOKENS,
+    ROMAN_NUMERAL_CHARS,
+    normalize_name,
+    strip_security_descriptors,
+)
 from utils.sec_sic_client import STATUS_FETCH_ERROR as SIC_STATUS_FETCH_ERROR
 from utils.sec_sic_client import fetch_filing_activity, fetch_sic
 
@@ -512,7 +560,57 @@ def _names_match(issuer_name: str, candidate_name: str | None) -> bool:
         return False
     if normalize_name(issuer_name) == target:
         return True
-    return normalize_name(strip_security_descriptors(issuer_name)) == target
+    stripped = normalize_name(strip_security_descriptors(issuer_name))
+    if stripped == target:
+        return True
+    return _is_safe_final_token_truncation(tuple(stripped.split()), tuple(target.split()))
+
+
+def _is_safe_final_token_truncation(
+    query_tokens: tuple[str, ...], candidate_tokens: tuple[str, ...]
+) -> bool:
+    """Phase 22: OpenFIGI truncates its `identity_issuer` field to a hard 28-character
+    ceiling, sometimes mid-word (`"TPG PACE BENEFICIAL FIN"` for the real registrant's
+    `"...FINANCE"`) — the exact gap Phase 9 already found and fixed for Tier D via
+    `sec_name_cik_lookup._is_prefix_relation`. This is a narrower, Tier-E-specific subset
+    of that same function: only the same-token-count, same-position, final-token partial
+    truncation case, never the "extra trailing tokens, exact match at that position"
+    case `_is_prefix_relation` also allows. That narrower scope means this deliberately
+    does *not* recover this fix's own original motivating example,
+    `"INTERCEPT PHARMACEUTICALS IN"` (`"IN"` is a whole extra token relative to the
+    candidate's suffix-stripped name, not a same-position partial truncation) — see the
+    module docstring's Phase 22 entry for why.
+
+    That second case is exactly what Tier D uses for cases like `"HERTZ GLOBAL"` +
+    `"HLDGS"`, and it's safe *there* only because Tier D additionally requires the match
+    to be unique across the *entire* SEC current-listings index before accepting it. Tier
+    E has no equivalent global check — it validates one already-EDGAR-searched candidate
+    at a time — and reusing that branch here produced two real, confirmed false
+    positives during this fix's own quantification: a candidate whose name strips down
+    to a short, generic sponsor-family prefix (`"TPG Pace Holdings Corp."` -> `"TPG
+    PACE"`, `"Prime Number Holding Ltd"` -> `"PRIME NUMBER"`) can spuriously prefix an
+    unrelated, differently-suffixed sibling SPAC from the *same* sponsor family (`"TPG
+    Pace Beneficial Finance Corp."`, `"Prime Number Acquisition..."`) — common during the
+    2020-2022 SPAC boom, where one sponsor launches many similarly-named vehicles.
+    Requiring the *same* token count and an exact match on every token but the last
+    closes that gap: it only ever accepts when the sole difference is a partial cutoff of
+    the final word itself, never an entirely different trailing word."""
+    if len(query_tokens) != len(candidate_tokens) or len(query_tokens) < MIN_PREFIX_TOKENS:
+        return False
+    if query_tokens[:-1] != candidate_tokens[:-1]:
+        return False
+    query_last, candidate_last = query_tokens[-1], candidate_tokens[-1]
+    if query_last == candidate_last:
+        return False
+    partial, full = (
+        (query_last, candidate_last)
+        if len(query_last) <= len(candidate_last)
+        else (candidate_last, query_last)
+    )
+    if len(partial) < MIN_PARTIAL_TOKEN_CHARS or not full.startswith(partial):
+        return False
+    remainder = full[len(partial) :]
+    return any(ch not in ROMAN_NUMERAL_CHARS for ch in remainder)
 
 
 def _filing_activity_verdict(activity: dict[str, Any], era_span: tuple[str, str]) -> str:
