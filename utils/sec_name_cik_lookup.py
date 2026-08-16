@@ -137,7 +137,16 @@ via the Phase 30 ticker fallback), so the collision check found nothing new eith
 Cache-only quantification: 6 rows across 4 distinct real companies newly resolve
 (`AGILITI INC`, `DIAMOND EAGLE ACQUISITION CO` -> DraftKings Holdings' real 2020 SPAC
 merger, `LANDEC CORP` -> renamed Lifecore Biomedical, `PROTAGENIC THERAPEUTIC`), zero
-network calls, zero cache misses, all spot-checked correct. [CA][IV][KBT]
+network calls, zero cache misses, all spot-checked correct.
+
+Phase 34: `POSSESSIVE_APOSTROPHE` fuses a possessive-contraction apostrophe (`CONN'S`
+-> `CONNS`) before general punctuation-stripping would otherwise split it into a stray
+one-letter `"S"` token — SEC's own registered names drop the apostrophe entirely rather
+than replacing it with a space. Same collision-risk-free, quantify-first discipline as
+every prior shared-`normalize_name` change (zero new collisions across the current-
+listings index; 4 names newly resolve — `ART'S-WAY MANUFACTURING CO`, `CONN'S INC`,
+`FLANIGAN'S ENTERPRISES INC`, `RUTH'S HOSPITALITY GROUP INC` — zero network calls, zero
+cache misses, all spot-checked correct). [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -261,6 +270,16 @@ JURISDICTION_SUFFIX = re.compile(r"[/\\]\s*[A-Z]+\s*[/\\]?$", re.IGNORECASE)
 # carry this shape.
 DOTTED_ABBREVIATION = re.compile(r"\b(?:[A-Z]\.){2,}", re.IGNORECASE)
 
+# Phase 34: SEC's own registered names drop a possessive apostrophe entirely
+# ("CONN'S INC" -> "CONNS INC", "FLANIGAN'S ENTERPRISES INC" -> "FLANIGANS ENTERPRISES
+# INC") rather than replacing it with a space — left to `NON_ALNUM` below, the
+# apostrophe becomes a token-splitting space instead, producing a stray one-letter "S"
+# token ("CONN" + "S") that never matches SEC's fused "CONNS". Deletes just the
+# apostrophe when it's immediately followed by a bare "S" (the possessive-contraction
+# shape), narrow by construction — never touches an apostrophe anywhere else in a name
+# (a mid-word apostrophe not followed by "S" still becomes a space as before).
+POSSESSIVE_APOSTROPHE = re.compile(r"'(?=S(?:[^A-Za-z0-9]|$))", re.IGNORECASE)
+
 # Bloomberg/OpenFIGI appends these to a security's `name` field to distinguish share
 # classes, warrants, ADRs, and when-issued lines — they're ticker/security metadata,
 # never part of the issuer's actual legal name, so stripping them before matching is
@@ -309,12 +328,14 @@ DESCRIPTOR_PATTERNS = (
 
 def normalize_name(value: str | None) -> str:
     """Uppercase, strip a trailing SEC jurisdiction tag, fuse a dotted abbreviation
-    ("S.A." -> "SA") before general punctuation-stripping would otherwise split it,
-    drop joiner words ("AND", to match "&" already vanishing under punctuation-
-    stripping), and drop trailing legal-entity suffix tokens (repeatedly, so "XYZ
-    HOLDINGS INC" -> "XYZ"). Blank/None -> ""."""
+    ("S.A." -> "SA") and a possessive apostrophe ("CONN'S" -> "CONNS") before general
+    punctuation-stripping would otherwise split them, drop joiner words ("AND", to
+    match "&" already vanishing under punctuation-stripping), and drop trailing
+    legal-entity suffix tokens (repeatedly, so "XYZ HOLDINGS INC" -> "XYZ").
+    Blank/None -> ""."""
     text = JURISDICTION_SUFFIX.sub("", str(value or "").upper())
     text = DOTTED_ABBREVIATION.sub(lambda match: match.group(0).replace(".", ""), text)
+    text = POSSESSIVE_APOSTROPHE.sub("", text)
     text = NON_ALNUM.sub(" ", text)
     tokens = [token for token in text.split() if token not in JOINER_WORDS]
     while tokens and tokens[-1] in LEGAL_SUFFIXES:

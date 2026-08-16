@@ -76,6 +76,17 @@ from utils.sec_name_cik_lookup import (
         ("AGILITI, INC. \\DE", "AGILITI"),
         ("LANDEC CORP \\CA\\", "LANDEC"),
         ("Protagenic Therapeutics, Inc.\\new", "PROTAGENIC THERAPEUTICS"),
+        # Phase 34: a possessive-contraction apostrophe fuses ("CONN'S" -> "CONNS"),
+        # matching SEC's own convention of dropping it entirely rather than splitting
+        # off a stray one-letter "S" token.
+        ("CONN'S INC", "CONNS"),
+        ("CONNS INC", "CONNS"),
+        ("FLANIGAN'S ENTERPRISES INC", "FLANIGANS ENTERPRISES"),
+        ("ART'S-WAY MANUFACTURING CO", "ARTS WAY MANUFACTURING"),
+        ("RUTH'S HOSPITALITY GROUP INC", "RUTHS HOSPITALITY"),
+        # An apostrophe NOT followed by "S" is untouched -- still becomes a space, same
+        # as before this fix, so a name like "O'Brien" doesn't fuse into "OBRIEN".
+        ("O'BRIEN CORP", "O BRIEN"),
         (None, ""),
         ("", ""),
         ("   ", ""),
