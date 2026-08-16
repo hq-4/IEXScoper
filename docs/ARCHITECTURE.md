@@ -848,6 +848,21 @@ era rows 14,219 -> 14,536 (+317); distinct CIKs resolved 8,648 -> 8,750; manual-
 worklist 11,107 -> 10,790 eras, 142.6M -> 127.4M trade rows — the largest single-phase
 drop in this cycle. [CA][IV][REH][CDiP][KBT]
 
+**Phase 31 (whitespace-tolerant bare share-class-letter descriptor).** Directly traced
+Phase 30's one residual case, `TUSIMPLE HOLDINGS INC - A`: still failed even after the
+ticker fallback found its real CIK, because the bare trailing letter pattern (`-A`
+shape) requires the hyphen directly against the letter — `" - A"` (with spaces) survived
+un-stripped, blocking the legal-suffix pop loop from ever reaching `"INC"`/`"HOLDINGS"`.
+Widened to tolerate whitespace on both sides, same precedent as the `-CL A`/`-CLASS A`
+fix (Phase 12/24). Cache-only quantification: 17 of 23 similarly-shaped names newly
+resolve, zero network calls, zero cache misses, all correct. No collision-risk replay
+needed (query-side-only pattern). 3 new tests; 581 pass (was 578), ruff/bandit clean.
+Real run: Tier E matched 3,130/4,314 -> 3,153/4,314 (+23); all 17 confirmed resolved,
+including `TUSIMPLE HOLDINGS INC - A` itself — Phase 30's residual case fully closed.
+Resolved-CIK era rows 14,536 -> 14,565 (+29); distinct CIKs resolved 8,750 -> 8,766;
+manual-research worklist 10,790 -> 10,761 eras, 127.4M -> 123.9M trade rows.
+[CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

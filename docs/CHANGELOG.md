@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- fix: widen `sec_name_cik_lookup.DESCRIPTOR_PATTERNS`' bare trailing share-class-letter
+  pattern to tolerate whitespace around the hyphen (`"TUSIMPLE HOLDINGS INC - A"`, not
+  just the tight `"...INC-A"`) — Phase 30's one residual open case, root-caused: the
+  un-stripped `" - A"` blocked the legal-suffix pop loop from ever reaching
+  `"INC"`/`"HOLDINGS"` underneath it. Same spacing-tolerance precedent as the `-CL A`/
+  `-CLASS A` patterns (Phase 12/24). Cache-only quantification: 17 of 23
+  similarly-shaped names newly resolve (`TUSIMPLE HOLDINGS INC - A`, `SWITCH INC - A`,
+  `ATRECA INC - A`, `COWEN INC - A`, `TRIBUNE MEDIA CO - A`, among others), zero network
+  calls, zero cache misses, all spot-checked correct. No collision-risk replay needed
+  (`DESCRIPTOR_PATTERNS` only ever strips the OpenFIGI query side, never SEC's own
+  names). 3 new tests; 581 pass (was 578), ruff/bandit clean. Real run: Tier E matched
+  3,130/4,314 -> 3,153/4,314 (+23); all 17 quantified names confirmed resolved.
+  Resolved-CIK era rows 14,536 -> 14,565 (+29); distinct CIKs resolved 8,750 -> 8,766;
+  manual-research worklist 10,790 -> 10,761 eras, 127.4M -> 123.9M trade rows.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - feat: Tier E gains a ticker-lookup fallback (`utils.sec_company_search_client.lookup_cik_by_ticker`,
   `edgar_company_search_match._try_ticker_fallback`) for issuer names name-based search
   can never find at all — a company that renamed since the era in question (`SEAS`'s
