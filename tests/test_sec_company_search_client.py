@@ -5,7 +5,7 @@ from typing import Any
 
 from utils.resolution_v2_network import CachedPrimaryClient, NetworkConfig
 from utils.resolution_v2_registry import EvidenceRegistry
-from utils.sec_company_search_client import search_company_ciks
+from utils.sec_company_search_client import lookup_cik_by_ticker, search_company_ciks
 
 # Real shape of a browse-edgar atom response, including SEC's own `title="ARRAY(0x...)"`
 # rendering bug — the parser must never depend on `title` for the company name.
@@ -130,3 +130,49 @@ def test_search_company_ciks_second_call_is_cache_hit(tmp_path: Path, monkeypatc
     search_company_ciks(client, "Circuit City Stores")
 
     assert len(calls) == 1
+
+
+def test_lookup_cik_by_ticker_returns_single_cik(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda *a, **k: FakeResponse(SINGLE_MATCH_ATOM),
+    )
+
+    assert lookup_cik_by_ticker(_client(tmp_path), "CC") == "104599"
+
+
+def test_lookup_cik_by_ticker_no_registration_returns_none(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", lambda *a, **k: FakeResponse(NO_MATCH_ATOM)
+    )
+
+    assert lookup_cik_by_ticker(_client(tmp_path), "ZZZZZ") is None
+
+
+def test_lookup_cik_by_ticker_blank_ticker_skips_network(tmp_path: Path, monkeypatch: Any) -> None:
+    calls = []
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        lambda *a, **k: calls.append(1) or FakeResponse(NO_MATCH_ATOM),
+    )
+
+    assert lookup_cik_by_ticker(_client(tmp_path), "") is None
+    assert lookup_cik_by_ticker(_client(tmp_path), "   ") is None
+    assert calls == []
+
+
+def test_lookup_cik_by_ticker_uses_cik_param_not_company(tmp_path: Path, monkeypatch: Any) -> None:
+    """Distinguishes a ticker-registry lookup from a name search at the request level —
+    the two must never collide in the cache."""
+    seen_params = []
+
+    def fake_get(url: str, **kwargs: Any) -> FakeResponse:
+        seen_params.append(kwargs.get("params"))
+        return FakeResponse(SINGLE_MATCH_ATOM)
+
+    monkeypatch.setattr("utils.resolution_v2_network.requests.get", fake_get)
+
+    lookup_cik_by_ticker(_client(tmp_path), "CC")
+
+    assert seen_params[0]["CIK"] == "CC"
+    assert "company" not in seen_params[0]

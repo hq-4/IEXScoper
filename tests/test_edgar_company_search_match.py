@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from utils.edgar_company_search_match import (
+    BASIS_TICKER_LOOKUP,
     MAX_CANDIDATES_TO_VALIDATE,
     STATUS_AMBIGUOUS,
     STATUS_FETCH_ERROR,
@@ -54,14 +55,24 @@ def _cik_from_submissions_url(url: str) -> str:
     return str(int(digits))
 
 
-def _fake_get(search_by_query: dict[str, str], submissions_by_cik: dict[str, dict[str, Any]]):
+def _fake_get(
+    search_by_query: dict[str, str],
+    submissions_by_cik: dict[str, dict[str, Any]],
+    ticker_by_symbol: dict[str, str] | None = None,
+):
     """`search_by_query` maps the exact `company` search param to an atom string;
     missing keys default to an empty feed. `submissions_by_cik` maps unpadded CIK to a
-    submissions payload."""
+    submissions payload. `ticker_by_symbol` maps the exact `CIK` search param (used for
+    the Phase 30 ticker-lookup fallback, never a name search) to an atom string;
+    missing keys default to an empty feed too."""
+    ticker_by_symbol = ticker_by_symbol or {}
 
     def fake_get(url: str, **kwargs: Any) -> FakeResponse:
         if url == SEARCH_URL:
-            company = kwargs["params"]["company"]
+            params = kwargs["params"]
+            if "CIK" in params:
+                return FakeResponse(text=ticker_by_symbol.get(params["CIK"], "<feed></feed>"))
+            company = params["company"]
             return FakeResponse(text=search_by_query.get(company, "<feed></feed>"))
         cik = _cik_from_submissions_url(url)
         return FakeResponse(payload=submissions_by_cik.get(cik))
@@ -99,6 +110,197 @@ def test_match_issuer_name_no_candidates_at_any_truncation_level(
     monkeypatch.setattr("utils.resolution_v2_network.requests.get", _fake_get({}, {}))
 
     result = match_issuer_name(_client(tmp_path), "Nonexistent Company Xyz")
+
+    assert result["match_status"] == STATUS_NO_CANDIDATES
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_ticker_fallback_runs_after_ambiguous_over_cap_result(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Regression test (Phase 30): an over-cap `ambiguous_candidates` result returns
+    early from *inside* `_match_by_name`'s loop -- the ticker fallback must still run
+    afterward, not only when name search runs dry with zero candidates."""
+    over_cap = MAX_CANDIDATES_TO_VALIDATE + 1
+    over_cap_atom = _atom([str(n) for n in range(1, over_cap + 1)])
+    ticker_atom = _atom(["1564902"])
+    submissions = {
+        "1564902": {
+            "sic": "7990",
+            "sicDescription": "Services-Miscellaneous Amusement & Recreation",
+            "name": "United Parks & Resorts Inc.",
+            "formerNames": [{"name": "SeaWorld Entertainment, Inc.", "from": "2012", "to": "2024"}],
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get(
+            {"SEAWORLD ENTERTAINMENT INC": over_cap_atom, "SEAWORLD": over_cap_atom},
+            submissions,
+            ticker_by_symbol={"SEAS": ticker_atom},
+        ),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "SEAWORLD ENTERTAINMENT INC", ticker="SEAS")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1564902"
+    assert result["match_basis"] == BASIS_TICKER_LOOKUP
+
+
+def test_match_issuer_name_no_ticker_stays_unresolved_when_name_search_exhausts(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Same setup as the ticker-fallback success test below, but with no `ticker`
+    argument -- proves the fallback is opt-in, not automatic."""
+    atom = _atom(["1564902"])
+    submissions = {
+        "1564902": {
+            "sic": "7990",
+            "sicDescription": "Services-Miscellaneous Amusement & Recreation",
+            "name": "United Parks & Resorts Inc.",
+            "formerNames": [{"name": "SeaWorld Entertainment, Inc.", "from": "2012", "to": "2024"}],
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({}, submissions, ticker_by_symbol={"SEAS": atom}),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "SEAWORLD ENTERTAINMENT INC")
+
+    assert result["match_status"] == STATUS_NO_CANDIDATES
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_resolves_via_ticker_fallback_when_name_search_exhausts(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The real SEAS/SeaWorld case (Phase 30): no name-search query variant returns
+    this CIK at all, but the ticker resolves it directly, and the candidate's real
+    name matches via `former_names` -- exactly the same acceptance path a name-search
+    hit would go through."""
+    atom = _atom(["1564902"])
+    submissions = {
+        "1564902": {
+            "sic": "7990",
+            "sicDescription": "Services-Miscellaneous Amusement & Recreation",
+            "name": "United Parks & Resorts Inc.",
+            "formerNames": [{"name": "SeaWorld Entertainment, Inc.", "from": "2012", "to": "2024"}],
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({}, submissions, ticker_by_symbol={"SEAS": atom}),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "SEAWORLD ENTERTAINMENT INC", ticker="SEAS")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1564902"
+    assert result["match_basis"] == BASIS_TICKER_LOOKUP
+
+
+def test_match_issuer_name_ticker_fallback_recovers_extra_trailing_token_case(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The real Phase 22/30 case: OpenFIGI's 28-char truncation lands mid-word on the
+    trailing legal suffix itself ("INC" -> "IN"), leaving a whole extra token
+    `_names_match` deliberately never recovers (Phase 22's documented limitation for
+    the broad name-search path). The ticker fallback's broader `_names_match_broad`
+    does recover it -- safe here because the ticker registry already narrowed the
+    field to exactly one candidate before this check ever runs."""
+    atom = _atom(["1270073"])
+    submissions = {
+        "1270073": {
+            "sic": "2834",
+            "sicDescription": "Pharmaceutical Preparations",
+            "name": "INTERCEPT PHARMACEUTICALS, INC.",
+            "formerNames": [],
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({}, submissions, ticker_by_symbol={"ICPT": atom}),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "INTERCEPT PHARMACEUTICALS IN", ticker="ICPT")
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1270073"
+    assert result["match_basis"] == BASIS_TICKER_LOOKUP
+
+
+def test_match_issuer_name_ticker_fallback_broad_match_still_rejects_unrelated_company(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The broader `_names_match_broad` check must not become a rubber stamp: a
+    same-first-word, genuinely different company (no shared trailing-token relation)
+    is still rejected."""
+    atom = _atom(["1270073"])
+    submissions = {
+        "1270073": {
+            "sic": "2834",
+            "sicDescription": "Pharmaceutical Preparations",
+            "name": "INTERCEPT DIFFERENT COMPANY ENTIRELY INC",
+            "formerNames": [],
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({}, submissions, ticker_by_symbol={"ICPT": atom}),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "INTERCEPT PHARMACEUTICALS IN", ticker="ICPT")
+
+    assert result["match_status"] == STATUS_NO_CANDIDATES
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_ticker_fallback_rejects_reused_ticker_name_mismatch(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A ticker now held by a completely unrelated company must not be trusted just
+    because it's the only candidate the fallback found -- the same name-match gate
+    that protects every other candidate source applies here too."""
+    atom = _atom(["9999999"])
+    submissions = {
+        "9999999": {
+            "sic": "7372",
+            "sicDescription": "Prepackaged Software",
+            "name": "Completely Unrelated Software Inc",
+            "formerNames": [],
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({}, submissions, ticker_by_symbol={"SEAS": atom}),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "SEAWORLD ENTERTAINMENT INC", ticker="SEAS")
+
+    assert result["match_status"] == STATUS_NO_CANDIDATES
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_ticker_fallback_rejects_blank_sic(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    atom = _atom(["1564902"])
+    submissions = {
+        "1564902": {
+            "sic": "",
+            "sicDescription": "",
+            "name": "United Parks & Resorts Inc.",
+            "formerNames": [{"name": "SeaWorld Entertainment, Inc.", "from": "2012", "to": "2024"}],
+        }
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({}, submissions, ticker_by_symbol={"SEAS": atom}),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "SEAWORLD ENTERTAINMENT INC", ticker="SEAS")
 
     assert result["match_status"] == STATUS_NO_CANDIDATES
     assert result["matched_cik"] is None
