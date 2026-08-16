@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- fix: `sec_name_cik_lookup.normalize_name` now drops the spelled-out word `"AND"` the
+  same way a literal `"&"` already vanishes under punctuation-stripping
+  (`JOINER_WORDS`), filtered anywhere in the token stream. `"PETCO HEALTH AND WELLNESS
+  CO"` (OpenFIGI) vs SEC's own `"Petco Health & Wellness Company, Inc."` was the
+  motivating case — an exact registrant match that failed purely on this asymmetry.
+  Shared by Tier D and Tier E; replayed the entire SEC current-listings index under old
+  vs. new normalization: zero new ambiguous-name collisions. Cache-only Tier E
+  quantification: 4 of 16 `"AND"`-containing unresolved names newly resolve (33
+  `"&"`-containing names: zero, all blocked by unrelated ambiguity); all 4 spot-checked
+  against SEC's live submissions payload. 4 new tests; 553 pass (was 549), ruff/bandit
+  clean. Real run (shared infrastructure, so Tier D also gained matches beyond the
+  narrow Tier E quantification): resolved-CIK era rows 14,107 -> 14,130 (+23); distinct
+  CIKs resolved 8,607 -> 8,612; manual-research worklist 11,213 -> 11,196 eras, 150.7M
+  -> 149.2M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - fix: widen `sec_name_cik_lookup.JURISDICTION_SUFFIX` from an exact 2-letter trailing
   code (`/DE`, `/TX`) to any trailing `/WORD`. `BITFARMS LTD/CANADA` traced the gap:
   every one of the 22 unresolved names carrying a trailing `/WORD` is either SEC's

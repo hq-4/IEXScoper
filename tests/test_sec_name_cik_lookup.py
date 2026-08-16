@@ -38,6 +38,14 @@ from utils.sec_name_cik_lookup import (
         # ...and full country/state names, not just 2-letter abbreviations.
         ("BITFARMS LTD/CANADA", "BITFARMS"),
         ("PEOPLES FINANCIAL CORP/MISS", "PEOPLES FINANCIAL"),
+        # Phase 26: "&" already vanishes under punctuation-stripping with no trace left
+        # behind, so the spelled-out "AND" must too -- both sides of this pair normalize
+        # identically now.
+        ("ECOLOGY & ENVIRONMENT INC", "ECOLOGY ENVIRONMENT"),
+        ("ECOLOGY AND ENVIRONMENT INC", "ECOLOGY ENVIRONMENT"),
+        # A joiner word buried mid-name, not just adjacent to a legal suffix.
+        ("PETCO HEALTH AND WELLNESS CO", "PETCO HEALTH WELLNESS"),
+        ("Petco Health & Wellness Company, Inc.", "PETCO HEALTH WELLNESS"),
         (None, ""),
         ("", ""),
         ("   ", ""),
