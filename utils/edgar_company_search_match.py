@@ -194,7 +194,40 @@ informational fields on the result (`blank_sic_lead_cik`, `blank_sic_lead_name`,
 `blank_sic_lead_high_confidence` — the latter from `_is_high_confidence_lead`, requiring
 both `entityType="operating"` *and* a substantive filing inside the era) — a strong
 research lead for a human, never an automatic accept, `match_status`/`matched_cik`
-completely unaffected. [CA][IV][REH][KBT]
+completely unaffected.
+
+Phase 20 extends `_disambiguate_by_filing_activity` itself for a shape the original
+"exactly one plausible, all others disjoint" rule can't resolve: a genuine mid-era
+successor. `LAREDO PETROLEUM INC`'s EDGAR search surfaces two real, non-blank-SIC
+candidates that both validate by name — CIK 1519352, currently still named `"Laredo
+Petroleum, Inc."` but whose last filing is 2019-01-31, and CIK 1528129, whose
+`formerNames` carries `"Laredo Petroleum, Inc."` (and `"Laredo Petroleum Holdings,
+Inc."`) and which is now `"Vital Energy, Inc."`, filing continuously from 2016 onward
+(the 2023 rename explaining why the LPI-ticker era ends almost exactly when it does).
+Both read `ACTIVITY_PLAUSIBLE` (each has *some* filing landing in the era), so the
+original rule — built for a disjoint-shell collision, not a live succession — can't tell
+them apart and reports ambiguous. `_fully_contains_era` breaks the tie by requiring more
+than plain plausibility: among the plausible candidates, accept the one whose *entire*
+filing window (earliest to latest) spans the *whole* era, when exactly one does. This is
+strictly stricter evidence than what the single-candidate path and the original
+one-plausible tie-break already trust (an "any filing lands inside" bar), so it never
+loosens anything — it only resolves a narrower case those couldn't reach at all. Labeled
+with a distinct `match_basis` (`BASIS_FILING_WINDOW_CONTAINMENT`), since containment
+evidence doesn't *prove* the non-picked candidate was never active, only that its own
+history doesn't span the whole era — real but meaningfully different confidence from a
+provable-disjoint tie-break. Deliberately doesn't resolve every multi-plausible tie: the
+real `LIFE STORAGE INC` case (a REIT parent and its operating partnership, both filing
+continuously through and past the whole era — two *legitimately* co-existing real
+entities, not a succession) has both candidates' windows fully containing the era, so
+containment can't pick between them either, and it correctly stays ambiguous rather than
+guessed; a different signal (SIC specificity, e.g. `6798`-REIT vs. a sibling's generic
+`6500`) would be needed there, not built here. Quantified first, cache-only (zero network
+calls, replaying the existing search+validate sequence against 34 currently-`ambiguous`
+names with a small, already-fully-fetched candidate set): 18 resolve via window
+containment (`BLACK KNIGHT INC`, `DCP MIDSTREAM LP`, `TRAVELCENTERS OF AMERICA INC`,
+`COLONY CAPITAL INC` -> now `DigitalBridge Group, Inc.`, `TCF FINANCIAL CORP`, among
+others), 10 stay ambiguous with the `LIFE STORAGE`-shaped no-containment-difference,
+4 already correctly blocked by an `ACTIVITY_UNKNOWN` candidate. [CA][IV][REH][KBT]
 """
 
 from __future__ import annotations
@@ -215,6 +248,7 @@ STATUS_FETCH_ERROR = "fetch_error"
 
 BASIS_SINGLE_CANDIDATE = "single_validated_candidate"
 BASIS_FILING_ACTIVITY = "filing_activity_tiebreak"
+BASIS_FILING_WINDOW_CONTAINMENT = "filing_window_containment_tiebreak"
 
 ACTIVITY_PLAUSIBLE = "plausible"
 ACTIVITY_DISJOINT = "disjoint"
@@ -308,7 +342,7 @@ def match_issuer_name(
         if len(validated) > 1:
             resolved = _disambiguate_by_filing_activity(client, validated, era_span, max_age_days)
             if resolved is not None:
-                cik, sic_result, matched_name = resolved
+                cik, sic_result, matched_name, basis = resolved
                 return _result(
                     issuer_name,
                     STATUS_MATCHED,
@@ -316,7 +350,7 @@ def match_issuer_name(
                     candidate_name=matched_name,
                     sic=sic_result.get("sic"),
                     sic_description=sic_result.get("sic_description"),
-                    match_basis=BASIS_FILING_ACTIVITY,
+                    match_basis=basis,
                     identity_disproven=disproven,
                 )
             return _result(
@@ -542,7 +576,7 @@ def _disambiguate_by_filing_activity(
     validated: list[tuple[str, dict[str, Any], str]],
     era_span: tuple[str, str] | None,
     max_age_days: int,
-) -> tuple[str, dict[str, Any], str] | None:
+) -> tuple[str, dict[str, Any], str, str] | None:
     """Among 2+ already name-validated candidates (a genuine collision — see the module
     docstring's Continental Resources / Continental Resources Group case), accept the one
     whose real filing history is plausible for `era_span` when every other tied candidate
@@ -552,10 +586,23 @@ def _disambiguate_by_filing_activity(
     status is treated as `ACTIVITY_UNKNOWN` (fails closed) rather than a distinct
     fetch-error signal — simpler, and this call is effectively always a cache hit since
     `_validate_candidates` already fetched the identical payload via `fetch_sic` moments
-    earlier."""
+    earlier.
+
+    Phase 20: when *more than one* candidate is plausible (both have some filing landing
+    in the era — the `LAREDO PETROLEUM INC` case: an original CIK whose filings stop in
+    2019, and its holdco-reorg successor, later renamed `Vital Energy, Inc.`, whose
+    filings span the entire era), `_fully_contains_era` breaks the tie when exactly one
+    candidate's *own* filing window (`earliest_filing_date`..`latest_filing_date`) fully
+    spans `era_span` while the others' don't — stricter evidence than plain
+    `ACTIVITY_PLAUSIBLE` (which only needs one filing anywhere inside the window), so this
+    never loosens what the single-candidate/simple-tie paths already trust, only adds a
+    narrower extra case. Returns a 4-tuple (the original 3 plus a `basis` string) so the
+    caller can label a containment-based accept distinctly from a plain-disjoint one — real
+    but meaningfully weaker evidence (it doesn't prove the non-picked candidate was never
+    active, only that its own history doesn't span the whole era)."""
     if era_span is None:
         return None
-    plausible: list[tuple[str, dict[str, Any], str]] = []
+    plausible: list[tuple[str, dict[str, Any], str, dict[str, Any]]] = []
     for cik, sic_result, matched_name in validated:
         activity = fetch_filing_activity(client, cik, max_age_days=max_age_days)
         if activity.get("fetch_status") != "ok":
@@ -564,8 +611,32 @@ def _disambiguate_by_filing_activity(
         if verdict == ACTIVITY_UNKNOWN:
             return None
         if verdict == ACTIVITY_PLAUSIBLE:
-            plausible.append((cik, sic_result, matched_name))
-    return plausible[0] if len(plausible) == 1 else None
+            plausible.append((cik, sic_result, matched_name, activity))
+    if len(plausible) == 1:
+        cik, sic_result, matched_name, _ = plausible[0]
+        return cik, sic_result, matched_name, BASIS_FILING_ACTIVITY
+    if len(plausible) > 1:
+        containing = [p for p in plausible if _fully_contains_era(p[3], era_span)]
+        if len(containing) == 1:
+            cik, sic_result, matched_name, _ = containing[0]
+            return cik, sic_result, matched_name, BASIS_FILING_WINDOW_CONTAINMENT
+    return None
+
+
+def _fully_contains_era(activity: dict[str, Any], era_span: tuple[str, str]) -> bool:
+    """True only when a candidate's own known filing window (`earliest_filing_date`..
+    `latest_filing_date`) fully spans `era_span` on both ends — a candidate that stopped
+    filing partway through the era, or only started partway through it, doesn't qualify
+    even though it may still be `ACTIVITY_PLAUSIBLE` (some filing landed inside the
+    window). Deliberately doesn't special-case `has_older_shards`: an unfetched older
+    shard could in principle push `earliest_filing_date` further back, but guessing that
+    would loosen this check rather than tighten it — failing to recognize containment
+    here just means the tie stays unresolved, the same safe default as everywhere else in
+    this module."""
+    first_day, last_day = era_span
+    earliest = activity.get("earliest_filing_date")
+    latest = activity.get("latest_filing_date")
+    return bool(earliest and latest and earliest <= first_day and latest >= last_day)
 
 
 def _result(

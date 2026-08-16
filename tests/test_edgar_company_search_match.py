@@ -175,6 +175,9 @@ def test_match_issuer_name_disambiguates_two_way_tie_via_filing_activity(
 def test_match_issuer_name_filing_activity_both_plausible_stays_ambiguous(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
+    """Both plausible, and neither's own filing window fully spans `ERA_SPAN` (a single
+    filing date each, nowhere near either boundary) — no containment signal either, so
+    this stays genuinely ambiguous rather than guessed."""
     atom = _atom(["1", "2"])
     submissions = {
         "1": {"sic": "1000", "sicDescription": "A", "name": "Ambiguous Co",
@@ -187,6 +190,71 @@ def test_match_issuer_name_filing_activity_both_plausible_stays_ambiguous(
     )
 
     result = match_issuer_name(_client(tmp_path), "Ambiguous Co", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_AMBIGUOUS
+    assert result["matched_cik"] is None
+
+
+def test_match_issuer_name_filing_window_containment_breaks_a_multi_plausible_tie(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Phase 20: the real `LAREDO PETROLEUM INC` case — two candidates both validate by
+    name and both have some filing landing in the era, but only one candidate's own
+    filing window fully spans it (a holdco-reorg successor CIK whose history covers the
+    whole era, vs. the original CIK whose filings stop partway through). The containing
+    candidate wins, labeled with a distinct match_basis."""
+    atom = _atom(["1519352", "1528129"])
+    submissions = {
+        "1519352": {
+            "sic": "1311", "sicDescription": "Crude Petroleum & Natural Gas",
+            "name": "Laredo Petroleum, Inc.",
+            # stops well before ERA_SPAN's end (2023-11-22) -- plausible, not containing
+            "filings": _filings(["2011-05-06", "2017-01-01", "2019-01-31"]),
+        },
+        "1528129": {
+            "sic": "1311", "sicDescription": "Crude Petroleum & Natural Gas",
+            "name": "Vital Energy, Inc.",
+            "formerNames": [{"name": "Laredo Petroleum, Inc.", "from": "2016", "to": "2023"}],
+            # spans the entire ERA_SPAN and beyond -- fully contains it
+            "filings": _filings(["2016-05-19", "2019-06-01", "2025-12-29"]),
+        },
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get",
+        _fake_get({"Laredo Petroleum": atom}, submissions),
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Laredo Petroleum Inc", era_span=ERA_SPAN)
+
+    assert result["match_status"] == STATUS_MATCHED
+    assert result["matched_cik"] == "1528129"
+    assert result["match_basis"] == "filing_window_containment_tiebreak"
+
+
+def test_match_issuer_name_filing_window_containment_needs_exactly_one_winner(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The real `LIFE STORAGE INC` case — a REIT parent and its operating partnership
+    both file continuously through and past the whole era (a genuinely different shape
+    from succession: both candidates' windows fully contain it). Containment can't pick
+    between two full containments any more than plain plausibility could — stays
+    ambiguous, no guess."""
+    atom = _atom(["1", "2"])
+    submissions = {
+        "1": {
+            "sic": "6500", "sicDescription": "Real Estate", "name": "Ambiguous Co LP",
+            "filings": _filings(["2010-01-01", "2018-01-01", "2025-01-01"]),
+        },
+        "2": {
+            "sic": "6798", "sicDescription": "REIT", "name": "Ambiguous Co LP",
+            "filings": _filings(["2005-01-01", "2019-01-01", "2025-01-01"]),
+        },
+    }
+    monkeypatch.setattr(
+        "utils.resolution_v2_network.requests.get", _fake_get({"Ambiguous Co LP": atom}, submissions)
+    )
+
+    result = match_issuer_name(_client(tmp_path), "Ambiguous Co LP", era_span=ERA_SPAN)
 
     assert result["match_status"] == STATUS_AMBIGUOUS
     assert result["matched_cik"] is None
