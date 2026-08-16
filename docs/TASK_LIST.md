@@ -1,5 +1,43 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 26 (`normalize_name` "AND"/"&" joiner-word
+  asymmetry). Continuing the autonomous "/goal ... then merge, then continue the cycle"
+  directive after PR #29, Phase 25. Investigated the current worklist's top-priority
+  unresolved names directly against cached data: `HOLX` (`HOLOGIC INC`) traced to a real,
+  separate EDGAR quirk (the company's `browse-edgar` company-search index entry appears to
+  have been dropped after its 2026 going-private acquisition, even though its submissions
+  JSON and filing history are intact — a genuinely different, not-yet-solvable gap, left
+  alone). `WOOF` (`PETCO HEALTH AND WELLNESS CO`) traced to something narrower and fixable:
+  EDGAR's real registrant is `"Petco Health & Wellness Company, Inc."` — a single,
+  unambiguous, correctly-SIC'd (5990) candidate the `"PETCO HEALTH"` query variant finds
+  every time, but `_names_match` rejected it because `normalize_name` already drops a
+  literal `"&"` to nothing (via `NON_ALNUM`) while leaving the spelled-out word `"AND"` as
+  a real token — the two names normalize to a different token count and never match.
+  Root cause lives in shared `normalize_name` (Tier D's bulk index *and* Tier E's
+  candidate validation both use it), so scanned the entire unresolved population (both
+  tiers combined) for the same shape: 16 names contain `"AND"`, 33 contain `"&"`. Added
+  `JOINER_WORDS = frozenset({"AND"})`, filtered out of the token stream anywhere (not
+  just trailing, since the word sits mid-name in `"PETCO HEALTH AND WELLNESS CO"`) right
+  after punctuation-stripping, before the trailing legal-suffix pop loop. Collision-risk
+  check (same full-index replay as every prior shared-`normalize_name` change): **zero
+  new ambiguous-name collisions** (13 either way). Cache-only quantification against the
+  16 `"AND"`-containing Tier E names (real era spans, not a placeholder): 4 newly resolve
+  to a single validated candidate (`ECOLOGY AND ENVIRON`, `PETCO HEALTH AND WELLNESS CO`,
+  `VILLAGE BANK AND TRUST FINAN`, `YANGTZE RIVER PORT AND LOGIS`); the 33 `"&"`-containing
+  names produced zero new matches (all blocked by unrelated ambiguity, mostly ETFs). All 4
+  spot-checked against SEC's live submissions payload — correct registrant, correct SIC.
+  4 new parametrized test cases; 553 tests pass (was 549); ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`): the fix is shared infrastructure, so the
+  yield exceeded the narrow Tier E-only quantification — Tier D's own exact/prefix-match
+  path against the current-listings index picked up additional `"AND"`-shaped names too
+  (`ALLSPRING UTILITIES AND HIGH...`, `NUVEEN PREFERRED AND INCOME...`, among others).
+  Overall resolved-CIK era rows: 14,107 -> **14,130** (+23); distinct CIKs resolved 8,607
+  -> **8,612**; manual-research worklist 11,213 -> **11,196 eras**, 150.7M -> **149.2M**
+  trade rows. Confirmed `WOOF` no longer appears in the manual-research worklist.
+  `HOLX`/`HZNP`/`SEAS`/`AGN` (SIC-blank-lead or genuinely EDGAR-search-invisible cases)
+  remain open for a future phase — not this fix's shape. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 25 (widen `JURISDICTION_SUFFIX` beyond
   2-letter codes). Continuing the autonomous "/goal ... then merge, then continue the
   cycle" directive after PR #28, Phase 24. `BITFARMS LTD/CANADA` (priority rank 34) was

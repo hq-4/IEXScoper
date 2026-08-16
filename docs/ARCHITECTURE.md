@@ -751,6 +751,19 @@ matched 2,823/4,339 -> 2,848/4,334 (+25); 11 newly-matched names spot-checked, a
 correct. Distinct CIKs resolved 8,589 -> 8,607; manual-research worklist 11,278 ->
 11,213 eras, 152.5M -> 150.7M trade rows. [CA][IV][REH][CDiP][KBT]
 
+**Phase 26 (`normalize_name` "AND"/"&" joiner-word asymmetry).** `PETCO HEALTH AND
+WELLNESS CO` traced the gap: `normalize_name` already drops a literal `"&"` to nothing
+(via `NON_ALNUM`), but left the spelled-out `"AND"` as a real token — so it never
+token-matched SEC's own `"Petco Health & Wellness Company, Inc."`. Added `JOINER_WORDS =
+frozenset({"AND"})`, dropped anywhere in the token stream (mid-name, not just trailing).
+Shared by Tier D and Tier E; replayed the entire SEC current-listings index: zero new
+ambiguous-name collisions. Cache-only Tier E quantification: 4 of 16 `"AND"`-containing
+names newly resolve; 33 `"&"`-containing names: zero new matches. 4 new tests; 553 pass
+(was 549), ruff/bandit clean. Real run (shared infra, so Tier D gained matches too):
+resolved-CIK era rows 14,107 -> 14,130 (+23); distinct CIKs resolved 8,607 -> 8,612;
+manual-research worklist 11,213 -> 11,196 eras, 150.7M -> 149.2M trade rows.
+[CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

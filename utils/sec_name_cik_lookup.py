@@ -62,7 +62,21 @@ abbreviation than the existing `"SPON ADR"`), the fully spelled-out `"SPONSORED 
 and a space between the hyphen and `"ADR"`. Found tracing the worklist's top ADR-shaped
 rows (`SONY CORP-SPONSORED ADR`, `SIBANYE GOLD LTD-SPONS ADR`,
 `BRASKEM SA-CLASS A- ADR`); the space-tolerant fix is ordered before the `CLASS`
-patterns so a compound `-CLASS A- ADR` suffix strips its ADR half first. [CA][IV][KBT]
+patterns so a compound `-CLASS A- ADR` suffix strips its ADR half first.
+
+Phase 26: `NON_ALNUM` already turns a literal `"&"` into a dropped space (so "ECOLOGY &
+ENVIRONMENT INC" normalizes with no trace of the ampersand at all), but the spelled-out
+word `"AND"` survived as a real token — an asymmetry that broke an otherwise-exact match
+whenever OpenFIGI's `identity_issuer` spells out `"AND"` and SEC's registered name uses
+`"&"` (or vice versa), e.g. `"PETCO HEALTH AND WELLNESS CO"` vs SEC's `"Petco Health &
+Wellness Company, Inc."`. `JOINER_WORDS` closes the gap by dropping `"AND"` the same way
+`"&"` already disappears, anywhere in the token stream (not just trailing, since the word
+can sit mid-name). Checked before shipping: replaying the entire SEC current-listings
+index under old vs. new normalization produced zero new ambiguous-name collisions (13
+either way); replaying the still-unresolved Tier E population found 4 names newly resolve
+to a single validated candidate (`ECOLOGY AND ENVIRON`, `PETCO HEALTH AND WELLNESS CO`,
+`VILLAGE BANK AND TRUST FINAN`, `YANGTZE RIVER PORT AND LOGIS`), each spot-checked against
+SEC's live submissions payload. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -99,6 +113,13 @@ LEGAL_SUFFIXES = frozenset(
     }
 )
 NON_ALNUM = re.compile(r"[^A-Z0-9 ]+")
+
+# "&" already vanishes entirely under NON_ALNUM (turned into a dropped space, not a
+# word); JOINER_WORDS makes the spelled-out equivalent behave the same way so
+# "PETCO HEALTH AND WELLNESS CO" normalizes identically to SEC's own
+# "Petco Health & Wellness Company, Inc." Filtered anywhere in the token stream, not
+# just trailing, since the word can sit mid-name.
+JOINER_WORDS = frozenset({"AND"})
 
 # Floor for the prefix-match fallback: the shorter of the two normalized names must have
 # at least this many tokens, so a single generic word (e.g. "Bancorp") can't prefix-match
@@ -176,12 +197,13 @@ DESCRIPTOR_PATTERNS = (
 
 
 def normalize_name(value: str | None) -> str:
-    """Uppercase, strip a trailing SEC jurisdiction tag and punctuation, and drop
+    """Uppercase, strip a trailing SEC jurisdiction tag and punctuation, drop joiner
+    words ("AND", to match "&" already vanishing under punctuation-stripping), and drop
     trailing legal-entity suffix tokens (repeatedly, so "XYZ HOLDINGS INC" -> "XYZ").
     Blank/None -> ""."""
     text = JURISDICTION_SUFFIX.sub("", str(value or "").upper())
     text = NON_ALNUM.sub(" ", text)
-    tokens = text.split()
+    tokens = [token for token in text.split() if token not in JOINER_WORDS]
     while tokens and tokens[-1] in LEGAL_SUFFIXES:
         tokens.pop()
     return " ".join(tokens)
