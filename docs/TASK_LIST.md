@@ -1,5 +1,43 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 33 (accept a backslash jurisdiction tag
+  alongside the forward-slash form). Continuing the autonomous "/goal ... then merge,
+  then continue the cycle" directive after PR #36, Phase 32. Re-scanned the fresh
+  worklist top rows now that Phases 30-32's ticker fallback and broader matching exist.
+  `MYLAN NV` (rank 9) traced to a genuinely hard, structurally ambiguous tie — two real
+  Mylan entities (the pre-2015 `Mylan Inc.`, CIK 69499, and the 2015 Netherlands
+  restructuring `Mylan N.V.`/`Mylan II B.V.`, CIK 1623613) both show plausible filing
+  activity spanning the 2016-2020 era, so `_disambiguate_by_filing_activity` correctly
+  refuses to guess — a legitimate negative result, not a bug, closed out. Checking
+  several other renamed-successor names (`EVERNORTH HEALTH INC`, `VANTOR PARENT INC`,
+  `BORGWARNER JERSEY LTD`, `REWORLD HOLDING CORP`, `AUCTANE INC`, `GOTO GROUP INC`)
+  found their tickers have no SEC ticker-registry entry at all (same class of dead end
+  as `HTA`/`AGN`, confirmed via live `curl`) — these need a source this pipeline
+  doesn't have, not a narrow fixable gap.
+  `AGILITI INC` (`AGTI`) did resolve a CIK via the ticker fallback (1749704) but didn't
+  validate: the real registrant's name is `"AGILITI, INC. \DE"` — SEC's own submissions
+  data uses a *backslash* instead of a forward slash for the jurisdiction tag,
+  confirmed directly against `data.sec.gov` (not a rendering artifact of any one
+  endpoint). `JURISDICTION_SUFFIX` only accepted the forward-slash form. Widened to
+  accept either slash direction. Zero occurrences of this shape anywhere in the
+  current-listings index (these names are only reachable via the Phase 30 ticker
+  fallback, since they've delisted/renamed), so the collision check found nothing new
+  either way (22 ambiguous groups, unchanged).
+  Cache-only Tier E quantification: 6 rows across 4 distinct real companies newly
+  resolve — `AGILITI INC`; `DIAMOND EAGLE ACQUI -CW26`/`-CL A`/`CO` (3 rows, one real
+  company: Diamond Eagle Acquisition Corp., which completed its real, well-known 2020
+  SPAC merger to become DraftKings Holdings); `LANDEC CORP` (renamed Lifecore
+  Biomedical in 2022); `PROTAGENIC THERAPEUTIC -CW25`. Zero network calls, zero cache
+  misses; all spot-checked against cached SIC data, correct. 4 new test cases; 590
+  tests pass (was 587); ruff/bandit clean (fixed another un-escaped-backslash
+  `SyntaxWarning` in the module docstring along the way, same fix as Phase 31).
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`): Tier E matched 3,180/4,314 ->
+  **3,186/4,314** (+6). All 6 quantified rows confirmed resolved with the predicted
+  CIK. Reconciled: resolved-CIK era rows 14,592 -> **14,598** (+6); distinct CIKs
+  resolved 8,786 -> **8,788** (+2); manual-research worklist 10,734 -> **10,728 eras**,
+  122.6M -> **122.2M** trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 32 (fuse dotted abbreviations in
   `normalize_name` — with a real safety correction as a side effect). Continuing the
   autonomous "/goal ... then merge, then continue the cycle" directive after PR #35,

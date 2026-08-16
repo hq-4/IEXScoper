@@ -119,7 +119,25 @@ among others), zero network calls, zero cache misses; spot-checked against cache
 data, all correct. No collision-risk replay needed here (unlike `JURISDICTION_SUFFIX`/
 `LEGAL_SUFFIXES`): `DESCRIPTOR_PATTERNS` only ever strips OpenFIGI's query-side name, not
 SEC's own registered names, so it cannot create a new ambiguity within the SEC index
-itself. [CA][IV][KBT]
+itself.
+
+Phase 32: `DOTTED_ABBREVIATION` fuses SEC's period-per-letter abbreviations (`"U.S."`,
+`"S.A."`, `"N.V."`, `"L.P."`) before general punctuation-stripping would otherwise split
+them into stray single-letter tokens — see the constant's own comment for the full
+collision-risk story, which surfaced a genuine pre-existing Tier D correctness bug (four
+distinct real Navios Maritime registrants silently sharing one CIK) this fix retroactively
+exposed and corrected, not just the usual "zero new collisions" result.
+
+Phase 33: the same jurisdiction-tag convention `JURISDICTION_SUFFIX` already handles
+sometimes uses a backslash instead of a forward slash in SEC's own submissions data
+(e.g. `"AGILITI, INC."` followed by a trailing backslash-state tag) — confirmed
+directly against `data.sec.gov`, not a rendering artifact. Widened to accept
+either slash direction. Zero occurrences in the current-listings index (only reachable
+via the Phase 30 ticker fallback), so the collision check found nothing new either way.
+Cache-only quantification: 6 rows across 4 distinct real companies newly resolve
+(`AGILITI INC`, `DIAMOND EAGLE ACQUISITION CO` -> DraftKings Holdings' real 2020 SPAC
+merger, `LANDEC CORP` -> renamed Lifecore Biomedical, `PROTAGENIC THERAPEUTIC`), zero
+network calls, zero cache misses, all spot-checked correct. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -217,7 +235,18 @@ ROMAN_NUMERAL_CHARS = frozenset("IVXLCDM")
 # worked regresses — they're now explicitly ambiguous/dropped instead of silently
 # unmatchable, the same safe "ambiguous means no match" posture `build_name_cik_index`
 # already applies everywhere else.
-JURISDICTION_SUFFIX = re.compile(r"/\s*[A-Z]+\s*/?$", re.IGNORECASE)
+#
+# Phase 33: SEC's own submissions data occasionally uses a backslash instead of a
+# forward slash for this exact tag (`"AGILITI, INC. \DE"`, `"LANDEC CORP \CA\"`,
+# `"Protagenic Therapeutics, Inc.\new"`) — a real, if uncommon, alternate data-entry
+# convention confirmed directly against `data.sec.gov`, not a rendering artifact of any
+# one endpoint. Widened to accept either slash direction, tolerating the same optional
+# second trailing mark and spacing already handled for the forward-slash form. Zero
+# occurrences of this shape anywhere in the current-listings index (these are all
+# names EDGAR search alone can't find — recoverable only via the Phase 30 ticker
+# fallback), so the usual full-index collision check found nothing to report either way
+# (22 ambiguous groups, unchanged).
+JURISDICTION_SUFFIX = re.compile(r"[/\\]\s*[A-Z]+\s*[/\\]?$", re.IGNORECASE)
 
 # SEC frequently punctuates a compact abbreviation with a period after every letter
 # ("U.S. Silica", "Cosan S.A.", "Sono Group N.V.", "TXO Partners, L.P.") — left alone,
