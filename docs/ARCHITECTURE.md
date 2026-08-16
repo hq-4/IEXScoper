@@ -889,6 +889,27 @@ clean. Real run: Tier E matched 3,153/4,314 -> 3,180/4,314; resolved-CIK era row
 corrections); distinct CIKs resolved 8,766 -> 8,786; manual-research worklist 10,761
 -> 10,734 eras, 123.9M -> 122.6M trade rows. [CA][IV][REH][CDiP][KBT]
 
+**Phase 33 (accept a backslash jurisdiction tag).** Re-scanning the fresh worklist:
+`MYLAN NV` traced to a genuinely hard, structurally ambiguous tie between two real
+sequential Mylan entities (pre-2015 `Mylan Inc.` and the 2015 Netherlands `Mylan
+N.V.`/`Mylan II B.V.` restructuring), both plausible for the era — correctly left
+unresolved rather than guessed, a legitimate negative result. Several other
+renamed-successor names (`EVERNORTH HEALTH INC`, `VANTOR PARENT INC`, `BORGWARNER
+JERSEY LTD`, others) have no SEC ticker-registry entry at all, same dead-end class as
+`HTA`/`AGN`. `AGILITI INC` did resolve a CIK via ticker fallback but didn't validate:
+SEC's own submissions data uses a *backslash* instead of forward slash for the
+jurisdiction tag (`"AGILITI, INC. \DE"`, confirmed against `data.sec.gov`). Widened
+`JURISDICTION_SUFFIX` to accept either slash direction. Zero occurrences in the
+current-listings index (ticker-fallback-only names), collision check unchanged (22
+groups either way). Cache-only quantification: 6 rows / 4 distinct companies newly
+resolve (`AGILITI INC`; `DIAMOND EAGLE ACQUISITION CO` -> its real 2020 SPAC merger
+into DraftKings Holdings; `LANDEC CORP` -> renamed Lifecore Biomedical; `PROTAGENIC
+THERAPEUTIC`), zero network calls, zero cache misses, all correct. 4 new tests; 590
+pass (was 587), ruff/bandit clean. Real run: Tier E matched 3,180/4,314 ->
+3,186/4,314; all 6 rows confirmed resolved. Resolved-CIK era rows 14,592 -> 14,598
+(+6); distinct CIKs resolved 8,786 -> 8,788; manual-research worklist 10,734 ->
+10,728 eras, 122.6M -> 122.2M trade rows. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

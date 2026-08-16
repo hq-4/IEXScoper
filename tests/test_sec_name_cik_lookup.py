@@ -71,6 +71,11 @@ from utils.sec_name_cik_lookup import (
         ("Buckeye Partners, L.P.", "BUCKEYE"),
         # Three-letter dotted abbreviations fuse the same way.
         ("Grupo Simec, S.A.B. de C.V.", "GRUPO SIMEC SAB DE CV"),
+        # Phase 33: SEC's own data occasionally uses a backslash instead of a forward
+        # slash for the same jurisdiction-tag convention.
+        ("AGILITI, INC. \\DE", "AGILITI"),
+        ("LANDEC CORP \\CA\\", "LANDEC"),
+        ("Protagenic Therapeutics, Inc.\\new", "PROTAGENIC THERAPEUTICS"),
         (None, ""),
         ("", ""),
         ("   ", ""),

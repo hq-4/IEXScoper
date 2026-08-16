@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- fix: widen `sec_name_cik_lookup.JURISDICTION_SUFFIX` to accept a backslash alongside
+  the forward slash — SEC's own submissions data occasionally uses a backslash for the
+  jurisdiction tag (`"AGILITI, INC."` + backslash-state, confirmed directly against
+  `data.sec.gov`, not a rendering artifact). Zero occurrences in the current-listings
+  index (only reachable via the Phase 30 ticker fallback), so the collision check found
+  nothing new either way. Cache-only quantification: 6 rows across 4 distinct real
+  companies newly resolve — `AGILITI INC`; `DIAMOND EAGLE ACQUISITION CO` (its real 2020
+  SPAC merger into DraftKings Holdings); `LANDEC CORP` (renamed Lifecore Biomedical);
+  `PROTAGENIC THERAPEUTIC`. Zero network calls, zero cache misses, all spot-checked
+  correct. 4 new tests; 590 pass (was 587), ruff/bandit clean. Real run: Tier E matched
+  3,180/4,314 -> 3,186/4,314; all 6 rows confirmed resolved. Resolved-CIK era rows
+  14,592 -> 14,598 (+6); distinct CIKs resolved 8,786 -> 8,788; manual-research
+  worklist 10,734 -> 10,728 eras, 122.6M -> 122.2M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - fix: `sec_name_cik_lookup.normalize_name` now fuses dotted abbreviations
   (`"U.S."`/`"S.A."`/`"N.V."`/`"L.P."` -> `"US"`/`"SA"`/`"NV"`/`"LP"`) before general
   punctuation-stripping — previously each internal period became a token-splitting
