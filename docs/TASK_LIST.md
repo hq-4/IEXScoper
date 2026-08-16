@@ -1,5 +1,63 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 32 (fuse dotted abbreviations in
+  `normalize_name` — with a real safety correction as a side effect). Continuing the
+  autonomous "/goal ... then merge, then continue the cycle" directive after PR #35,
+  Phase 31. Investigated `US SILICA HOLDINGS INC` (worklist rank 20, carrying a
+  `blank_sic_lead` to a defunct legacy shell): its real, correctly-SIC'd (1400, Mining
+  & Quarrying) EDGAR candidate is `"U.S. SILICA HOLDINGS, INC."` — but
+  `normalize_name`'s `NON_ALNUM` step converts every internal period into a
+  token-splitting space, turning `"U.S."` into two stray single-letter tokens `"U"`/
+  `"S"` instead of fusing to `"US"` (matching OpenFIGI's own unpunctuated form). Scanned
+  the current-listings index for the same shape: **182 names** carry a dotted
+  abbreviation (`"S.A."`, `"N.V."`, `"L.P."`, `"S.A.B."`, among others) — and since
+  `"SA"`/`"NV"`/`"LP"` are all recognized `LEGAL_SUFFIXES` entries, this bug was ALSO
+  silently blocking suffix-popping for every one of them (`"L.P."` splitting to `"L"`+
+  `"P"` never matches the whole-token `"LP"` check).
+  Added `DOTTED_ABBREVIATION` (collapses 2+ consecutive single-letter-plus-period
+  groups, e.g. `"S.A."` -> `"SA"`), applied before general punctuation-stripping.
+  **Collision-risk check surfaced something more consequential than the usual "zero new
+  collisions" or "previously unreachable anyway" outcomes of prior phases**: 6 new
+  ambiguous-name groups (`BROOKFIELD INFRASTRUCTURE`, `BROOKFIELD RENEWABLE`,
+  `CHENIERE ENERGY`, `NAVIOS MARITIME`, `ORION`, `STAR`) — each a real "Corp + sibling
+  LP" pair that only collided because the fix correctly stripped `"L.P."`/`"S.A."`
+  suffixes that were previously blocking that stripping. Traced whether any of the 22
+  currently-resolved symbols across these 6 pairs would regress: **found a genuine
+  pre-existing correctness bug, not caused by this fix, that this fix retroactively
+  exposed and corrected**. Tier D's separate `_prefix_match_name` global-uniqueness
+  mechanism had been silently resolving `NM` (Navios Maritime Holdings), `NAP`
+  (Midstream Partners), `NMCI` (Containers), and `NNA` (Acquisition Corp) — four
+  genuinely distinct real registrants, live-confirmed against `data.sec.gov` (CIKs
+  1333172, 1617049, 1707210, 1437260 respectively) — all to the *same* CIK (1333172,
+  Holdings), because only Holdings' name (no periods) stripped its `"Inc"` suffix
+  cleanly enough to satisfy the prefix relation as the sole "unique" candidate. Once
+  this fix correctly stripped the siblings' own `"L.P."`/`"Corp"` suffixes too, Tier D's
+  uniqueness check correctly found *multiple* candidates and refused to guess — losing
+  4 previously resolved-but-wrong rows (plus one more, `CQH`, a similarly-wrong
+  Cheniere match) at the Tier D layer. Re-ran the full 2-script sequence a second time
+  (the standard "regenerate consistent state" pattern already documented in
+  `unresolved_issuer_names`'s own docstring) so these names — now correctly unresolved
+  by Tier D — flowed into Tier E's more careful per-candidate search+validate pass:
+  Tier E correctly resolved `NM` and `NNA` to their own genuinely distinct, correct
+  CIKs (1333172 and 1437260), and correctly left `NAP`/`NMCI`/`CQH` unresolved rather
+  than guessing. Net effect of the 6 newly-ambiguous groups: 2 previously-wrong matches
+  became correct, 3 previously-wrong matches became honestly unresolved, 0 previously-
+  *correct* matches were lost.
+  Cache-only Tier E quantification (separately, for the main dotted-abbreviation
+  yield): 30 names newly resolve (`US SILICA HOLDINGS INC`, `BUCKEYE PARTNERS LP`,
+  `WILLIAMS PARTNERS LP`, `ARDAGH GROUP SA`, `CNOVA NV`, `INTERXION HOLDING NV`, among
+  others), zero network calls, zero cache misses; 7 spot-checked against cached SIC
+  data, all correct. 8 new test cases; 587 tests pass (was 581); ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` run *twice* — the second pass
+  specifically to let Tier E pick up the Navios/Cheniere names Tier D newly released —
+  then `build_era_sector_enriched.py` + `build_sector_manual_research_worklist.py`):
+  Tier E matched 3,153/4,314 -> **3,180/4,314**. 10 of the 30 quantified names
+  spot-verified resolved with the predicted CIK in the final output. Reconciled:
+  resolved-CIK era rows 14,565 -> **14,592** (+27, net of both the 30 new dotted-
+  abbreviation matches and the 5 Navios/Cheniere corrections); distinct CIKs resolved
+  8,766 -> **8,786** (+20); manual-research worklist 10,761 -> **10,734 eras**, 123.9M
+  -> **122.6M** trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 31 (whitespace-tolerant bare
   share-class-letter descriptor). Continuing the autonomous "/goal ... then merge, then
   continue the cycle" directive after PR #34, Phase 30. Directly traced Phase 30's one

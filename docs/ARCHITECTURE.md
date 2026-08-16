@@ -863,6 +863,32 @@ Resolved-CIK era rows 14,536 -> 14,565 (+29); distinct CIKs resolved 8,750 -> 8,
 manual-research worklist 10,790 -> 10,761 eras, 127.4M -> 123.9M trade rows.
 [CA][IV][REH][CDiP][KBT]
 
+**Phase 32 (fuse dotted abbreviations — with a real safety correction).**
+`US SILICA HOLDINGS INC`'s real EDGAR candidate is `"U.S. Silica Holdings, Inc."` —
+`normalize_name`'s punctuation-stripping turned `"U.S."` into stray tokens `"U"`/`"S"`
+instead of fusing to `"US"`, also silently blocking `LEGAL_SUFFIXES`' whole-token check
+for `"SA"`/`"NV"`/`"LP"` (182 current-listings names carry this shape). Added
+`DOTTED_ABBREVIATION`, collapsing 2+ consecutive single-letter-plus-period groups.
+
+Collision-risk check surfaced something more consequential than usual: 6 new ambiguous
+groups, each a real "Corp + sibling LP" pair. Tracing why revealed a genuine
+**pre-existing** correctness bug this fix retroactively exposed: Tier D's
+`_prefix_match_name` had been silently resolving 4 distinct real Navios Maritime
+registrants (Holdings, Midstream Partners, Containers, Acquisition Corp —
+live-confirmed as 4 different CIKs) all to the *same* CIK, because only Holdings'
+period-free name stripped cleanly enough to look like the sole unique candidate. Fixing
+the periods bug correctly exposed the ambiguity; a second full pipeline pass (the
+standard "regenerate consistent state" pattern) let Tier E's more careful per-candidate
+validation resolve 2 of the 5 affected symbols to their own distinct correct CIKs and
+honestly leave the other 3 unresolved — net: 0 previously-correct matches lost.
+
+Cache-only quantification (main yield): 30 names newly resolve, zero network calls,
+zero cache misses, spot-checked correct. 8 new tests; 587 pass (was 581), ruff/bandit
+clean. Real run: Tier E matched 3,153/4,314 -> 3,180/4,314; resolved-CIK era rows
+14,565 -> 14,592 (+27, net of both the new matches and the Navios/Cheniere
+corrections); distinct CIKs resolved 8,766 -> 8,786; manual-research worklist 10,761
+-> 10,734 eras, 123.9M -> 122.6M trade rows. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

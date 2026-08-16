@@ -59,6 +59,18 @@ from utils.sec_name_cik_lookup import (
         ("Horizon Therapeutics Public Ltd Co", "HORIZON THERAPEUTICS"),
         ("KALERA PLC", "KALERA"),
         ("Kalera Public Ltd Co", "KALERA"),
+        # Phase 32: SEC often punctuates a compact abbreviation with a period after
+        # every letter ("U.S." vs OpenFIGI's unpunctuated "US") -- both sides must fuse
+        # to the same token, not split into stray single-letter tokens.
+        ("US SILICA HOLDINGS INC", "US SILICA"),
+        ("U.S. Silica Holdings, Inc.", "US SILICA"),
+        # The same fusing also lets "S.A."/"N.V."/"L.P." finally match LEGAL_SUFFIXES
+        # as a whole token, which they never could split ("S A"/"N V"/"L P").
+        ("Ardagh Group S.A.", "ARDAGH"),
+        ("InterXion Holding N.V.", "INTERXION"),
+        ("Buckeye Partners, L.P.", "BUCKEYE"),
+        # Three-letter dotted abbreviations fuse the same way.
+        ("Grupo Simec, S.A.B. de C.V.", "GRUPO SIMEC SAB DE CV"),
         (None, ""),
         ("", ""),
         ("   ", ""),
