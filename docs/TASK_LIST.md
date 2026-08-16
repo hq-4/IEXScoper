@@ -1,5 +1,35 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 29 (add `"PUBLIC"` to `LEGAL_SUFFIXES` for
+  `PLC`/"Public Ltd Co"). Continuing the autonomous "/goal ... then merge, then continue
+  the cycle" directive after PR #32, Phase 28. With Phase 27/28's abbreviation-shaped
+  leftovers resolved or confirmed dead ends (`DECOMA INTL INC` traced and closed as a
+  genuine negative result — its only valid EDGAR candidate, CIK 853867, filed exclusively
+  2002-2005, completely disjoint from the 2022-2025 era; `_provably_disjoint` correctly
+  blocking a wrong match, not a bug), went back to the fresh worklist top rows.
+  `HORIZON THERAPEUTICS PLC` (`HZNP`, priority rank 4) traced to a `LEGAL_SUFFIXES` gap:
+  OpenFIGI's `"PLC"` abbreviation pops as a trailing legal suffix, but SEC's own
+  registered name for the same entity spells it out as `"Horizon Therapeutics Public Ltd
+  Co"` — `"LTD"`/`"CO"` already pop, but `"PUBLIC"` isn't a recognized suffix, so the pop
+  loop stops one token short of where the abbreviated side lands (2 tokens vs 3).
+  Checked first: every current-listings name ending in bare `"PUBLIC"` does so as part of
+  this exact `"PUBLIC LTD CO"` pattern (5 real names — `PROTHENA CORP PUBLIC LTD CO`,
+  `CRH PUBLIC LTD CO`, `VODAFONE GROUP PUBLIC LTD CO`, among others), never a genuine
+  distinguishing final word on its own. Added `"PUBLIC"` to `LEGAL_SUFFIXES`.
+  Collision-risk check (same full-index replay as every prior shared-`normalize_name`
+  change): **zero new** ambiguous-name collisions (16 either way). Cache-only Tier E
+  quantification: 2 names newly resolve (`HORIZON THERAPEUTICS PLC`, `KALERA PLC`), zero
+  network calls, zero cache misses; both spot-checked against cached SIC data (2834
+  Pharmaceutical Preparations; 0100 Agricultural Production-Crops, correct for Kalera's
+  hydroponic-lettuce agtech business). 4 new test cases; 565 tests pass (was 561);
+  ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`): both quantified names confirmed resolved
+  with the predicted CIK via `resolved_cik`/`cik_source`, both gone from the
+  manual-research worklist. Reconciled: resolved-CIK era rows 14,207 -> **14,219** (+12);
+  distinct CIKs resolved 8,645 -> **8,648**; manual-research worklist 11,119 ->
+  **11,107 eras**, 144.5M -> **142.6M** trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 28 (widen `JURISDICTION_SUFFIX` to
   tolerate a trailing slash after the tag). Continuing the autonomous "/goal ... then
   merge, then continue the cycle" directive after PR #31, Phase 27. Tracing Phase 27's

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- fix: add `"PUBLIC"` to `sec_name_cik_lookup.LEGAL_SUFFIXES` — OpenFIGI's `"PLC"`
+  abbreviation pops as a trailing legal suffix, but SEC's own registered name for the
+  same entity sometimes spells it out as `"Public Ltd Co"` (`"Horizon Therapeutics
+  Public Ltd Co"` vs OpenFIGI's `"HORIZON THERAPEUTICS PLC"`); `"LTD"`/`"CO"` already
+  pop, but `"PUBLIC"` wasn't a recognized suffix, stopping the pop loop one token short.
+  Checked first: every current-listings name ending in bare `"PUBLIC"` does so as part of
+  this exact `"PUBLIC LTD CO"` pattern (5 real names), never a genuine distinguishing
+  final word. Replayed the entire SEC current-listings index: zero new ambiguous-name
+  collisions (16 either way). Cache-only quantification: 2 names newly resolve (`HORIZON
+  THERAPEUTICS PLC`, `KALERA PLC`), zero network calls, zero cache misses; both
+  spot-checked correct. 4 new tests; 565 pass (was 561), ruff/bandit clean. Real run:
+  both confirmed resolved and gone from the worklist. Resolved-CIK era rows 14,207 ->
+  14,219 (+12); distinct CIKs resolved 8,645 -> 8,648; manual-research worklist 11,119
+  -> 11,107 eras, 144.5M -> 142.6M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - fix: widen `sec_name_cik_lookup.JURISDICTION_SUFFIX` to tolerate a second trailing
   slash after the tag (`"/DE/"`, not just `"/DE"`) — 253 names in the current-listings
   index carry this shape (`TERADATA CORP /DE/`, `AMERICAN TOWER CORP /MA/`, among
