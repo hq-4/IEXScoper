@@ -76,7 +76,22 @@ index under old vs. new normalization produced zero new ambiguous-name collision
 either way); replaying the still-unresolved Tier E population found 4 names newly resolve
 to a single validated candidate (`ECOLOGY AND ENVIRON`, `PETCO HEALTH AND WELLNESS CO`,
 `VILLAGE BANK AND TRUST FINAN`, `YANGTZE RIVER PORT AND LOGIS`), each spot-checked against
-SEC's live submissions payload. [CA][IV][KBT]
+SEC's live submissions payload.
+
+Phase 28: `JURISDICTION_SUFFIX` only stripped a tag anchored at the true end of the
+string (`"/DE"`), but SEC's own registrant names sometimes wrap it in a *second* trailing
+slash (`"TRC COMPANIES INC /DE/"`) — 253 names in the current-listings index alone carry
+this shape, every one previously left with the tag surviving as a stray trailing token no
+real OpenFIGI name would ever replicate (so effectively unreachable, found while tracing
+Phase 27's `TRC COS INC` gap). Added an optional trailing `/?`. Collision check: 3 new
+ambiguous groups, each genuinely different real companies sharing an identical base name
+post-strip (`CITIZENS`, `FIRST BANCORP`, `INDEPENDENT BANK`) — none were reachable matches
+before either, so nothing regresses; see the constant's own comment for detail.
+Cache-only quantification against the still-unresolved population: 24 names newly resolve
+(`AETNA INC`, `CYPRESS SEMICONDUCTOR CORP`, `LINEAR TECHNOLOGY CORP`, `PLANTRONICS INC`,
+`STILLWATER MINING CO`, `TRC COS INC`, `WEINGARTEN REALTY INVESTORS`, among others), zero
+network calls, zero cache misses; SIC codes spot-checked against cached data, all correct
+for real, well-known companies. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -153,7 +168,23 @@ ROMAN_NUMERAL_CHARS = frozenset("IVXLCDM")
 # codes — none of these are ever part of a registrant's actual distinguishing name.
 # Checked before widening: zero new ambiguous-name collisions anywhere in the full SEC
 # current-listings index (13 collisions either way — the widening doesn't create any).
-JURISDICTION_SUFFIX = re.compile(r"/\s*[A-Z]+$", re.IGNORECASE)
+#
+# Phase 28: SEC's own registrant names sometimes wrap the tag in a *second* trailing
+# slash too (`"TRC COMPANIES INC /DE/"`, not just `"TRC COMPANIES INC /DE"`) — 253 names
+# in the current-listings index alone carry this shape, and the un-widened pattern's `$`
+# anchor left every one of them un-stripped, with the tag surviving as a real trailing
+# token that no OpenFIGI-side name would ever also carry (so these entries were
+# effectively unreachable, not just occasionally wrong). Added an optional trailing `/?`.
+# Collision check: 3 new ambiguous-name groups appear (`CITIZENS`, `FIRST BANCORP`,
+# `INDEPENDENT BANK`) — each is genuinely different real companies sharing an identical
+# base legal name once their state tag strips correctly (three distinct real "First
+# Bancorp" bank holding companies in PR/NC/ME, for instance). None of these were
+# reachable matches before this change either (their old normalized form kept a stray
+# state-code token no real issuer name would replicate), so nothing that previously
+# worked regresses — they're now explicitly ambiguous/dropped instead of silently
+# unmatchable, the same safe "ambiguous means no match" posture `build_name_cik_index`
+# already applies everywhere else.
+JURISDICTION_SUFFIX = re.compile(r"/\s*[A-Z]+\s*/?$", re.IGNORECASE)
 
 # Bloomberg/OpenFIGI appends these to a security's `name` field to distinguish share
 # classes, warrants, ADRs, and when-issued lines — they're ticker/security metadata,
