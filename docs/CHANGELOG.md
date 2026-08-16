@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- docs: extract `edgar_company_search_match.py`'s accumulated phase-by-phase design
+  history (Phase 5-22, ~265 lines) out of the module docstring into
+  `docs/EDGAR_COMPANY_SEARCH_MATCH_DESIGN.md` verbatim, replacing it with a concise
+  technical summary of the current search/validation/tie-break/rejection/lead mechanisms
+  and why each is safe. File 767 -> 559 lines (still over the 300-line CSD review
+  threshold, but the remaining bulk is real code plus genuinely necessary per-function
+  documentation, not narrative). Docstring-only change; 542 tests still pass, ruff clean,
+  no behavior change. `[CA][CDiP]`
+
 - feat: tolerate OpenFIGI's 28-character `identity_issuer` truncation in
   `edgar_company_search_match`'s name validation — the same gap Phase 9 already closed for
   Tier D (`sec_name_cik_lookup._is_prefix_relation`), never carried over to Tier E. EDGAR's
