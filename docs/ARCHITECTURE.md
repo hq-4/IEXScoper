@@ -670,6 +670,19 @@ threshold — almost entirely this file's own deliberately-kept phase-by-phase n
 docstring, not code complexity. See `docs/TASK_LIST.md`'s Phase 20 entry for full detail.
 [CA][IV][REH][CDiP][KBT]
 
+**Phase 21 attempt (SIC-specificity tie-break) — negative result, not built.** Investigated
+Phase 20's own speculated next step for the 10-name `LIFE STORAGE`-shaped population (multiple
+filing-plausible, window-containing candidates a containment check can't separate). Found a
+direct real counter-example before writing any code: `DUPONT FABROS TECHNOLOGY, INC.` — the
+actual publicly-traded REIT (ticker `DFT`) — carries the *generic* SIC `6500`, while its
+private operating partnership carries the *more specific* REIT code `6798`, the exact
+opposite of the `LIFE STORAGE` case that motivated the idea. No consistent SIC pattern
+distinguishes a REIT parent from its operating-partnership sibling across real EDGAR data.
+The remaining 8 names are each their own shape (two real LP entities with no Inc./LP split;
+candidates matching via current name on both sides; genuinely complex multi-entity corporate
+history) — no single safe, generalizable signal covers this population. No code shipped; see
+`docs/TASK_LIST.md`'s Phase 21 entry for full detail. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

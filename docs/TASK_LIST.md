@@ -1,5 +1,44 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 21 attempt (SIC-specificity tie-break for
+  the `LIFE STORAGE`-shaped population) — investigated, **not built**: negative result,
+  same shape as Phase 13/17. Picked up the explicit "next candidate, not started" Phase 20
+  itself flagged: the 10-name population where multiple filing-activity-plausible
+  candidates *all* fully contain the era (window containment can't distinguish them
+  either), speculated in Phase 20's own docstring to need "SIC specificity" (e.g. the real
+  REIT parent's `6798` vs. an operating-partnership sibling's generic `6500`, as seen with
+  `LIFE STORAGE INC`).
+  Traced all 10 names individually before building anything. `CARE CAPITAL PROPERTIES INC`
+  immediately broke the premise: both tied candidates (the REIT `Inc.` and its operating
+  `LP`) share the identical SIC `6798` — no specificity gap to exploit at all. Then found a
+  direct, real counter-example proving the hypothesis actively wrong, not just
+  inapplicable: `DUPONT FABROS TECHNOLOGY, INC.` — the actual publicly-traded NYSE REIT
+  (ticker `DFT`, acquired by Digital Realty Trust in 2017) — carries the *generic* SIC
+  `6500` (Real Estate), while its private, never-independently-listed operating partnership
+  `DuPont Fabros Technology LP` carries the *more specific* REIT code `6798`. A rule
+  preferring the higher-specificity SIC would have picked the wrong entity here — the exact
+  opposite of the `LIFE STORAGE` case that motivated the idea, where the REIT parent was
+  the specific one. No consistent SIC-classification pattern distinguishes a REIT parent
+  from its operating-partnership sibling across real EDGAR data; the two cases checked
+  disagree with each other, not just fail to generalize.
+  The remaining 8 names are individually harder still, each its own shape: `CRESTWOOD
+  EQUITY PARTNERS LP` (two different real LP entities, no Inc./LP split to lean on at all);
+  `GREAT LAKES DREDGE & DOCK CO` (two candidates both matching via *current* name, not
+  former — "prefer current over former name" wouldn't help either); `TIME WARNER INC`
+  (genuinely complex post-AT&T/WarnerMedia/Discovery corporate history spanning multiple
+  real successor entities); `MOXIAN INC`, `UNITED COMMUNITY BANCORP`, `US ECOLOGY INC`,
+  `MAJESCO` each their own tangle. No single safe, generalizable signal covers this
+  population — every heuristic tried either doesn't apply to most of the 10 or actively
+  disagrees with another member of the same set. Correctly stays `ambiguous_candidates`,
+  matching this module's standing "better genuinely unresolved than confidently wrong"
+  posture; building a rule that happened to work for `LIFE STORAGE` alone, without
+  checking it against the rest of its own quantified population, would have been exactly
+  the kind of untested-signal risk this project's discipline exists to catch (see Phase
+  19's own near-miss on this same point). No code changed — corrects Phase 20's own
+  docstring speculation about a viable next step; `edgar_company_search_match.py`'s
+  Phase 20 entry stands as written (the speculation, not a promise), this entry is the
+  record that it was checked and doesn't hold. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 20 (filing-window-containment tie-break).
   User: "what else is next, i just merged" (after PR #23, Phase 19). Continued the same
   "fresh pass over the worklist's top rows" method.
