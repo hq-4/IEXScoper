@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- fix: `sec_name_cik_lookup.normalize_name` now fuses a possessive-contraction
+  apostrophe (`"CONN'S"` -> `"CONNS"`) before general punctuation-stripping would
+  otherwise split it into a stray one-letter `"S"` token — SEC's own registered names
+  drop the apostrophe entirely rather than replacing it with a space (`"CONNS INC"`,
+  `"FLANIGANS ENTERPRISES INC"`, `"ARTS WAY MANUFACTURING CO INC"`, confirmed live).
+  Narrow by construction: only an apostrophe immediately followed by a bare `"S"`
+  fuses; elsewhere (e.g. `"O'Brien"`) it still becomes a space as before. Zero new
+  ambiguous-name collisions across the full SEC current-listings index (22 either way).
+  Cache-only quantification: 4 names newly resolve (`ART'S-WAY MANUFACTURING CO`,
+  `CONN'S INC`, `FLANIGAN'S ENTERPRISES INC`, `RUTH'S HOSPITALITY GROUP INC`), zero
+  network calls, zero cache misses, all spot-checked correct. 6 new tests; 596 pass
+  (was 590), ruff/bandit clean. Real run: Tier E matched 3,186/4,314 -> 3,190/4,314;
+  all 4 quantified names confirmed resolved. Resolved-CIK era rows 14,598 -> 14,616
+  (+18); distinct CIKs resolved 8,788 -> 8,792; manual-research worklist 10,728 ->
+  10,710 eras, 122.2M -> 121.4M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - fix: widen `sec_name_cik_lookup.JURISDICTION_SUFFIX` to accept a backslash alongside
   the forward slash — SEC's own submissions data occasionally uses a backslash for the
   jurisdiction tag (`"AGILITI, INC."` + backslash-state, confirmed directly against

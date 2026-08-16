@@ -910,6 +910,24 @@ pass (was 587), ruff/bandit clean. Real run: Tier E matched 3,180/4,314 ->
 (+6); distinct CIKs resolved 8,786 -> 8,788; manual-research worklist 10,734 ->
 10,728 eras, 122.6M -> 122.2M trade rows. [CA][IV][REH][CDiP][KBT]
 
+**Phase 34 (fuse a possessive-contraction apostrophe).** Investigated the
+`no_candidates` bucket (52 names) for a new shape — mostly ETFs (a different problem).
+`PCTEL INC`'s real registrant is `"PC TEL INC"`, a genuine base-name word-split
+deliberately not pursued (riskier than any punctuation fix so far). `CONN'S INC`,
+`FLANIGAN'S ENTERPRISES INC`, `ART'S-WAY MANUFACTURING CO` all trace to the same real
+gap: SEC drops a possessive apostrophe entirely (`"CONNS INC"`), while
+`normalize_name` converts it to a token-splitting space instead, leaving a stray
+one-letter `"S"` token. Added `POSSESSIVE_APOSTROPHE`, deleting an apostrophe only
+when immediately followed by a bare `"S"` — narrow by construction, elsewhere (e.g.
+`"O'Brien"`) it still becomes a space. Zero new collisions (22 either way). Cache-only
+quantification: 4 names newly resolve, zero network calls, zero cache misses, all
+correct. 6 new tests; 596 pass (was 590), ruff/bandit clean. Real run: Tier E matched
+3,186/4,314 -> 3,190/4,314; all 4 confirmed resolved (two via Tier D's shared index).
+Resolved-CIK era rows 14,598 -> 14,616 (+18); distinct CIKs resolved 8,788 -> 8,792;
+manual-research worklist 10,728 -> 10,710 eras, 122.2M -> 121.4M trade rows. Also
+traced `MYLAN NV` (structurally hard tie, correctly left ambiguous) as a negative
+result. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

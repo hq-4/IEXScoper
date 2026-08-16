@@ -1,5 +1,44 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 34 (fuse a possessive-contraction
+  apostrophe in `normalize_name`). Continuing the autonomous "/goal ... then merge,
+  then continue the cycle" directive after PR #37, Phase 33. Investigated the
+  `no_candidates` bucket (52 names with zero EDGAR candidates at every truncation
+  level) for a new, unexplored shape — most are ETFs (a genuinely different problem,
+  not name-matching), but several real operating companies stood out:
+  `PCTEL INC`'s real registrant is `"PC TEL INC"` (a genuine base-name word-split, not
+  punctuation — deliberately not pursued, since blindly inserting/removing spaces
+  between letter groups is a fundamentally riskier transformation than any punctuation/
+  suffix normalization fixed so far, with real potential to over-match unrelated
+  companies); `CONN'S INC`, `FLANIGAN'S ENTERPRISES INC`, and `ART'S-WAY MANUFACTURING
+  CO` all trace to the same real, narrow, safe gap: SEC's own registered names
+  (`"CONNS INC"`, `"FLANIGANS ENTERPRISES INC"`, `"ARTS WAY MANUFACTURING CO INC"`,
+  confirmed live via `CIK=<ticker>` lookup) drop a possessive apostrophe entirely,
+  while `normalize_name`'s punctuation-stripping converts it into a token-splitting
+  space instead, leaving a stray one-letter `"S"` token (`"CONN"` + `"S"`) that never
+  matches SEC's fused `"CONNS"`.
+  Added `POSSESSIVE_APOSTROPHE`, deleting an apostrophe only when immediately followed
+  by a bare `"S"` (the possessive-contraction shape) — narrow by construction, an
+  apostrophe anywhere else in a name (e.g. `"O'Brien"`) still becomes a space exactly
+  as before. Collision-risk check: zero new ambiguous-name collisions across the full
+  SEC current-listings index (22 either way). Cache-only quantification: 4 names newly
+  resolve (`ART'S-WAY MANUFACTURING CO`, `CONN'S INC`, `FLANIGAN'S ENTERPRISES INC`,
+  `RUTH'S HOSPITALITY GROUP INC`), zero network calls, zero cache misses; all
+  spot-checked against cached SIC data, correct (farm machinery, electronics retail,
+  and two restaurant chains). 6 new test cases (including a negative case proving the
+  fix stays narrow); 596 tests pass (was 590); ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`): Tier E matched 3,186/4,314 ->
+  **3,190/4,314** (+4). All 4 quantified names confirmed resolved with the predicted
+  CIK — two via Tier E directly, two via Tier D's own exact-match index benefiting
+  from the same shared `normalize_name` fix. Reconciled: resolved-CIK era rows 14,598
+  -> **14,616** (+18); distinct CIKs resolved 8,788 -> **8,792** (+4); manual-research
+  worklist 10,728 -> **10,710 eras**, 122.2M -> **121.4M** trade rows.
+  Also traced (no code change, both genuine negative results): `MYLAN NV`'s two real
+  sequential Mylan entities remain a structurally hard tie, correctly left ambiguous;
+  `PCTEL INC` needs a base-name-word-split fix deliberately out of scope for its
+  over-match risk. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 33 (accept a backslash jurisdiction tag
   alongside the forward-slash form). Continuing the autonomous "/goal ... then merge,
   then continue the cycle" directive after PR #36, Phase 32. Re-scanned the fresh
