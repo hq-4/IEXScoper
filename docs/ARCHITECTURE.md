@@ -784,6 +784,21 @@ fix's shape). Resolved-CIK era rows 14,130 -> 14,160 (+30); distinct CIKs resolv
 8,612 -> 8,625; manual-research worklist 11,196 -> 11,166 eras, 149.2M -> 146.9M trade
 rows. [CA][IV][REH][CDiP][KBT]
 
+**Phase 28 (widen `JURISDICTION_SUFFIX` for a second trailing slash).** Tracing Phase
+27's `TRC COS INC` gap found the real registrant is `"TRC COMPANIES INC /DE/"` — a
+*second* trailing slash after the state code, a shape `JURISDICTION_SUFFIX`'s
+end-anchored pattern didn't cover. 253 names in the current-listings index carry this
+shape. Widened `/\s*[A-Z]+$` to `/\s*[A-Z]+\s*/?$`. Collision check: 3 new ambiguous
+groups (`CITIZENS`, `FIRST BANCORP`, `INDEPENDENT BANK`) — each genuinely different real
+companies sharing an identical base name post-strip, none reachable under the old
+pattern either, so nothing regresses (documented transparently rather than claiming
+"zero collisions"). Cache-only quantification: 24 names newly resolve, zero network
+calls, zero cache misses, SIC codes spot-checked correct. 4 new tests; 561 pass (was
+557), ruff/bandit clean. Real run: Tier E matched 2,856/4,321 -> 2,878/4,321 (+22); all
+24 quantified names confirmed resolved. Resolved-CIK era rows 14,160 -> 14,207 (+47);
+distinct CIKs resolved 8,625 -> 8,645; manual-research worklist 11,166 -> 11,119 eras,
+146.9M -> 144.5M trade rows. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

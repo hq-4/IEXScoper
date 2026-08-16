@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- fix: widen `sec_name_cik_lookup.JURISDICTION_SUFFIX` to tolerate a second trailing
+  slash after the tag (`"/DE/"`, not just `"/DE"`) — 253 names in the current-listings
+  index carry this shape (`TERADATA CORP /DE/`, `AMERICAN TOWER CORP /MA/`, among
+  others), found tracing Phase 27's `TRC COS INC` gap. The un-widened pattern's
+  end-anchor left every one un-stripped, with the tag surviving as a stray token no real
+  OpenFIGI name would replicate. Replayed the entire SEC current-listings index under old
+  vs. new normalization: 3 new ambiguous-name groups (`CITIZENS`, `FIRST BANCORP`,
+  `INDEPENDENT BANK`) — each genuinely different real companies sharing an identical base
+  name post-strip; none were reachable matches before either, so nothing regresses (see
+  the constant's own comment for detail — documented transparently rather than claiming a
+  false "zero collisions"). Cache-only quantification: 24 names newly resolve (`AETNA
+  INC`, `CYPRESS SEMICONDUCTOR CORP`, `LINEAR TECHNOLOGY CORP`, `PLANTRONICS INC`,
+  `STILLWATER MINING CO`, `TRC COS INC`, `WEINGARTEN REALTY INVESTORS`, among others),
+  zero network calls, zero cache misses; SIC codes spot-checked, all correct. 4 new
+  tests; 561 pass (was 557), ruff/bandit clean. Real run: Tier E matched 2,856/4,321 ->
+  2,878/4,321 (+22); all 24 quantified names confirmed resolved. Resolved-CIK era rows
+  14,160 -> 14,207 (+47); distinct CIKs resolved 8,625 -> 8,645; manual-research
+  worklist 11,166 -> 11,119 eras, 146.9M -> 144.5M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - fix: `edgar_company_search_match._search_query_variants` now also tries an
   abbreviation-expanded form of every query (`QUERY_ABBREVIATION_EXPANSIONS`: `"COS"` ->
   `"COMPANIES"`, `"HLDGS"` -> `"HOLDINGS"`, `"INTL"` -> `"INTERNATIONAL"`). EDGAR's

@@ -46,6 +46,13 @@ from utils.sec_name_cik_lookup import (
         # A joiner word buried mid-name, not just adjacent to a legal suffix.
         ("PETCO HEALTH AND WELLNESS CO", "PETCO HEALTH WELLNESS"),
         ("Petco Health & Wellness Company, Inc.", "PETCO HEALTH WELLNESS"),
+        # Phase 28: SEC's own registrant names sometimes wrap the tag in a *second*
+        # trailing slash ("/DE/", not just "/DE") -- must strip identically either way.
+        ("TRC COMPANIES INC /DE/", "TRC COMPANIES"),
+        ("AETNA INC /PA/", "AETNA"),
+        ("FNB BANCORP/CA/", "FNB BANCORP"),
+        # SEC uses the same wrapped-slash convention for non-state tags too.
+        ("CHINA MOBILE LTD /ADR/", "CHINA MOBILE"),
         (None, ""),
         ("", ""),
         ("   ", ""),

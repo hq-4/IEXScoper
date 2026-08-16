@@ -1,5 +1,47 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 28 (widen `JURISDICTION_SUFFIX` to
+  tolerate a trailing slash after the tag). Continuing the autonomous "/goal ... then
+  merge, then continue the cycle" directive after PR #31, Phase 27. Tracing Phase 27's
+  `TRC COS INC` gap found a real, separate root cause: its single valid EDGAR candidate
+  is registered as `"TRC COMPANIES INC /DE/"` — a *second* trailing slash after the state
+  code, not just `"TRC COMPANIES INC /DE"`. `JURISDICTION_SUFFIX` anchors its match to
+  the true end of the string, so this shape survived un-stripped, leaving a stray `"DE"`
+  token that no OpenFIGI-side name would ever also carry — effectively unreachable, not
+  just occasionally wrong. Scanned the current-listings index for the same shape: **253
+  names** carry a trailing `/XX/` (both-sides-slash), e.g. `TERADATA CORP /DE/`,
+  `AMERICAN TOWER CORP /MA/`, `CANADIAN IMPERIAL BANK OF COMMERCE /CAN/`.
+  Widened `JURISDICTION_SUFFIX` from `/\s*[A-Z]+$` to `/\s*[A-Z]+\s*/?$` (optional
+  trailing slash). Collision-risk check (same full-index replay as every prior shared-
+  `normalize_name` change): **3 new** ambiguous-name groups this time (`CITIZENS`,
+  `FIRST BANCORP`, `INDEPENDENT BANK`) — inspected each: genuinely different real
+  companies sharing an identical base legal name once their state tag strips correctly
+  (three distinct real "First Bancorp" bank holding companies in PR/NC/ME, for instance).
+  None of these were reachable matches under the old pattern either (their un-stripped
+  tag made the old normalized form carry a stray state-code token no real issuer name
+  would replicate), so nothing that previously worked regresses — they're now explicitly
+  ambiguous/dropped instead of silently unmatchable, the same safe posture
+  `build_name_cik_index` already applies everywhere else. Documented transparently in the
+  code comment rather than claiming a false "zero collisions."
+  Cache-only quantification against the still-unresolved population (zero network calls,
+  zero cache misses): 24 names newly resolve (`AETNA INC`, `CYPRESS SEMICONDUCTOR CORP`,
+  `LINEAR TECHNOLOGY CORP`, `PLANTRONICS INC`, `STILLWATER MINING CO`, `TRC COS INC`,
+  `WEINGARTEN REALTY INVESTORS`, among others). SIC codes spot-checked against cached
+  data — all correct for real, well-known (mostly since-acquired/renamed) companies. 4
+  new test cases; 561 tests pass (was 557); ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`): Tier E matched 2,856/4,321 ->
+  **2,878/4,321** (+22, more than the 24-name Tier E quantification predicted at the
+  Tier-E-only level once Tier D's own shared-`normalize_name` benefit is folded in — some
+  names resolve one tier earlier than expected, e.g. `CSPI`/`ICCC` landed via
+  `sec_name_matched` rather than `edgar_company_search_matched`). All 24 quantified names
+  confirmed resolved with the predicted CIK via `resolved_cik`/`cik_source`, zero still
+  unresolved. Reconciled: resolved-CIK era rows 14,160 -> **14,207** (+47); distinct CIKs
+  resolved 8,625 -> **8,645**; manual-research worklist 11,166 -> **11,119 eras**, 146.9M
+  -> **144.5M** trade rows. Confirmed none of the 24 tickers (`AET`, `CY`, `LLTC`,
+  `POLY`, `SWC`, `TRR`, `WRI`, etc.) appear in the manual-research worklist anymore.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 27 (Tier E query-level abbreviation
   expansion: `COS`/`HLDGS`/`INTL`). Continuing the autonomous "/goal ... then merge, then
   continue the cycle" directive after PR #30, Phase 26. Investigated `MICHAELS COS
