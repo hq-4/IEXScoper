@@ -1,5 +1,50 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 24 (ADR descriptor-pattern gaps). User:
+  "/goal just merged, do the next suggestion, then merge, then continue the cycle" (an
+  ongoing autonomous directive after PR #27, Phase 23). Re-ran the Phase 20/21-style
+  small-tie audit against the post-Phase-22 state first (no new resolvable ties — the
+  `LIFE STORAGE`-shaped bucket just grew by two members, `HEALTHCARE TRUST OF AME-CL A`
+  and `FARMERS & MERCHANTS BANCO/OH`, both confirmed via `formerNames` to be genuine
+  REIT-parent/operating-partnership or bank-charter-type same-shape ties Phase 21 already
+  ruled unsafe to auto-resolve, not a new lead). Checked the current top-trade-volume
+  `no_validated_match` names instead and found a real, generalizable descriptor-pattern
+  gap: `SONY CORP-SPONSORED ADR`, `SIBANYE GOLD LTD-SPONS ADR`, and
+  `BRASKEM SA-CLASS A- ADR` don't match any existing `DESCRIPTOR_PATTERNS` entry — the
+  existing `-SPON ADR$`/`-ADR$` patterns require an exact abbreviation ("SPON", not
+  "SPONS" or the fully spelled-out "SPONSORED") and no space before "ADR". Same
+  abbreviation/spacing-variant category as Phase 8/9/12's fixes.
+  Added three pattern entries to `sec_name_cik_lookup.DESCRIPTOR_PATTERNS` (shared by
+  Tier D and Tier E): `-SPONS\s?ADR$` (the differently-abbreviated sibling), a
+  spelled-out `SPONSORED\s+ADR$` variant, and a widened `[-\s]+ADR$` tolerating a space
+  before "ADR" (superseding the old tight `-ADR$`) — ordered before the `CLASS`
+  patterns so a compound `"-CLASS A- ADR"` suffix strips its ADR half first, letting the
+  `CLASS` pattern then match what's left (confirmed via `BRASKEM SA-CLASS A- ADR` ->
+  `"BRASKEM SA"`). Quantified cache-only first (zero network calls): 11 names resolve
+  immediately; a further 13 names were blocked purely by cache misses at the specific
+  query-truncation level needed (including the two motivating examples, `SONY`/`SIBANYE`
+  — real ambiguity about their true yield until a live run, same "genuinely couldn't be
+  quantified for free" situation Phase 15's cap-raise hit). 3 new parametrized test
+  cases; 545 tests pass (was 542); ruff/bandit clean. Kept the `sec_name_cik_lookup.py`
+  docstring addition brief (a few lines, not a full narrative section) — deliberately
+  matching the discipline Phase 23 just established in the sibling module, not
+  reintroducing the same bloat there.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`, ~2.5 minutes wall-clock total, mostly
+  cache hits): matched 2,804/4,339 -> **2,823/4,339** (+19, more than the 11-name
+  cache-only floor — confirming the uncached queries had real additional yield, as
+  expected). `SONY CORP-SPONSORED ADR` -> Sony Group Corp, CIK 313838, SIC 3651
+  (Household Audio & Video Equipment); `SIBANYE GOLD LTD-SPONS ADR` -> Sibanye Gold Ltd,
+  CIK 1561694, SIC 1040 (Gold and Silver Ores) — both correct. `BRASKEM SA-CLASS A- ADR`
+  correctly stayed unresolved (verified live: none of its raw EDGAR candidates carry a
+  real SIC, a genuine data gap, not a pattern-matching failure). Spot-checked all 76
+  ADR-shaped names in the full matched population (not just this phase's 19 new ones) —
+  every SIC sensible for the real company (mostly Chinese/foreign ADR issuers: `51JOB
+  INC-ADR` -> SIC 7361, `VEDANTA LTD-ADR` -> SIC 1000 Metal Mining, `TATA MOTORS
+  LTD-SPON ADR` -> SIC 3711, among dozens more) — no false positives found. Reconciled:
+  `distinct_ciks_resolved` 8,572 -> **8,589**; manual-research worklist 11,300 ->
+  **11,278 eras**, 154.6M -> **152.5M trade rows**. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 23 (housekeeping — extract
   `edgar_company_search_match.py`'s design history out of the module docstring). User:
   "what else is next, i just merged" (after PR #26, Phase 22). A fresh worklist pass

@@ -53,7 +53,16 @@ only matched a tight `/XX` with no space, but SEC's own submissions payload retu
 Replayed the full still-unresolved Tier E population (1,904 names) against the cached
 search/validation responses already on disk with both fixes applied — zero new network
 requests — and 15 names flip to a validated match (`SWEETGREEN`, `ALIGHT`, `ALTERYX`,
-`FIRST DATA CORP`, `MCAFEE`, among others), 23 eras / 6.19M trade rows. [CA][IV][KBT]
+`FIRST DATA CORP`, `MCAFEE`, among others), 23 eras / 6.19M trade rows.
+
+Phase 24 (see `docs/TASK_LIST.md` for full detail, kept brief here per the sibling
+`edgar_company_search_match.py`'s own Phase 23 file-size cleanup): three more real
+ADR-suffix variants `DESCRIPTOR_PATTERNS` didn't cover — `"SPONS ADR"` (a different
+abbreviation than the existing `"SPON ADR"`), the fully spelled-out `"SPONSORED ADR"`,
+and a space between the hyphen and `"ADR"`. Found tracing the worklist's top ADR-shaped
+rows (`SONY CORP-SPONSORED ADR`, `SIBANYE GOLD LTD-SPONS ADR`,
+`BRASKEM SA-CLASS A- ADR`); the space-tolerant fix is ordered before the `CLASS`
+patterns so a compound `-CLASS A- ADR` suffix strips its ADR half first. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -126,7 +135,18 @@ JURISDICTION_SUFFIX = re.compile(r"/\s*[A-Z]{2}$", re.IGNORECASE)
 DESCRIPTOR_PATTERNS = (
     re.compile(r"-CW\d+$", re.IGNORECASE),
     re.compile(r"-SPON ADR$", re.IGNORECASE),
-    re.compile(r"-ADR$", re.IGNORECASE),
+    # "SPONS ADR" (e.g. "SIBANYE GOLD LTD-SPONS ADR") is a differently-abbreviated
+    # sibling of "-SPON ADR" above, not covered by it — real gap found while tracing the
+    # worklist's top ADR-shaped rows (Phase 24).
+    re.compile(r"-SPONS\s?ADR$", re.IGNORECASE),
+    # The fully spelled-out form (e.g. "SONY CORP-SPONSORED ADR"), same real gap.
+    re.compile(r"[-\s]*SPONSORED\s+ADR$", re.IGNORECASE),
+    # Tolerates a space between the hyphen and "ADR" (e.g. "BRASKEM SA-CLASS A- ADR"),
+    # not just the tight "-ADR" the original pattern required — same spacing-tolerance
+    # precedent as the `-CL A`/`-CLASS A` fixes below. Ordered before the CLASS patterns
+    # so a compound "-CLASS A- ADR" suffix strips its ADR half first, letting the CLASS
+    # pattern then match what's left.
+    re.compile(r"[-\s]+ADR$", re.IGNORECASE),
     re.compile(r"[-\s]*W/I$", re.IGNORECASE),
     # Matches "-CL A", the "- CL A" spacing variant (e.g. "ROYALTY PHARMA PLC- CL A"),
     # and the " -CL A"/"" - CL A" variant with a space *before* the hyphen too (e.g.
