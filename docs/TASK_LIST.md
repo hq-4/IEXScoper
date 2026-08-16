@@ -1,5 +1,39 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 25 (widen `JURISDICTION_SUFFIX` beyond
+  2-letter codes). Continuing the autonomous "/goal ... then merge, then continue the
+  cycle" directive after PR #28, Phase 24. `BITFARMS LTD/CANADA` (priority rank 34) was
+  still unresolved after Phase 24; tracing it found `JURISDICTION_SUFFIX` only matches a
+  trailing `/XX` of *exactly* 2 letters (`/DE`, `/TX`) — `/CANADA` (7 letters) never
+  matched. Scanned the full unresolved population for the same shape: 22 names carry a
+  trailing `/WORD`, and every single one is either SEC's `"/THE"` sorting artifact
+  (`"EASTERN CO/THE"` = "The Eastern Company", filed under "E" not "T"), a `"/NEW"`
+  successor tag, or a full state/country name (`/CANADA`, `/AUSTRALIA`, `/MISS`, `/OKLA`,
+  `/OHIO`) — never part of a registrant's actual distinguishing name, the same category
+  the existing 2-letter pattern already handles.
+  Widened `JURISDICTION_SUFFIX` from `/\s*[A-Z]{2}$` to `/\s*[A-Z]+$` — a minimal,
+  one-line generalization, same "tolerate a known-safe variant" precedent as Phase 12's
+  `-CL A`/`JURISDICTION_SUFFIX` spacing fixes and Phase 24's ADR-pattern widening. Since
+  this touches `normalize_name` itself (shared by Tier D's bulk index and Tier E's
+  per-candidate validation, not just a local Tier E helper), checked for new
+  false-collision risk the way Phase 12's `GROUP`-suffix investigation did: replayed the
+  *entire* SEC current-listings index under both the narrow and widened pattern — **zero
+  new ambiguous-name collisions** (13 either way). Quantified Tier E yield cache-only
+  (zero network calls): 28 names newly resolve. 4 new test cases; 549 tests pass (was
+  545); ruff/bandit clean.
+  Real run (`build_edgar_company_search_matches.py` + `build_era_sector_enriched.py` +
+  `build_sector_manual_research_worklist.py`, ~7 minutes wall-clock total, mostly cache
+  hits): matched 2,823/4,339 -> **2,848/4,334** (+25). Spot-checked 11 of the newly
+  matched names by hand — all correct, sensible SIC codes for known real businesses
+  (`BITFARMS LTD/CANADA` -> SIC 6199 Finance Services, a crypto-mining company;
+  `KEYW HOLDING CORP/THE` -> SIC 7373 Computer Integrated Systems Design, a real defense/
+  cyber-intelligence firm; `MOBILICOM LTD/AUSTRALIA` -> SIC 3721 Aircraft, drone
+  communications; `VALENS CO INC/THE` -> SIC 2833 Medicinal Chemicals, cannabis
+  extraction; `VERY GOOD FOOD CO INC/THE` -> SIC 2000 Food and Kindred Products).
+  Confirmed `BITF` no longer appears in the manual-research worklist at all. Reconciled:
+  `distinct_ciks_resolved` 8,589 -> **8,607**; manual-research worklist 11,278 ->
+  **11,213 eras**, 152.5M -> **150.7M trade rows**. `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 24 (ADR descriptor-pattern gaps). User:
   "/goal just merged, do the next suggestion, then merge, then continue the cycle" (an
   ongoing autonomous directive after PR #27, Phase 23). Re-ran the Phase 20/21-style

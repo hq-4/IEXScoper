@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- fix: widen `sec_name_cik_lookup.JURISDICTION_SUFFIX` from an exact 2-letter trailing
+  code (`/DE`, `/TX`) to any trailing `/WORD`. `BITFARMS LTD/CANADA` traced the gap:
+  every one of the 22 unresolved names carrying a trailing `/WORD` is either SEC's
+  `"/THE"` sorting artifact (`"EASTERN CO/THE"` = "The Eastern Company"), a `"/NEW"`
+  successor tag, or a full state/country name (`/CANADA`, `/AUSTRALIA`, `/MISS`,
+  `/OKLA`, `/OHIO`) — never part of a registrant's actual name. Since this touches
+  `normalize_name` itself (shared by Tier D's bulk index, not just Tier E), replayed the
+  entire SEC current-listings index under both patterns: zero new ambiguous-name
+  collisions. Quantified Tier E yield cache-only: 28 names newly resolve. 4 new tests;
+  549 pass (was 545), ruff/bandit clean. Real run: Tier E matched 2,823/4,339 ->
+  2,848/4,334 (+25); 11 newly-matched names spot-checked by hand, all correct. Distinct
+  CIKs resolved 8,589 -> 8,607; manual-research worklist 11,278 -> 11,213 eras, 152.5M
+  -> 150.7M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - fix: add three ADR-suffix descriptor-pattern variants to
   `sec_name_cik_lookup.DESCRIPTOR_PATTERNS` (shared by Tier D and Tier E) — a
   differently-abbreviated `"SPONS ADR"` sibling of the existing `"SPON ADR"`, the fully

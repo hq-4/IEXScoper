@@ -29,6 +29,15 @@ from utils.sec_name_cik_lookup import (
         # SEC's own submissions payload uses a spaced "/ XX" variant of the same tag
         # (e.g. "Alight Inc. / DE") -- must be stripped identically to the tight "/XX".
         ("Alight Inc. / DE", "ALIGHT"),
+        # Phase 24: the same trailing-slash convention isn't limited to 2-letter state
+        # codes -- SEC uses it for a "/THE" sorting artifact too ("The Eastern Company"
+        # files as "EASTERN CO/THE" so it alphabetizes under "E").
+        ("EASTERN CO/THE", "EASTERN"),
+        # ...successor tags ("/NEW", as in "ATHERSYS, INC / NEW")...
+        ("ATHERSYS, INC / NEW", "ATHERSYS"),
+        # ...and full country/state names, not just 2-letter abbreviations.
+        ("BITFARMS LTD/CANADA", "BITFARMS"),
+        ("PEOPLES FINANCIAL CORP/MISS", "PEOPLES FINANCIAL"),
         (None, ""),
         ("", ""),
         ("   ", ""),

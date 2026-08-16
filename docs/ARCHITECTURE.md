@@ -738,6 +738,19 @@ candidate). All 76 ADR-shaped matched names spot-checked — no false positives.
 CIKs resolved 8,572 -> 8,589; manual-research worklist 11,300 -> 11,278 eras, 154.6M ->
 152.5M trade rows. [CA][IV][REH][CDiP][KBT]
 
+**Phase 25 (widen `JURISDICTION_SUFFIX` beyond 2-letter codes).** `BITFARMS LTD/CANADA`
+traced the gap: `JURISDICTION_SUFFIX` only matched a trailing `/XX` of exactly 2 letters.
+Scanning the full unresolved population found 22 names carrying a trailing `/WORD`, every
+one either SEC's `"/THE"` sorting artifact, a `"/NEW"` successor tag, or a full state/
+country name — never part of a registrant's real name. Widened the pattern from
+`/\s*[A-Z]{2}$` to `/\s*[A-Z]+$`. Since this touches `normalize_name` itself (shared by
+Tier D's bulk index, not just Tier E), replayed the entire SEC current-listings index
+under both patterns: zero new ambiguous-name collisions. Quantified Tier E yield
+cache-only: 28 names. 4 new tests; 549 pass (was 545), ruff/bandit clean. Real run: Tier E
+matched 2,823/4,339 -> 2,848/4,334 (+25); 11 newly-matched names spot-checked, all
+correct. Distinct CIKs resolved 8,589 -> 8,607; manual-research worklist 11,278 ->
+11,213 eras, 152.5M -> 150.7M trade rows. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

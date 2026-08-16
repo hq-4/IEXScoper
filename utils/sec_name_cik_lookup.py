@@ -121,12 +121,18 @@ ROMAN_NUMERAL_CHARS = frozenset("IVXLCDM")
 
 # SEC appends a trailing "/XX" state-of-incorporation tag to disambiguate identically
 # named registrants (e.g. "CORE SCIENTIFIC, INC./TX"). Left alone, NON_ALNUM turns the
-# slash into a space and the two-letter code becomes a trailing token that blocks the
-# legal-suffix strip loop below from ever reaching "INC" — stripped here, before that
-# conversion, so it never gets the chance to. Tolerates the "/ XX" spacing variant too
-# (e.g. SEC's own submissions payload returns "Alight Inc. / DE", not "/DE") — same gap
-# as the tight "/XX" original, just with SEC's own whitespace this time.
-JURISDICTION_SUFFIX = re.compile(r"/\s*[A-Z]{2}$", re.IGNORECASE)
+# slash into a space and the trailing word becomes a token that blocks the legal-suffix
+# strip loop below from ever reaching "INC" — stripped here, before that conversion, so
+# it never gets the chance to. Tolerates the "/ XX" spacing variant too (e.g. SEC's own
+# submissions payload returns "Alight Inc. / DE", not "/DE"). Phase 24: widened from
+# exactly 2 letters to any letters — SEC uses the identical trailing-slash convention for
+# a "/THE" sorting artifact (`"EASTERN CO/THE"` = "The Eastern Company", so it alphabetizes
+# under "E"), successor tags (`"/NEW"`), and full country/state names
+# (`"BITFARMS LTD/CANADA"`, `"PEOPLES FINANCIAL CORP/MISS"`), not just 2-letter state
+# codes — none of these are ever part of a registrant's actual distinguishing name.
+# Checked before widening: zero new ambiguous-name collisions anywhere in the full SEC
+# current-listings index (13 collisions either way — the widening doesn't create any).
+JURISDICTION_SUFFIX = re.compile(r"/\s*[A-Z]+$", re.IGNORECASE)
 
 # Bloomberg/OpenFIGI appends these to a security's `name` field to distinguish share
 # classes, warrants, ADRs, and when-issued lines — they're ticker/security metadata,
