@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- feat: Tier E gains a ticker-lookup fallback (`utils.sec_company_search_client.lookup_cik_by_ticker`,
+  `edgar_company_search_match._try_ticker_fallback`) for issuer names name-based search
+  can never find at all — a company that renamed since the era in question (`SEAS`'s
+  "SeaWorld Entertainment, Inc." -> "United Parks & Resorts Inc.") or dropped out of
+  `browse-edgar`'s name-search index after going private (`HOLX`'s "Hologic Inc",
+  confirmed live: intact submissions/filing history, invisible to any name query).
+  `action=getcompany&CIK=<ticker>` resolves a ticker straight to its CIK via SEC's
+  persistent ticker registry, independent of the name-search index; that single
+  candidate goes through the same acceptance gate as everything else (blank-SIC guard,
+  `_provably_disjoint` era check), so a stale/reused ticker is rejected on name mismatch
+  like any other candidate source. Also added `_names_match_broad`
+  (`_is_prefix_relation`'s "extra trailing tokens" branch, safe here because the ticker
+  already narrows the field to one candidate before any name check runs — unlike Phase
+  22's broad-search context where that branch was found unsafe). `unresolved_issuer_tickers`
+  maps each name to its one symbol, skipping the ~2% of names shared by 2+ symbols.
+  7 new tests; 578 pass (was 565), ruff/bandit clean. Two real gaps found and fixed via
+  full pipeline runs (not just unit tests): the fallback wasn't reached from an early
+  `ambiguous_candidates` return (fixed via a `_match_by_name` extraction), and
+  `_names_match`'s narrower truncation rule was rejecting valid ticker-resolved
+  candidates (fixed via the broader ticker-specific matcher). Extensively spot-checked,
+  including live verification that Phase 22's two real false-positive cases (`TPG PACE
+  BENEFICIAL II`, `PRIME NUMBER ACQUISITION`) now resolve to their *correct* entity via
+  ticker lookup. Real run: Tier E matched 2,904/4,314 -> 3,130/4,314; resolved-CIK era
+  rows 14,219 -> 14,536 (+317); distinct CIKs resolved 8,648 -> 8,750; manual-research
+  worklist 11,107 -> 10,790 eras, 142.6M -> 127.4M trade rows — the largest single-phase
+  drop in this cycle. `[CA][IV][REH][CDiP][KBT]`
+
 - fix: add `"PUBLIC"` to `sec_name_cik_lookup.LEGAL_SUFFIXES` — OpenFIGI's `"PLC"`
   abbreviation pops as a trailing legal suffix, but SEC's own registered name for the
   same entity sometimes spells it out as `"Public Ltd Co"` (`"Horizon Therapeutics

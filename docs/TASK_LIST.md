@@ -1,5 +1,99 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 30 (Tier E ticker-lookup fallback — new
+  capability, not a constant tweak). Continuing the autonomous "/goal ... then merge,
+  then continue the cycle" directive after PR #33, Phase 29. With Phase 27's `INTL`
+  bucket and dead-end call-outs exhausted, re-traced the worklist's top rows fresh:
+  `HOLOGIC INC` (priority rank 2) and `SEAWORLD ENTERTAINMENT INC` (rank 9) both find
+  irrelevant subsidiary candidates via every name-search truncation, never the real
+  parent CIK. Live `curl` tracing found why: `HOLX`'s real CIK (859737) has an intact
+  submissions history and current 10-K filings but is *invisible to `browse-edgar`'s
+  name search entirely* (going-private deregistration removes it from that index, not
+  from `data.sec.gov`); `SEAS`'s real CIK (1564902) renamed to "United Parks & Resorts
+  Inc." in 2024 and a name search for the old name obviously can't find the new one.
+  Both are found instantly via a different EDGAR quirk: `action=getcompany&CIK=<ticker>`
+  accepts a ticker symbol in place of a numeric CIK, resolved via SEC's own persistent
+  ticker-to-CIK registry, independent of `browse-edgar`'s name-search index. Live sample
+  of the top 23 unresolved tickers: 15 resolved a CIK this way, several previously
+  documented as structural dead ends for name-based matching (`INTERCEPT
+  PHARMACEUTICALS IN`, `GLOBAL BLOOD THERAPEUTICS IN`, `LIFE STORAGE INC`, `GREAT LAKES
+  DREDGE & DOCK CO`). Checked the known ticker-reuse risk this project has always
+  avoided (Tier D's own docstring flags `IAC`/`USEG` as historically cited examples):
+  both turned out to be genuine same-company renames (`IAC` -> "People Inc", `USEG` ->
+  "Big Sky Industrial Inc."), not reuse by an unrelated company — and regardless, the
+  design makes reuse safe by construction: the ticker only ever finds *one candidate to
+  validate*, going through the identical acceptance gate as every other candidate
+  source, so a genuinely reused ticker is rejected on name mismatch the same way an
+  unrelated name-search hit already would be.
+  **Implementation** (`utils/sec_company_search_client.py`, `utils/edgar_company_search_match.py`,
+  `utils/build_edgar_company_search_matches.py`): added `lookup_cik_by_ticker` (same
+  endpoint, `CIK=` param instead of `company=`, same cache, confirmed one `<cik>` tag
+  regardless of `count`); `match_issuer_name` gained an optional `ticker` parameter and
+  `_try_ticker_fallback`, tried once name search doesn't land on a match.
+  `unresolved_issuer_tickers` maps each name to its one associated `symbol` — a name
+  shared by 2+ distinct symbols (~2% of the population) is excluded rather than
+  guessing which one, same "ambiguous means skip" posture as everywhere else.
+  **Two real design gaps found and fixed before shipping, both via full real-pipeline
+  runs, not just unit tests:**
+  1. The ticker fallback only fired on a clean fall-through (zero candidates at every
+     query level) — but a genuine `ambiguous_candidates` result (an over-cap
+     single-word query, or an unresolved multi-candidate tie) returns *early* from
+     inside the name-search loop, never reaching the fallback at all. This is exactly
+     the highest-value shape (`FIRST REPUBLIC BANK/CA`, `EXPRESS INC`, `LIFE STORAGE
+     INC`, `SWITCH INC - A`, `US SILICA HOLDINGS INC` all hit it). Fixed by extracting
+     the existing loop into `_match_by_name` and making `match_issuer_name` a thin
+     orchestrator that tries the ticker fallback whenever `_match_by_name` doesn't
+     return `STATUS_MATCHED` — regardless of *which* non-matched status it returned.
+     First real run: 6 ticker-lookup matches. Second real run (after this fix, same
+     cached data — no new network calls): 27.
+  2. Several of the live-sampled cases (`INTERCEPT PHARMACEUTICALS IN`, `GLOBAL BLOOD
+     THERAPEUTICS IN`, `DECIPHERA PHARMACEUTICALS IN`, `RENT-A-CENTER INC`) still didn't
+     validate even once the ticker resolved the right CIK — traced to `_names_match`'s
+     existing narrow acceptance rule (Phase 22's deliberate limitation): OpenFIGI's
+     28-character truncation lands mid-word on the trailing legal-suffix token itself
+     (`"INC"` -> `"IN"`), leaving a whole extra token `_is_safe_final_token_truncation`
+     doesn't recover — exactly the "extra trailing tokens" branch Phase 22 explicitly
+     declined to use for the broad name-search path, because its only safety net there
+     was uniqueness across the *entire* SEC index among loosely-matching candidates.
+     The ticker fallback has a different, equally real safety net: the ticker registry
+     already narrowed the field to exactly one candidate before any name check runs, so
+     recovering this case here doesn't reopen Phase 22's false-positive risk (re-verified
+     directly: `TPG PACE BENEFICIAL II COR-A` and `PRIME NUMBER ACQUISITION I C`, the two
+     real Phase 22 false positives, both resolve to their *correct* entity via ticker
+     lookup, since the ticker pins down which specific company, unlike a broad prefix
+     search). Added `_names_match_broad`/`_matching_candidate_name_broad`/
+     `_validate_ticker_candidate` — the ticker-fallback's own counterpart to
+     `_names_match`/`_matching_candidate_name`/`_validate_candidates`, reusing Tier D's
+     `_is_prefix_relation` instead of the narrower truncation check. Third real run
+     (again, same cached data — no new network calls, just re-evaluating acceptance
+     against what was already fetched): **253** ticker-lookup matches.
+  Extensively spot-checked the full 253-row result before trusting it: the large
+  majority (~200) are SPAC ("Acquisition Corp") shells where the only difference is
+  OpenFIGI's truncated `"COR"`/`"CORP"` suffix, SIC consistently `6770` Blank Checks;
+  live-verified 4 non-SPAC CIKs directly against `data.sec.gov` (`Crestwood Equity
+  Partners LP`, `Giga-tronics` -> renamed "Gresham Worldwide, Inc." — found via
+  `former_names`, confirmed real 2022 corporate history; `EXPRESS, Inc.` -> "EXP OldCo
+  Winddown, Inc." post-bankruptcy; `RENT-A-CENTER INC` -> current "UPBOUND GROUP, INC.",
+  ticker `UPBD`, found via `former_names` `"RENT A CENTER INC DE"`) — all correct, zero
+  suspicious entries found across the full list.
+  7 new/changed test cases (including a regression test for gap #1 and a paired
+  recover/reject test for gap #2's broader matching); 578 tests pass (was 565);
+  ruff/bandit clean. `edgar_company_search_match.py` is now 797 lines — well over the
+  CSD 300-line review threshold (previously addressed once already, Phase 23's docstring
+  extraction) and worth a similar cleanup pass in a future phase, though still far under
+  the 1600-line hard cap.
+  Real run (3 iterations as the fixes above landed; final numbers only):
+  Tier E matched 2,904/4,314 -> **3,130/4,314** (net +226 vs. the pre-fix baseline).
+  Reconciled: resolved-CIK era rows 14,219 -> **14,536** (+317); distinct CIKs resolved
+  8,648 -> **8,750** (+102); manual-research worklist 11,107 -> **10,790 eras**, 142.6M
+  -> **127.4M** trade rows (the largest single-phase drop in this entire cycle — several
+  of the newly-resolved names carry very large trade-row counts: `LIFE STORAGE INC`,
+  `GREAT LAKES DREDGE & DOCK CO`, `EXPRESS INC`, `CRESTWOOD EQUITY PARTNERS LP`,
+  `RENT-A-CENTER INC`). `TUSIMPLE HOLDINGS INC - A` remains a residual open case (found
+  a CIK via ticker live in the sample, but the persisted run still shows
+  `no_validated_match` with `identity_disproven=false` — not yet root-caused, a future
+  lead). `[CA][IV][REH][CDiP][KBT]`
+
 - 2026-08-16: SIC/sector classification, Phase 29 (add `"PUBLIC"` to `LEGAL_SUFFIXES` for
   `PLC`/"Public Ltd Co"). Continuing the autonomous "/goal ... then merge, then continue
   the cycle" directive after PR #32, Phase 28. With Phase 27/28's abbreviation-shaped

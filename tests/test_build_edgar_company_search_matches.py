@@ -10,6 +10,7 @@ from utils.build_edgar_company_search_matches import (
     build_edgar_company_search_matches,
     unresolved_issuer_era_spans,
     unresolved_issuer_names,
+    unresolved_issuer_tickers,
 )
 
 SEARCH_URL = "https://www.sec.gov/cgi-bin/browse-edgar"
@@ -117,6 +118,40 @@ def test_unresolved_issuer_era_spans_missing_date_columns_degrades_to_empty(
     ).write_parquet(path)
 
     assert unresolved_issuer_era_spans(path) == {}
+
+
+def test_unresolved_issuer_tickers_missing_symbol_column_degrades_to_empty(
+    tmp_path: Path,
+) -> None:
+    # The shared fixture (`_write_eras_sector_enriched`) has no `symbol` column at all.
+    path = _write_eras_sector_enriched(tmp_path)
+
+    assert unresolved_issuer_tickers(path) == {}
+
+
+def test_unresolved_issuer_tickers_maps_unambiguous_names_excludes_shared_ones(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "eras_sector_enriched.parquet"
+    pl.DataFrame(
+        {
+            "symbol_era_id": ["AAA#001", "BBB#001", "CCC#001"],
+            "symbol": ["AAA", "BBB", "CCC"],
+            "identity_issuer": ["Alpha Corp", "Shared Name Corp", "Shared Name Corp"],
+            "resolved_cik": [None, None, None],
+            "cik_source": [None, None, None],
+            "sic_coverage_status": ["no_cik", "no_cik", "no_cik"],
+            "first_day": ["20170101", "20180101", "20190101"],
+            "last_day": ["20171231", "20181231", "20191231"],
+        },
+        schema={**ERAS_SECTOR_ENRICHED_SCHEMA, "symbol": pl.String},
+    ).write_parquet(path)
+
+    tickers = unresolved_issuer_tickers(path)
+
+    # "Alpha Corp" maps unambiguously to its one symbol; "Shared Name Corp" spans two
+    # distinct symbols (BBB, CCC) and is excluded entirely rather than guessing.
+    assert tickers == {"Alpha Corp": "AAA"}
 
 
 class FakeResponse:

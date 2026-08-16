@@ -65,13 +65,44 @@ variant's abbreviation-expanded form (`QUERY_ABBREVIATION_EXPANSIONS`,
 still applies the identical exact/safe-truncation acceptance check, so this only ever
 surfaces more candidates to consider, never loosens what gets accepted.
 
+**Ticker-lookup fallback (Phase 30).** Every query variant above searches by *name* —
+but a company that has renamed since the era in question (`SEAS`'s issuer, "SeaWorld
+Entertainment, Inc.", renamed to "United Parks & Resorts Inc." in 2024) or dropped out
+of `browse-edgar`'s name-search index after going private (`HOLX`'s "Hologic Inc" — a
+real, currently-filing CIK with an intact submissions history, simply invisible to
+*any* name-based query, confirmed live) can never be found by name search at all, no
+matter how the query is truncated or expanded. `_try_ticker_fallback` tries exactly one
+more candidate source whenever `_match_by_name` doesn't land on a match — not just a
+clean fall-through, but also its own early `ambiguous_candidates` returns (an over-cap
+single-word query, or an unresolved multi-candidate tie), since those exit the name
+search loop directly. `lookup_cik_by_ticker` resolves the era's ticker straight to a CIK
+via SEC's own persistent ticker registry, then `_validate_ticker_candidate` checks it —
+same blank-SIC guard and `_provably_disjoint` era check as everywhere else, but
+`_names_match_broad` in place of `_names_match`: it adds Tier D's `_is_prefix_relation`
+"extra trailing tokens" branch, which `_names_match` deliberately excludes (Phase 22).
+That branch was unsafe for a *broad* name search because its only safety net was
+uniqueness across the entire SEC index among candidates satisfying the loose relation;
+the ticker fallback has a different, equally real one — the ticker registry already
+narrowed the field to exactly one candidate before any name check runs, so there's no
+"which of several loosely-matching companies" choice being made, just "is this the one
+company the ticker resolved to." A stale or reused ticker pointing at an unrelated
+company is still rejected on name mismatch, not trusted outright — confirmed live sample
+of 23 top-priority unresolved tickers: 15 resolved a CIK, several recovering names
+previously documented as structural dead ends for name-based matching alone
+(`INTERCEPT PHARMACEUTICALS IN`, `GLOBAL BLOOD THERAPEUTICS IN`, `DECIPHERA
+PHARMACEUTICALS IN` — exactly Phase 22's abandoned "extra trailing tokens" case;
+`LIFE STORAGE INC`, `GREAT LAKES DREDGE & DOCK CO` — Phase 21's SIC-specificity
+tie-break bucket).
+
 Every guard here follows the same posture: better genuinely unresolved than confidently
 wrong. Every acceptance rule was quantified against the cached request history before
 shipping, and every new signal was spot-checked against real, known companies — several
 were caught producing false positives during that process and either narrowed to a safe
 subset or abandoned outright (see the design-history doc for specifics: SEC's `tickers`
-field, a broader SIC-specificity tie-break, and `_is_prefix_relation`'s "extra trailing
-tokens" branch all looked promising and didn't survive contact with real data).
+field, and a broader SIC-specificity tie-break, both looked promising and didn't survive
+contact with real data; `_is_prefix_relation`'s "extra trailing tokens" branch looked
+promising for the *name-search* path and didn't either — Phase 30 later found it safe
+after all for the structurally different ticker-fallback path, see above).
 [CA][IV][REH][KBT]
 """
 
@@ -80,11 +111,12 @@ from __future__ import annotations
 from typing import Any
 
 from utils.resolution_v2_network import CachedPrimaryClient, PrimarySourceError
-from utils.sec_company_search_client import search_company_ciks
+from utils.sec_company_search_client import lookup_cik_by_ticker, search_company_ciks
 from utils.sec_name_cik_lookup import (
     MIN_PARTIAL_TOKEN_CHARS,
     MIN_PREFIX_TOKENS,
     ROMAN_NUMERAL_CHARS,
+    _is_prefix_relation,
     normalize_name,
     strip_security_descriptors,
 )
@@ -100,6 +132,7 @@ STATUS_FETCH_ERROR = "fetch_error"
 BASIS_SINGLE_CANDIDATE = "single_validated_candidate"
 BASIS_FILING_ACTIVITY = "filing_activity_tiebreak"
 BASIS_FILING_WINDOW_CONTAINMENT = "filing_window_containment_tiebreak"
+BASIS_TICKER_LOOKUP = "ticker_lookup"
 
 ACTIVITY_PLAUSIBLE = "plausible"
 ACTIVITY_DISJOINT = "disjoint"
@@ -131,6 +164,7 @@ def match_issuer_name(
     *,
     max_age_days: int = 90,
     era_span: tuple[str, str] | None = None,
+    ticker: str | None = None,
 ) -> dict[str, Any]:
     """One issuer name -> one result row (always the same set of keys, regardless of
     outcome — see `_result`). Never raises; every outcome is a structured status so a
@@ -159,7 +193,43 @@ def match_issuer_name(
     for having a blank SIC, when that candidate's name matches and its filing history is
     independently plausible for `era_span` — informational only, never accepted as a
     match; see `_find_blank_sic_lead`'s docstring for why this stays a research lead
-    rather than an automatic accept."""
+    rather than an automatic accept.
+
+    `ticker` (Phase 30) is optional and only ever a last resort: tried once via
+    `_try_ticker_fallback` whenever name search (`_match_by_name`) doesn't land on a
+    match — not just when every query variant returns zero candidates, but also a
+    genuine `ambiguous_candidates` outcome (an over-cap single-word query, or an
+    unresolved multi-candidate tie), since those return early from inside the name-
+    search loop and would otherwise never reach a ticker attempt at all. That early
+    return is exactly the shape several of Phase 30's real recoveries hit (`FIRST
+    REPUBLIC BANK/CA`, `EXPRESS INC`, `LIFE STORAGE INC` all report
+    `ambiguous_candidates` from name search alone). See `_try_ticker_fallback` and the
+    module docstring's Phase 30 entry for why a ticker-resolved candidate needs no
+    looser an acceptance gate than a name-search one."""
+    result = _match_by_name(client, issuer_name, max_age_days, era_span)
+    if not ticker or result["match_status"] in (STATUS_MATCHED, STATUS_FETCH_ERROR):
+        return result
+    fallback_result, ticker_disproven = _try_ticker_fallback(
+        client, issuer_name, ticker, era_span, max_age_days, result["identity_disproven"]
+    )
+    if fallback_result is not None:
+        return fallback_result
+    result["identity_disproven"] = result["identity_disproven"] or ticker_disproven
+    return result
+
+
+def _match_by_name(
+    client: CachedPrimaryClient,
+    issuer_name: str,
+    max_age_days: int,
+    era_span: tuple[str, str] | None,
+) -> dict[str, Any]:
+    """The original, still-primary matching path: progressively-truncated name search
+    via `_search_query_variants`, each candidate set validated and either accepted,
+    disambiguated, or rejected. Factored out of `match_issuer_name` in Phase 30 so the
+    ticker-lookup fallback there can inspect *any* non-matched outcome — including one
+    of this function's own early `ambiguous_candidates` returns — not just the case
+    where every variant runs dry."""
     saw_any_candidates = False
     disproven = False
     blank_sic_lead: tuple[str, str, bool] | None = None
@@ -230,6 +300,59 @@ def match_issuer_name(
         # Zero candidates validated at this query — try a shorter one.
     status = STATUS_NO_VALIDATED_MATCH if saw_any_candidates else STATUS_NO_CANDIDATES
     return _result(issuer_name, status, identity_disproven=disproven, blank_sic_lead=blank_sic_lead)
+
+
+def _try_ticker_fallback(
+    client: CachedPrimaryClient,
+    issuer_name: str,
+    ticker: str,
+    era_span: tuple[str, str] | None,
+    max_age_days: int,
+    disproven: bool,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Last-resort candidate source once `_match_by_name` fails to land on a match —
+    including its own early `ambiguous_candidates` returns, not just a clean
+    fall-through (see `match_issuer_name`'s docstring). `lookup_cik_by_ticker` resolves
+    a ticker straight to its CIK via SEC's own persistent ticker registry, finding a
+    registrant even when it has renamed away from the OpenFIGI-asserted name entirely
+    (`SEAS` -> "United Parks & Resorts Inc.", formerly "SeaWorld Entertainment, Inc.")
+    or dropped out of `browse-edgar`'s name-search index after going private (`HOLX` —
+    see the module docstring's Phase 30 entry). `_validate_ticker_candidate` still
+    applies the identical blank-SIC guard and `_provably_disjoint` era check every other
+    candidate source goes through — just with `_names_match_broad` in place of
+    `_names_match` (see that function's docstring for why the wider name check is safe
+    specifically here) — so a stale/reused ticker pointing at an unrelated company is
+    still rejected on name mismatch, no looser a safety bar overall than a name-search
+    hit. Returns `(None, disproven)` when there's nothing to report (no ticker
+    registration, name mismatch, or blank SIC), so the caller falls through to its
+    normal unresolved-status return unchanged."""
+    try:
+        cik = lookup_cik_by_ticker(client, ticker, max_age_days=max_age_days)
+    except PrimarySourceError:
+        return _result(issuer_name, STATUS_FETCH_ERROR, identity_disproven=disproven), disproven
+    if cik is None:
+        return None, disproven
+    validated = _validate_ticker_candidate(client, issuer_name, cik, max_age_days)
+    if validated is None:
+        return _result(issuer_name, STATUS_FETCH_ERROR, identity_disproven=disproven), disproven
+    if not validated:
+        return None, disproven
+    matched_cik, sic_result, matched_name = validated[0]
+    if _provably_disjoint(client, matched_cik, era_span, max_age_days):
+        return None, True
+    return (
+        _result(
+            issuer_name,
+            STATUS_MATCHED,
+            matched_cik=matched_cik,
+            candidate_name=matched_name,
+            sic=sic_result.get("sic"),
+            sic_description=sic_result.get("sic_description"),
+            match_basis=BASIS_TICKER_LOOKUP,
+            identity_disproven=disproven,
+        ),
+        disproven,
+    )
 
 
 def _expand_query_abbreviations(candidate: str) -> str | None:
@@ -383,6 +506,72 @@ def _matching_candidate_name(issuer_name: str, sic_result: dict[str, Any]) -> st
         if _names_match(issuer_name, former_name):
             return former_name
     return None
+
+
+def _validate_ticker_candidate(
+    client: CachedPrimaryClient, issuer_name: str, cik: str, max_age_days: int
+) -> list[tuple[str, dict[str, Any], str]] | None:
+    """Single-candidate counterpart to `_validate_candidates`, used only by the ticker
+    fallback: SEC's ticker registry already narrowed the field to exactly one CIK, so
+    there's no list to iterate — just the identical blank-SIC guard (same
+    evidence-of-non-operation rule as everywhere else), plus `_names_match_broad`
+    instead of `_names_match` (see that function's docstring for why the wider
+    acceptance is safe specifically here). Same return shape as `_validate_candidates`
+    (`None` on fetch error, empty list on no match) so `_try_ticker_fallback` handles
+    both identically."""
+    sic_result = fetch_sic(client, cik, max_age_days=max_age_days)
+    if sic_result.get("fetch_status") == SIC_STATUS_FETCH_ERROR:
+        return None
+    if not sic_result.get("sic"):
+        return []
+    matched_name = _matching_candidate_name_broad(issuer_name, sic_result)
+    if matched_name is None:
+        return []
+    return [(cik, sic_result, matched_name)]
+
+
+def _matching_candidate_name_broad(issuer_name: str, sic_result: dict[str, Any]) -> str | None:
+    """`_matching_candidate_name`'s ticker-fallback counterpart — identical shape, just
+    calling `_names_match_broad` instead of `_names_match`."""
+    entity_name = sic_result.get("entity_name")
+    if _names_match_broad(issuer_name, entity_name):
+        return entity_name
+    for former_name in sic_result.get("former_names") or ():
+        if _names_match_broad(issuer_name, former_name):
+            return former_name
+    return None
+
+
+def _names_match_broad(issuer_name: str, candidate_name: str | None) -> bool:
+    """`_names_match`'s first three checks (exact, descriptor-stripped, abbreviation-
+    expanded), then Tier D's `_is_prefix_relation` instead of the narrower
+    `_is_safe_final_token_truncation` — the "extra trailing tokens" branch `_names_match`
+    deliberately stays without, per Phase 22. That branch was unsafe for a broad
+    multi-candidate name search because its only safety net was *uniqueness across the
+    entire SEC index* among candidates satisfying the loose relation — exactly Tier D's
+    own precondition for using it. The ticker fallback has a different but equally
+    real safety net: SEC's ticker registry already narrowed the field to exactly one
+    CIK before this function is ever called, so there's no "which of several
+    loosely-matching companies" choice being made — just "is this the one specific
+    company the ticker resolved to." Recovers exactly the cases Phase 22 explicitly
+    declined to (`INTERCEPT PHARMACEUTICALS IN`, `GLOBAL BLOOD THERAPEUTICS IN`,
+    `DECIPHERA PHARMACEUTICALS IN` — OpenFIGI's 28-char truncation landing mid-word on
+    the trailing legal-suffix token itself, `"INC"` -> `"IN"`, not inside the base
+    name)."""
+    if not candidate_name:
+        return False
+    target = normalize_name(candidate_name)
+    if not target:
+        return False
+    if normalize_name(issuer_name) == target:
+        return True
+    stripped = normalize_name(strip_security_descriptors(issuer_name))
+    if stripped == target:
+        return True
+    expanded = _expand_query_abbreviations(stripped)
+    if expanded and normalize_name(expanded) == target:
+        return True
+    return _is_prefix_relation(tuple(stripped.split()), tuple(target.split()))
 
 
 def _names_match(issuer_name: str, candidate_name: str | None) -> bool:

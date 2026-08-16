@@ -816,6 +816,38 @@ Resolved-CIK era rows 14,207 -> 14,219 (+12); distinct CIKs resolved 8,645 -> 8,
 manual-research worklist 11,119 -> 11,107 eras, 144.5M -> 142.6M trade rows.
 [CA][IV][REH][CDiP][KBT]
 
+**Phase 30 (Tier E ticker-lookup fallback — new capability).** `HOLOGIC INC`/`SEAWORLD
+ENTERTAINMENT INC`: real CIKs, name search finds only irrelevant subsidiaries or
+nothing — one deregistered out of `browse-edgar`'s name index after going private, the
+other renamed ("United Parks & Resorts Inc." in 2024). `action=getcompany&CIK=<ticker>`
+resolves a ticker straight to a CIK via SEC's persistent ticker registry, independent
+of name search. Added `lookup_cik_by_ticker` (`sec_company_search_client.py`) and
+`_try_ticker_fallback` (`edgar_company_search_match.py`), tried once name search
+doesn't land on a match; that single candidate goes through the identical acceptance
+gate as every other source, so a stale/reused ticker is rejected on name mismatch, not
+trusted outright. `unresolved_issuer_tickers` (`build_edgar_company_search_matches.py`)
+maps each name to its one symbol, skipping names shared by 2+ symbols (~2%).
+
+Two real design gaps found and fixed via full pipeline runs, not just unit tests: (1)
+the fallback never fired on an early `ambiguous_candidates` return from inside the
+name-search loop — the highest-value shape — fixed by extracting `_match_by_name` and
+trying the fallback whenever it doesn't return `STATUS_MATCHED`, regardless of which
+non-matched status; (2) several ticker-resolved candidates still failed
+`_names_match`'s narrower truncation rule (Phase 22's deliberate limitation) — fixed
+with `_names_match_broad`, reusing Tier D's `_is_prefix_relation` "extra trailing
+tokens" branch, safe here (unlike Phase 22's broad-search context) because the ticker
+already narrows the field to one candidate before any name check runs. Live-reverified:
+Phase 22's two real false positives (`TPG PACE BENEFICIAL II`, `PRIME NUMBER
+ACQUISITION`) now resolve to their *correct* entity via ticker lookup.
+
+7 new tests; 578 pass (was 565), ruff/bandit clean. Extensively spot-checked the full
+253-match result (majority are SPAC shells, SIC consistently Blank Checks; 4 non-SPAC
+CIKs live-verified directly against `data.sec.gov`) — zero suspicious entries. Real run
+(3 iterations as fixes landed): Tier E matched 2,904/4,314 -> 3,130/4,314. Resolved-CIK
+era rows 14,219 -> 14,536 (+317); distinct CIKs resolved 8,648 -> 8,750; manual-research
+worklist 11,107 -> 10,790 eras, 142.6M -> 127.4M trade rows — the largest single-phase
+drop in this cycle. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

@@ -15,7 +15,14 @@ name collisions between two real registrants. Union rather than per-era, since t
 module runs at the name-deduped, not per-era, granularity: a wider span only ever makes
 the tie-break *more* permissive (more candidates read as plausible), never less, so it
 can't cause a false rejection, just occasionally leave a genuine tie unresolved rather
-than guess which era's exact window applies. [CA][REH][KBT]
+than guess which era's exact window applies.
+
+`unresolved_issuer_tickers` (Phase 30) maps each name to its one associated `symbol`,
+passed through to `match_issuer_name`'s ticker-lookup fallback — see that function and
+`edgar_company_search_match`'s module docstring for what this recovers and why it's
+safe. A name shared by 2+ distinct symbols is excluded from the map entirely rather than
+guessing which symbol's ticker belongs to it (same "ambiguous means skip" posture as
+everywhere else); ~2% of the unresolved population as of Phase 30. [CA][REH][KBT]
 """
 
 from __future__ import annotations
@@ -109,8 +116,9 @@ def build_edgar_company_search_matches(config: EdgarSearchConfig) -> dict[str, A
     config.output_root.mkdir(parents=True, exist_ok=True)
     names = unresolved_issuer_names(config.eras_sector_enriched_path)
     era_spans = unresolved_issuer_era_spans(config.eras_sector_enriched_path)
+    tickers = unresolved_issuer_tickers(config.eras_sector_enriched_path)
     search_names = names[: config.limit_names] if config.limit_names is not None else names
-    rows = [] if config.skip_fetch else _search_all(config, search_names, era_spans)
+    rows = [] if config.skip_fetch else _search_all(config, search_names, era_spans, tickers)
     matches = pl.DataFrame(rows, schema=RESULT_SCHEMA) if rows else pl.DataFrame(schema=RESULT_SCHEMA)
     summary = build_summary(len(names), matches)
     write_outputs(config.output_root, matches, summary)
@@ -164,6 +172,24 @@ def unresolved_issuer_era_spans(path: Path) -> dict[str, tuple[str, str]]:
     }
 
 
+def unresolved_issuer_tickers(path: Path) -> dict[str, str]:
+    """`identity_issuer` -> its one associated `symbol`, for `match_issuer_name`'s
+    Phase 30 ticker-lookup fallback — a name shared by 2+ distinct symbols (~2% of the
+    unresolved population; a company that reused the same OpenFIGI-asserted name across
+    unrelated listing eras) is deliberately excluded rather than guessing which
+    symbol's ticker-registry entry actually belongs to this name, matching the same
+    "ambiguous means skip, not guess" posture as every other tier. A name absent from
+    this dict just means `match_issuer_name` gets `ticker=None` — today's behavior,
+    unchanged."""
+    pool = _unresolved_pool(path)
+    if "symbol" not in pool.columns:
+        return {}
+    counts = pool.group_by("identity_issuer").agg(pl.col("symbol").n_unique().alias("n"))
+    unambiguous = counts.filter(pl.col("n") == 1)["identity_issuer"].to_list()
+    frame = pool.filter(pl.col("identity_issuer").is_in(unambiguous)).unique(subset=["identity_issuer"])
+    return dict(zip(frame["identity_issuer"].to_list(), frame["symbol"].to_list(), strict=True))
+
+
 def _iso_date(yyyymmdd: str) -> str:
     return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
 
@@ -181,7 +207,10 @@ def _unresolved_pool(path: Path) -> pl.DataFrame:
 
 
 def _search_all(
-    config: EdgarSearchConfig, names: list[str], era_spans: dict[str, tuple[str, str]]
+    config: EdgarSearchConfig,
+    names: list[str],
+    era_spans: dict[str, tuple[str, str]],
+    tickers: dict[str, str],
 ) -> list[dict[str, Any]]:
     if not names:
         return []
@@ -203,6 +232,7 @@ def _search_all(
                     name,
                     max_age_days=config.max_age_days,
                     era_span=era_spans.get(name),
+                    ticker=tickers.get(name),
                 )
             )
             if index % LOG_EVERY == 0 or index == len(names):
