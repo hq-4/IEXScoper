@@ -162,7 +162,39 @@ is 2025-2026, entirely outside it), so the evidence to warn a researcher off the
 already exists; it just wasn't surfaced. 74 names across the still-unresolved population
 carry this proof (100 worklist eras, 3.66M trade rows) — real research-quality value, not
 a one-off. No CIK-matching behavior changes: `identity_disproven` is purely additive
-metadata on the existing result dict. [CA][IV][REH][KBT]
+metadata on the existing result dict.
+
+Phase 19 tried loosening the blank-SIC guard itself and, after auditing the results
+before shipping, backed off to a safer, informational-only design. Tracing a top-worklist
+row (`FIRST REPUBLIC BANK/CA`, priority rank 3, 1.86M trade rows) found EDGAR's
+`"FIRST REPUBLIC"` search surfacing CIK 1132979, whose current name is the *exact* string
+`"FIRST REPUBLIC BANK"` — but a blank SIC, so `_validate_candidates` rejected it outright
+without ever checking its filing history. That CIK has 42 real filings spanning
+2004-2024, squarely covering (and extending well past) FRC's 2016-2023 era — the same
+`ACTIVITY_PLAUSIBLE` signal already trusted for the tie-break and Phase 16's
+disjoint-rejection, which looked like strong independent evidence to *auto-accept* the
+candidate the same way `_provably_disjoint` auto-*rejects* one.
+Spot-checking the resulting matches before shipping (this project's standing practice,
+not skipped here) found the signal too weak to trust blindly: of a 34-name quantified
+population, roughly half had `entityType="other"` and *zero* substantive filings ever —
+their entire filing history was ownership-disclosure forms (SC 13G, Form 3/4/5, 13F-NT)
+that any unrelated third party can file *about* a CIK regardless of whether it was ever
+the real operating entity (`BLACK KNIGHT INC`, `FARMER BROS CO`, `SHELL MIDSTREAM
+PARTNERS LP`, `STEEL PARTNERS HOLDINGS LP`, `WELLESLEY BANK` among them — all real
+companies, but these specific candidate CIKs are very likely the wrong entity for them).
+Worse, tightening to require a genuine *substantive* filing (`sec_sic_client.SUBSTANTIVE_FORMS`
+— 10-K/10-Q/8-K/S-1/etc.) landing in the era would have excluded `FIRST REPUBLIC BANK`
+itself too: its entire 42-filing history is also ownership-disclosure forms only,
+plausibly because Section 12(i) lets certain banks file their real 10-Ks with their
+banking regulator instead of SEC, so SEC's own system never sees them. No reliable way to
+distinguish "genuinely the right company, files elsewhere" from "coincidental secondary
+filer" exists anywhere in this repo's data — so this never became a new acceptance path.
+`_find_blank_sic_lead` surfaces the same candidate purely as `blank_sic_lead_*`
+informational fields on the result (`blank_sic_lead_cik`, `blank_sic_lead_name`,
+`blank_sic_lead_high_confidence` — the latter from `_is_high_confidence_lead`, requiring
+both `entityType="operating"` *and* a substantive filing inside the era) — a strong
+research lead for a human, never an automatic accept, `match_status`/`matched_cik`
+completely unaffected. [CA][IV][REH][KBT]
 """
 
 from __future__ import annotations
@@ -220,9 +252,16 @@ def match_issuer_name(
     unmatched status: not just "we couldn't confirm a CIK," but "the name string itself
     is provably wrong for this era," which callers like the manual-research worklist can
     use to warn a researcher off a misleading OpenFIGI-asserted name (e.g. `UTX`
-    resolving to `"ULTRATREX INC-A"`, a real but unrelated shell — see the docstring)."""
+    resolving to `"ULTRATREX INC-A"`, a real but unrelated shell — see the docstring).
+
+    `blank_sic_lead_*` (Phase 19) surfaces a candidate `_validate_candidates` rejected
+    for having a blank SIC, when that candidate's name matches and its filing history is
+    independently plausible for `era_span` — informational only, never accepted as a
+    match; see `_find_blank_sic_lead`'s docstring for why this stays a research lead
+    rather than an automatic accept."""
     saw_any_candidates = False
     disproven = False
+    blank_sic_lead: tuple[str, str, bool] | None = None
     for query in _search_query_variants(issuer_name):
         try:
             candidates = search_company_ciks(client, query, max_age_days=max_age_days)
@@ -232,16 +271,25 @@ def match_issuer_name(
             continue
         saw_any_candidates = True
         if len(candidates) > MAX_CANDIDATES_TO_VALIDATE:
-            # Further truncation only broadens the match set further — stop here.
+            # Further truncation only broadens the match set further — stop here. Still
+            # carries forward any blank_sic_lead already found at a shorter, narrower
+            # query level earlier in this same loop (e.g. the real FIRST REPUBLIC BANK
+            # case: a 12-candidate "FIRST REPUBLIC" query finds the lead, but the next,
+            # broader "FIRST" query alone hits this cap) — losing it here would silently
+            # drop a real research lead just because a later, less useful query was
+            # also tried.
             return _result(
                 issuer_name,
                 STATUS_AMBIGUOUS,
                 candidate_count=len(candidates),
                 identity_disproven=disproven,
+                blank_sic_lead=blank_sic_lead,
             )
         validated = _validate_candidates(client, issuer_name, candidates, max_age_days)
         if validated is None:
             return _result(issuer_name, STATUS_FETCH_ERROR, identity_disproven=disproven)
+        if blank_sic_lead is None:
+            blank_sic_lead = _find_blank_sic_lead(client, issuer_name, candidates, era_span, max_age_days)
         if len(validated) == 1:
             cik, sic_result, matched_name = validated[0]
             if _provably_disjoint(client, cik, era_span, max_age_days):
@@ -276,10 +324,11 @@ def match_issuer_name(
                 STATUS_AMBIGUOUS,
                 candidate_count=len(validated),
                 identity_disproven=disproven,
+                blank_sic_lead=blank_sic_lead,
             )
         # Zero candidates validated at this query — try a shorter one.
     status = STATUS_NO_VALIDATED_MATCH if saw_any_candidates else STATUS_NO_CANDIDATES
-    return _result(issuer_name, status, identity_disproven=disproven)
+    return _result(issuer_name, status, identity_disproven=disproven, blank_sic_lead=blank_sic_lead)
 
 
 def _search_query_variants(name: str) -> list[str]:
@@ -333,12 +382,79 @@ def _validate_candidates(
             # unrelated same-name shell (CIK 1171179, blank SIC) alongside the real one
             # (CIK 1699838, SIC 7372) that a plain normalized-name match alone couldn't
             # tell apart. Every confirmed-correct match checked while building this had
-            # a real SIC on record; this genuine collision didn't.
+            # a real SIC on record; this genuine collision didn't. Phase 19 tried
+            # admitting a blank-SIC candidate when its filing history is independently
+            # plausible for the era and found the signal too weak to auto-accept on (see
+            # `_find_blank_sic_lead` below) — surfaced as a research lead instead.
             continue
         matched_name = _matching_candidate_name(issuer_name, sic_result)
         if matched_name is not None:
             validated.append((cik, sic_result, matched_name))
     return validated
+
+
+def _find_blank_sic_lead(
+    client: CachedPrimaryClient,
+    issuer_name: str,
+    candidates: list[str],
+    era_span: tuple[str, str] | None,
+    max_age_days: int,
+) -> tuple[str, str, bool] | None:
+    """Phase 19: the first blank-SIC candidate that name-matches and has *some* filing
+    landing inside `era_span` — informational only (`_result`'s `blank_sic_lead_*`
+    fields), never changes `match_status`/`matched_cik`. Originally built to
+    *auto-accept* such a candidate, the same way `_provably_disjoint` auto-rejects one:
+    the real motivating case, `FIRST REPUBLIC BANK` (CIK 1132979, blank SIC, 42 filings
+    spanning 2004-2024 that squarely cover its era), looked like overwhelming evidence.
+    But auditing the resulting matches before shipping found the signal is too weak to
+    trust blindly: roughly half of a 34-name quantified population turned out to have
+    `entityType="other"` and *zero* substantive filings ever — their only filing activity
+    was ownership-disclosure forms (SC 13G, Form 3/4/5, 13F-NT) that any unrelated third
+    party can file *about* a CIK regardless of whether it was ever the real operating
+    entity (`BLACK KNIGHT INC`, `FARMER BROS CO`, `SHELL MIDSTREAM PARTNERS LP`, `STEEL
+    PARTNERS HOLDINGS LP`, `WELLESLEY BANK` among them) — and, worse, tightening to
+    require a *substantive* filing (`SUBSTANTIVE_FORMS`) landing in the era would also
+    have excluded `FIRST REPUBLIC BANK` itself, whose entire 42-filing history is also
+    ownership-disclosure forms only (plausibly explained by Section 12(i): some banks
+    file their real 10-Ks with their banking regulator instead of SEC, so SEC's own
+    system never sees them). No reliable way to tell "genuinely the right company, files
+    elsewhere" from "coincidental secondary filer" exists in this repo's data — so this
+    stays a lead for a human, not an automatic accept, same "better genuinely unresolved
+    than confidently wrong" posture as everything else here. `blank_sic_lead_high_confidence`
+    (see `_is_high_confidence_lead`) still distinguishes the two cases where it can, so a
+    researcher knows which leads are worth checking first."""
+    if era_span is None:
+        return None
+    for cik in candidates:
+        sic_result = fetch_sic(client, cik, max_age_days=max_age_days)
+        if sic_result.get("fetch_status") == SIC_STATUS_FETCH_ERROR or sic_result.get("sic"):
+            continue
+        matched_name = _matching_candidate_name(issuer_name, sic_result)
+        if matched_name is None:
+            continue
+        activity = fetch_filing_activity(client, cik, max_age_days=max_age_days)
+        if activity.get("fetch_status") != "ok":
+            continue
+        if _filing_activity_verdict(activity, era_span) != ACTIVITY_PLAUSIBLE:
+            continue
+        return cik, matched_name, _is_high_confidence_lead(activity, era_span)
+    return None
+
+
+def _is_high_confidence_lead(activity: dict[str, Any], era_span: tuple[str, str]) -> bool:
+    """A blank-SIC lead is "high confidence" only when SEC itself classifies the
+    registrant as `entityType="operating"` *and* it has a genuine substantive filing
+    (`sec_sic_client.SUBSTANTIVE_FORMS` — 10-K/10-Q/8-K/S-1/etc., not just an
+    ownership-disclosure form any outside party can file) landing inside `era_span`.
+    Both conditions are needed: `entityType` alone doesn't catch a shell that happens to
+    have one real registration statement decades before the era; a substantive filing
+    alone doesn't catch a `entityType="other"` registrant SEC itself doesn't consider a
+    normal reporting company."""
+    if activity.get("entity_type") != "operating":
+        return False
+    first_day, last_day = era_span
+    substantive_dates = activity.get("substantive_filing_dates") or ()
+    return any(first_day <= day <= last_day for day in substantive_dates)
 
 
 def _matching_candidate_name(issuer_name: str, sic_result: dict[str, Any]) -> str | None:
@@ -463,7 +579,9 @@ def _result(
     sic_description: str | None = None,
     match_basis: str | None = None,
     identity_disproven: bool = False,
+    blank_sic_lead: tuple[str, str, bool] | None = None,
 ) -> dict[str, Any]:
+    lead_cik, lead_name, lead_high_confidence = blank_sic_lead or (None, None, False)
     return {
         "identity_issuer": issuer_name,
         "match_status": status,
@@ -474,4 +592,7 @@ def _result(
         "sic_description": sic_description,
         "match_basis": match_basis,
         "identity_disproven": identity_disproven,
+        "blank_sic_lead_cik": lead_cik,
+        "blank_sic_lead_name": lead_name,
+        "blank_sic_lead_high_confidence": lead_high_confidence,
     }

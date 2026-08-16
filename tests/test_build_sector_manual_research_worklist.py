@@ -58,6 +58,9 @@ def _write_enriched(path: Path) -> None:
                 "fund_no_sic_needed",
             ],
             "identity_disproven": [False, True, False, False, False],
+            "blank_sic_lead_cik": [None, None, "999", None, None],
+            "blank_sic_lead_name": [None, None, "Some Blank-SIC Co", None, None],
+            "blank_sic_lead_high_confidence": [False, False, True, False, False],
         }
     ).write_parquet(path)
 
@@ -83,6 +86,9 @@ def test_build_sector_worklist_ranks_by_trade_rows_and_excludes_resolved(tmp_pat
     assert rows[1]["has_googleable_name"] is False  # XXX has nothing to google by
     assert rows[0]["identity_disproven"] is True  # YYY's issuer name is proven wrong
     assert rows[1]["identity_disproven"] is False
+    assert rows[1]["blank_sic_lead_cik"] == "999"  # XXX has a blank-SIC research lead
+    assert rows[1]["blank_sic_lead_high_confidence"] is True
+    assert rows[0]["blank_sic_lead_cik"] is None
     for column in ("manual_cik", "manual_sic", "manual_notes"):
         assert rows[0][column] is None
 
@@ -90,6 +96,8 @@ def test_build_sector_worklist_ranks_by_trade_rows_and_excludes_resolved(tmp_pat
     assert result["summary"]["excluded_fund_count"] == 1
     assert result["summary"]["has_googleable_name_count"] == 1
     assert result["summary"]["identity_disproven_count"] == 1
+    assert result["summary"]["blank_sic_lead_count"] == 1
+    assert result["summary"]["blank_sic_lead_high_confidence_count"] == 1
     assert result["summary"]["top_n"] == 2
     assert (output_root / "sector_research_worklist_report.md").exists()
     assert (output_root / "sector_research_worklist_top.csv").exists()

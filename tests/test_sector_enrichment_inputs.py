@@ -5,6 +5,7 @@ from pathlib import Path
 import polars as pl
 
 from utils.sector_enrichment_inputs import (
+    apply_blank_sic_lead,
     apply_identity_disproven,
     apply_iex_fallback_issuer,
     load_edgar_matches,
@@ -37,7 +38,7 @@ def test_load_edgar_matches_missing_file_returns_none(tmp_path: Path) -> None:
     assert load_edgar_matches(tmp_path / "missing.parquet") is None
 
 
-def test_load_edgar_matches_reads_issuer_cik_and_disproven_columns(tmp_path: Path) -> None:
+def test_load_edgar_matches_reads_issuer_cik_and_metadata_columns(tmp_path: Path) -> None:
     path = tmp_path / "edgar_company_search_matches.parquet"
     pl.DataFrame(
         {
@@ -49,21 +50,38 @@ def test_load_edgar_matches_reads_issuer_cik_and_disproven_columns(tmp_path: Pat
             "sic": ["5731"],
             "sic_description": ["Retail-Electronics"],
             "identity_disproven": [False],
+            "blank_sic_lead_cik": [None],
+            "blank_sic_lead_name": [None],
+            "blank_sic_lead_high_confidence": [False],
         }
     ).write_parquet(path)
 
     result = load_edgar_matches(path)
 
     assert result is not None
-    assert result.columns == ["identity_issuer", "matched_cik", "identity_disproven"]
+    assert result.columns == [
+        "identity_issuer",
+        "matched_cik",
+        "identity_disproven",
+        "blank_sic_lead_cik",
+        "blank_sic_lead_name",
+        "blank_sic_lead_high_confidence",
+    ]
     assert result.to_dicts() == [
-        {"identity_issuer": "Circuit City Stores", "matched_cik": "104599", "identity_disproven": False}
+        {
+            "identity_issuer": "Circuit City Stores",
+            "matched_cik": "104599",
+            "identity_disproven": False,
+            "blank_sic_lead_cik": None,
+            "blank_sic_lead_name": None,
+            "blank_sic_lead_high_confidence": False,
+        }
     ]
 
 
-def test_load_edgar_matches_degrades_gracefully_without_disproven_column(tmp_path: Path) -> None:
-    """A matches file built before Phase 18 added `identity_disproven` shouldn't fail —
-    it degrades to `False` for every row rather than erroring."""
+def test_load_edgar_matches_degrades_gracefully_without_phase18_or_19_columns(tmp_path: Path) -> None:
+    """A matches file built before Phase 18/19 added these fields shouldn't fail — each
+    degrades to its default (`False`/`None`) for every row rather than erroring."""
     path = tmp_path / "edgar_company_search_matches.parquet"
     pl.DataFrame(
         {"identity_issuer": ["Circuit City Stores"], "matched_cik": ["104599"]}
@@ -73,7 +91,14 @@ def test_load_edgar_matches_degrades_gracefully_without_disproven_column(tmp_pat
 
     assert result is not None
     assert result.to_dicts() == [
-        {"identity_issuer": "Circuit City Stores", "matched_cik": "104599", "identity_disproven": False}
+        {
+            "identity_issuer": "Circuit City Stores",
+            "matched_cik": "104599",
+            "identity_disproven": False,
+            "blank_sic_lead_cik": None,
+            "blank_sic_lead_name": None,
+            "blank_sic_lead_high_confidence": False,
+        }
     ]
 
 
@@ -104,6 +129,40 @@ def test_apply_identity_disproven_missing_edgar_matches_defaults_false(tmp_path:
     result = apply_identity_disproven(era_identity, None)
 
     assert result["identity_disproven"].to_list() == [False]
+
+
+def test_apply_blank_sic_lead_backfills_by_issuer_name(tmp_path: Path) -> None:
+    era_identity = pl.DataFrame(
+        {
+            "symbol_era_id": ["FRC#001", "AAPL#001", "ZZZ#001"],
+            "identity_issuer": ["FIRST REPUBLIC BANK/CA", "APPLE INC", None],
+        }
+    )
+    edgar_matches = pl.DataFrame(
+        {
+            "identity_issuer": ["FIRST REPUBLIC BANK/CA", "APPLE INC"],
+            "matched_cik": [None, "320193"],
+            "blank_sic_lead_cik": ["1132979", None],
+            "blank_sic_lead_name": ["FIRST REPUBLIC BANK", None],
+            "blank_sic_lead_high_confidence": [False, False],
+        }
+    )
+
+    result = apply_blank_sic_lead(era_identity, edgar_matches)
+
+    rows = {row["symbol_era_id"]: row["blank_sic_lead_cik"] for row in result.to_dicts()}
+    assert rows == {"FRC#001": "1132979", "AAPL#001": None, "ZZZ#001": None}
+    confidence = {row["symbol_era_id"]: row["blank_sic_lead_high_confidence"] for row in result.to_dicts()}
+    assert confidence == {"FRC#001": False, "AAPL#001": False, "ZZZ#001": False}
+
+
+def test_apply_blank_sic_lead_missing_edgar_matches_defaults_to_none(tmp_path: Path) -> None:
+    era_identity = pl.DataFrame({"symbol_era_id": ["FRC#001"], "identity_issuer": ["FIRST REPUBLIC BANK/CA"]})
+
+    result = apply_blank_sic_lead(era_identity, None)
+
+    assert result["blank_sic_lead_cik"].to_list() == [None]
+    assert result["blank_sic_lead_high_confidence"].to_list() == [False]
 
 
 def test_load_iex_fallback_names_missing_file_returns_none(tmp_path: Path) -> None:

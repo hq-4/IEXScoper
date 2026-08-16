@@ -627,6 +627,26 @@ tests; 522 pass (was 514), ruff/bandit clean. Real run confirmed byte-identical 
 100 worklist eras flagged. See `docs/TASK_LIST.md`'s Phase 18 entry for full detail.
 [CA][IV][REH][CDiP][KBT]
 
+**Phase 19 (`blank_sic_lead` research-lead flag).** A fresh worklist pass found `FIRST
+REPUBLIC BANK/CA` (1.86M trade rows) rejected purely for a blank SIC on its exact-name-match
+candidate (CIK 1132979, 42 real filings 2004-2024 covering its era). Built as auto-acceptance
+first — the same shape as Phase 16's disjoint-rejection but in reverse — then, spot-checking
+the 34-name quantified population before shipping (this project's standing practice), found
+roughly half had zero substantive filings ever (`entityType="other"`, only ownership-disclosure
+forms any unrelated party can file), and tightening the rule would have excluded the flagship
+`FIRST REPUBLIC BANK` case too (plausibly a Section 12(i) bank filing its real 10-Ks with its
+regulator, not SEC). No reliable signal in this repo's data distinguishes the two cases, so
+auto-acceptance was abandoned; redesigned as informational-only, mirroring Phase 18's already-
+safe pattern — `blank_sic_lead_cik`/`_name`/`_high_confidence` surfaced as metadata, never
+changing `match_status`/`matched_cik`. New `sec_sic_client.SUBSTANTIVE_FORMS` distinguishes
+real operating disclosure from ownership-disclosure forms for the confidence flag. 12 new
+tests; 535 pass (was 531), ruff/bandit clean. The real run caught a second bug before shipping:
+a lead found at a narrower query level was dropped when a later, broader query hit the
+candidate-count cap and returned early without carrying it forward — losing the `FIRST
+REPUBLIC BANK` lead itself. Fixed, regression test added, rerun: 34 leads (12 high-confidence),
+match outcomes and CIK-resolution counts fully unchanged. See `docs/TASK_LIST.md`'s Phase 19
+entry for full detail. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

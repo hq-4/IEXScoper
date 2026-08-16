@@ -375,6 +375,65 @@ def test_identity_disproven_flows_through_end_to_end(tmp_path: Path) -> None:
     assert row["identity_disproven"] is True  # but the name is proven wrong
 
 
+def test_blank_sic_lead_flows_through_end_to_end(tmp_path: Path) -> None:
+    """Phase 19: the real `FIRST REPUBLIC BANK` shape — a still-unresolved name with a
+    blank-SIC research lead — should carry `blank_sic_lead_*` all the way into
+    `eras_sector_enriched.parquet`, informational only (`resolved_cik` stays null)."""
+    era_identity_path = tmp_path / "eras_identity_enriched.parquet"
+    sec_path = tmp_path / "symbol_eras_sec_enriched.parquet"
+    pl.DataFrame(
+        {
+            "symbol": ["FRC"],
+            "symbol_era_id": ["FRC#001"],
+            "source_classification": ["delisted_or_acquired_candidate"],
+            "trade_rows": [1859226],
+            "identity_tier": ["openfigi_asserted"],
+            "identity_issuer": ["FIRST REPUBLIC BANK/CA"],
+            "identity_entity_id": ["BBG000BX43M4"],
+            "identity_method": ["openfigi_symbol_identity"],
+            "identity_instrument": ["equity_common"],
+            "identity_source_url": [None],
+        },
+        schema=ERA_IDENTITY_SCHEMA,
+    ).write_parquet(era_identity_path)
+    pl.DataFrame(
+        {"symbol_era_id": ["FRC#001"], "sec_cik": [None], "sec_current_confidence": [None]},
+        schema=SEC_TICKER_CIK_SCHEMA,
+    ).write_parquet(sec_path)
+    edgar_matches_path = tmp_path / "edgar_company_search_matches.parquet"
+    pl.DataFrame(
+        {
+            "identity_issuer": ["FIRST REPUBLIC BANK/CA"],
+            "matched_cik": [None],
+            "blank_sic_lead_cik": ["1132979"],
+            "blank_sic_lead_name": ["FIRST REPUBLIC BANK"],
+            "blank_sic_lead_high_confidence": [False],
+        }
+    ).write_parquet(edgar_matches_path)
+    output_root = tmp_path / "out"
+
+    build_era_sector_enriched(
+        SectorConfig(
+            era_identity_path=era_identity_path,
+            sec_ticker_cik_path=sec_path,
+            stable_openfigi_path=tmp_path / "no_stable_classes.parquet",
+            sec_company_tickers_path=tmp_path / "no_sec_names.parquet",
+            edgar_matches_path=edgar_matches_path,
+            iex_eras_path=tmp_path / "no_iex.parquet",
+            output_root=output_root,
+            registry_path=tmp_path / "registry.sqlite",
+            skip_fetch=True,
+        )
+    )
+
+    enriched = pl.read_parquet(output_root / "eras_sector_enriched.parquet")
+    row = enriched.filter(pl.col("symbol_era_id") == "FRC#001").to_dicts()[0]
+    assert row["resolved_cik"] is None  # still genuinely unresolved
+    assert row["blank_sic_lead_cik"] == "1132979"
+    assert row["blank_sic_lead_name"] == "FIRST REPUBLIC BANK"
+    assert row["blank_sic_lead_high_confidence"] is False
+
+
 def test_renamed_ticker_resolves_via_iex_fallback_and_flags_continuity(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

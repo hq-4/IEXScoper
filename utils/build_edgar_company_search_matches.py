@@ -60,6 +60,9 @@ RESULT_SCHEMA = {
     "sic_description": pl.String,
     "match_basis": pl.String,
     "identity_disproven": pl.Boolean,
+    "blank_sic_lead_cik": pl.String,
+    "blank_sic_lead_name": pl.String,
+    "blank_sic_lead_high_confidence": pl.Boolean,
 }
 
 
@@ -218,6 +221,9 @@ def _search_all(
 def build_summary(total_names: int, matches: pl.DataFrame) -> dict[str, Any]:
     matched = matches.filter(pl.col("match_status") == STATUS_MATCHED) if matches.height else matches
     disproven = matches.filter(pl.col("identity_disproven")) if matches.height else matches
+    blank_sic_leads = (
+        matches.filter(pl.col("blank_sic_lead_cik").is_not_null()) if matches.height else matches
+    )
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_unresolved_names": total_names,
@@ -229,6 +235,14 @@ def build_summary(total_names: int, matches: pl.DataFrame) -> dict[str, Any]:
         # entity for the era, even though the name itself came back unmatched or matched
         # via a different candidate — see edgar_company_search_match's Phase 18 docstring.
         "identity_disproven_count": disproven.height,
+        # Phase 19: names still unmatched with an informational blank-SIC research lead
+        # (never auto-accepted — see edgar_company_search_match's Phase 19 docstring).
+        "blank_sic_lead_count": blank_sic_leads.height,
+        "blank_sic_lead_high_confidence_count": (
+            blank_sic_leads.filter(pl.col("blank_sic_lead_high_confidence")).height
+            if blank_sic_leads.height
+            else 0
+        ),
     }
 
 

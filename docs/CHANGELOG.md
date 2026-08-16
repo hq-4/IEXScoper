@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- feat: surface `blank_sic_lead_*` research-lead fields on the manual-research worklist for
+  blank-SIC candidates with plausible filing activity — built first as auto-acceptance
+  (`FIRST REPUBLIC BANK`, CIK 1132979, blank SIC, 42 filings spanning 2004-2024 covering its
+  era, looked like strong evidence to accept), but auditing the resulting matches before
+  shipping found the signal too weak: of a 34-name quantified population, roughly half had
+  `entityType="other"` and zero substantive filings ever, their only history being
+  ownership-disclosure forms (SC 13G, Form 3/4/5, 13F-NT) any unrelated party can file
+  regardless of whether the CIK was ever the real operating entity — and tightening to
+  require a substantive filing would have excluded `FIRST REPUBLIC BANK` itself too
+  (plausibly a Section 12(i) case: its real 10-Ks are filed with its banking regulator, not
+  SEC). No reliable way to distinguish "genuinely correct, files elsewhere" from
+  "coincidental secondary filer" exists in this repo's data, so auto-acceptance was
+  abandoned; redesigned as informational-only (mirrors the already-shipped `identity_disproven`
+  pattern) — `blank_sic_lead_cik`/`_name`/`_high_confidence` surfaced as metadata, never
+  changing `match_status`/`matched_cik`. New `sec_sic_client.SUBSTANTIVE_FORMS` distinguishes
+  genuine operating/registration disclosure from ownership-disclosure forms for the
+  confidence flag. 12 new tests; 535 pass (was 531), ruff/bandit clean. Real run caught a
+  second real bug before it shipped: a lead found at a narrower query level was silently
+  dropped when a later, broader query hit the candidate-count cap and returned early without
+  carrying it forward — losing the `FIRST REPUBLIC BANK` lead itself. Fixed, regression test
+  added, rerun: 34 leads found (12 high-confidence), match outcomes and CIK-resolution counts
+  fully unchanged (informational-only, as designed). `[CA][IV][REH][CDiP][KBT]`
+
 - feat: surface `identity_disproven` on the manual-research worklist — a name whose Tier E
   single-candidate match was proven filing-activity-disjoint (Phase 16) now carries that proof
   through to the worklist instead of staying a silent internal rejection. Root case: `UTX` (real
