@@ -709,6 +709,17 @@ worklist 11,748 -> 11,300 eras, 161.1M -> 154.6M trade rows. Flagged again: the 
 now 767 lines, continuing to grow past the CSD review threshold. See `docs/TASK_LIST.md`'s
 Phase 22 entry for full detail. [CA][IV][REH][CDiP][KBT]
 
+**Phase 23 (housekeeping — module docstring extraction).** Addressed the file-size flag
+raised in Phase 20 and Phase 22. `edgar_company_search_match.py`'s ~265-line module
+docstring (the full Phase 5-22 narrative, already duplicated more compactly in this file
+and in `docs/TASK_LIST.md`) moved verbatim into a new
+`docs/EDGAR_COMPANY_SEARCH_MATCH_DESIGN.md`, replaced with a concise ~55-line technical
+summary of the current mechanisms. File 767 -> 559 lines. Docstring-only change — 542
+tests still pass, ruff clean, no behavior change. Still over the 300-line CSD threshold
+(the remainder is real code plus necessary per-function "why" documentation, not
+narrative bulk); full modularization would be a separately-justified refactor, not
+undertaken here. [CA][CDiP]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

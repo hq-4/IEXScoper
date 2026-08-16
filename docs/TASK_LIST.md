@@ -1,5 +1,34 @@
 # Task List
 
+- 2026-08-16: SIC/sector classification, Phase 23 (housekeeping — extract
+  `edgar_company_search_match.py`'s design history out of the module docstring). User:
+  "what else is next, i just merged" (after PR #26, Phase 22). A fresh worklist pass
+  showed no new obvious top-priority lead (the remaining top rows are the well-known
+  "no automatic name at all" residual confirmed unfixable since Phase 6, or names like
+  `GLOBAL BLOOD THERAPEUTICS IN` that are the same "extra trailing token" truncation
+  shape Phase 22 deliberately left unresolved) — picked up the file-size concern instead,
+  flagged twice now (Phase 20, Phase 22) without action, per CLAUDE.md's own standing
+  instruction to highlight and address a file trending large.
+  `edgar_company_search_match.py` had grown to 767 lines, almost entirely (about 265
+  lines) its own module docstring narrating every phase (5 through 22) in full
+  quantification detail — content already duplicated, more compactly, in
+  `docs/ARCHITECTURE.md`, with the complete session-by-session record already living in
+  `docs/TASK_LIST.md`. Extracted the full docstring verbatim into a new
+  `docs/EDGAR_COMPANY_SEARCH_MATCH_DESIGN.md` (zero information loss — every quantified
+  number, named example, and real-run result preserved exactly as written) and replaced
+  the module docstring with a concise technical summary: what the search/validation/
+  tie-break/rejection/lead mechanisms each do and why they're safe, in ~55 lines, with a
+  pointer to the new doc for full history. Per-function docstrings were left alone —
+  already reasonably concise, genuinely explain non-obvious "why" per CLAUDE.md's own
+  documentation guidance, not bloat.
+  Docstring-only change, zero logic touched: 542 tests still pass, ruff still clean, no
+  real run needed (nothing about matching behavior changed). File now 559 lines (down
+  from 767, a 27% reduction) — still over the 300-line CSD review threshold, but the
+  remaining bulk is real code plus genuinely necessary per-function documentation, not
+  narrative bulk; full modularization (splitting into multiple files) would be a larger,
+  separately-justified refactor touching imports across the pipeline and multiple test
+  files, not undertaken here. `[CA][CDiP]`
+
 - 2026-08-16: SIC/sector classification, Phase 22 (Tier E OpenFIGI-truncation-tolerant
   name matching — the largest single-phase yield of this session). User: "what else is
   next, i just merged" (after PR #25, Phase 21). Continued the fresh-worklist-pass method.
