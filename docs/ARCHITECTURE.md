@@ -720,6 +720,24 @@ tests still pass, ruff clean, no behavior change. Still over the 300-line CSD th
 narrative bulk); full modularization would be a separately-justified refactor, not
 undertaken here. [CA][CDiP]
 
+**Phase 24 (ADR descriptor-pattern gaps).** Re-checked the Phase 20/21 small-tie shape
+against the post-Phase-22 state first (no new lead, just two more members of the
+already-ruled-unsafe `LIFE STORAGE` bucket). Found a real gap instead tracing the
+worklist's top ADR-shaped rows: `SONY CORP-SPONSORED ADR`, `SIBANYE GOLD LTD-SPONS ADR`,
+and `BRASKEM SA-CLASS A- ADR` don't match any existing `DESCRIPTOR_PATTERNS` entry — the
+existing `-SPON ADR$`/`-ADR$` patterns require an exact abbreviation and no space before
+`ADR`. Same abbreviation/spacing-variant category as Phase 8/9/12. Added three pattern
+entries to `sec_name_cik_lookup.DESCRIPTOR_PATTERNS` (shared by both tiers): a
+`"SPONS ADR"` sibling, spelled-out `"SPONSORED ADR"`, and a space-tolerant `[-\s]+ADR$`
+(ordered before the `CLASS` patterns so a compound suffix strips correctly). Quantified
+cache-only first: 11 resolve immediately, 13 more blocked by cache misses (a live run
+genuinely needed to learn the true yield). 3 new tests; 545 pass (was 542), ruff/bandit
+clean. Real run: Tier E matched 2,804/4,339 -> 2,823/4,339 (+19). `SONY`/`SIBANYE`
+correctly resolved; `BRASKEM` correctly stayed unresolved (no real SIC on any
+candidate). All 76 ADR-shaped matched names spot-checked — no false positives. Distinct
+CIKs resolved 8,572 -> 8,589; manual-research worklist 11,300 -> 11,278 eras, 154.6M ->
+152.5M trade rows. [CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

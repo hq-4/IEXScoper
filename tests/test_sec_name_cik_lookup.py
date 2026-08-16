@@ -112,6 +112,16 @@ def test_match_by_name_no_match_for_unknown_issuer() -> None:
         ("ALKERMES PLC-WI", "ALKERMES PLC"),
         ("APEX TREASURY CORP-CL A", "APEX TREASURY CORP"),
         ("ATOUR LIFESTYLE HOLDINGS-ADR", "ATOUR LIFESTYLE HOLDINGS"),
+        # Phase 24: real ADR-suffix abbreviation/spacing variants found tracing the
+        # worklist's top ADR-shaped rows, none covered by the existing "-SPON ADR"/"-ADR"
+        # patterns. "SPONS ADR" is a differently-abbreviated sibling of "SPON ADR".
+        ("SIBANYE GOLD LTD-SPONS ADR", "SIBANYE GOLD LTD"),
+        # The fully spelled-out form.
+        ("SONY CORP-SPONSORED ADR", "SONY CORP"),
+        # A space between the hyphen and "ADR" -- the original "-ADR" pattern required no
+        # space. Also a compound case: the ADR suffix must strip first so the CLASS
+        # pattern (which runs later) can then match what's left.
+        ("BRASKEM SA-CLASS A- ADR", "BRASKEM SA"),
         # The "- CL A" spacing variant (space before "CL") seen on real worklist rows.
         ("ROYALTY PHARMA PLC- CL A", "ROYALTY PHARMA PLC"),
         # A space *before* the hyphen too, on the same abbreviated pattern -- must not

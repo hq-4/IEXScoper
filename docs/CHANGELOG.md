@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- fix: add three ADR-suffix descriptor-pattern variants to
+  `sec_name_cik_lookup.DESCRIPTOR_PATTERNS` (shared by Tier D and Tier E) — a
+  differently-abbreviated `"SPONS ADR"` sibling of the existing `"SPON ADR"`, the fully
+  spelled-out `"SPONSORED ADR"`, and a space between the hyphen and `"ADR"` (widening the
+  old tight `-ADR$` pattern). Found tracing the worklist's top ADR-shaped rows (`SONY
+  CORP-SPONSORED ADR`, `SIBANYE GOLD LTD-SPONS ADR`, `BRASKEM SA-CLASS A- ADR`), same
+  abbreviation/spacing-variant category as Phase 8/9/12's earlier descriptor fixes.
+  Quantified cache-only first: 11 names resolve immediately, 13 more blocked purely by
+  cache misses (including the two motivating examples) — genuinely needed a live run to
+  learn the true yield. 3 new test cases; 545 pass (was 542), ruff/bandit clean. Real
+  run: Tier E matched 2,804/4,339 -> 2,823/4,339 (+19, confirming real additional yield
+  beyond the cache-only floor). `SONY CORP-SPONSORED ADR` -> Sony Group Corp (SIC 3651),
+  `SIBANYE GOLD LTD-SPONS ADR` -> Sibanye Gold Ltd (SIC 1040) — both correct;
+  `BRASKEM SA-CLASS A- ADR` correctly stayed unresolved (none of its EDGAR candidates
+  carry a real SIC). All 76 ADR-shaped names in the matched population spot-checked —
+  no false positives. Distinct CIKs resolved 8,572 -> 8,589; manual-research worklist
+  11,300 -> 11,278 eras, 154.6M -> 152.5M trade rows. `[CA][IV][REH][CDiP][KBT]`
+
 - docs: extract `edgar_company_search_match.py`'s accumulated phase-by-phase design
   history (Phase 5-22, ~265 lines) out of the module docstring into
   `docs/EDGAR_COMPANY_SEARCH_MATCH_DESIGN.md` verbatim, replacing it with a concise
