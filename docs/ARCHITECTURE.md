@@ -799,6 +799,23 @@ calls, zero cache misses, SIC codes spot-checked correct. 4 new tests; 561 pass 
 distinct CIKs resolved 8,625 -> 8,645; manual-research worklist 11,166 -> 11,119 eras,
 146.9M -> 144.5M trade rows. [CA][IV][REH][CDiP][KBT]
 
+**Phase 29 (add `"PUBLIC"` to `LEGAL_SUFFIXES`).** `DECOMA INTL INC` (Phase 27's
+undiagnosed leftover) traced to a genuine negative result: its only valid EDGAR
+candidate filed exclusively 2002-2005, completely disjoint from the 2022-2025 era —
+`_provably_disjoint` correctly blocking a wrong match, not a bug. Moving to fresh
+worklist rows, `HORIZON THERAPEUTICS PLC` traced a `LEGAL_SUFFIXES` gap: OpenFIGI's
+`"PLC"` pops as a suffix, but SEC's own name spells it `"...Public Ltd Co"` — `"LTD"`/
+`"CO"` pop, `"PUBLIC"` didn't, stopping one token short. Checked first: every
+current-listings name ending in bare `"PUBLIC"` is part of this exact `"PUBLIC LTD CO"`
+pattern (5 real names), never a genuine distinguishing word. Added `"PUBLIC"` to
+`LEGAL_SUFFIXES`. Collision check: zero new ambiguous groups (16 either way). Cache-only
+quantification: 2 names newly resolve (`HORIZON THERAPEUTICS PLC`, `KALERA PLC`), zero
+network calls, zero cache misses, both spot-checked correct. 4 new tests; 565 pass (was
+561), ruff/bandit clean. Real run: both confirmed resolved and gone from the worklist.
+Resolved-CIK era rows 14,207 -> 14,219 (+12); distinct CIKs resolved 8,645 -> 8,648;
+manual-research worklist 11,119 -> 11,107 eras, 144.5M -> 142.6M trade rows.
+[CA][IV][REH][CDiP][KBT]
+
 ## Benchmark Utilities
 
 - `utils/benchmark_iex_parsers.py` orchestrates archived-day benchmarks across external parser repos.

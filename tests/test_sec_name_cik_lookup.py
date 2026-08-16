@@ -53,6 +53,12 @@ from utils.sec_name_cik_lookup import (
         ("FNB BANCORP/CA/", "FNB BANCORP"),
         # SEC uses the same wrapped-slash convention for non-state tags too.
         ("CHINA MOBILE LTD /ADR/", "CHINA MOBILE"),
+        # Phase 29: SEC sometimes spells "PLC" out as "Public Ltd Co" -- both sides must
+        # land on the same base name.
+        ("HORIZON THERAPEUTICS PLC", "HORIZON THERAPEUTICS"),
+        ("Horizon Therapeutics Public Ltd Co", "HORIZON THERAPEUTICS"),
+        ("KALERA PLC", "KALERA"),
+        ("Kalera Public Ltd Co", "KALERA"),
         (None, ""),
         ("", ""),
         ("   ", ""),

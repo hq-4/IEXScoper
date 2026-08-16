@@ -91,7 +91,20 @@ Cache-only quantification against the still-unresolved population: 24 names newl
 (`AETNA INC`, `CYPRESS SEMICONDUCTOR CORP`, `LINEAR TECHNOLOGY CORP`, `PLANTRONICS INC`,
 `STILLWATER MINING CO`, `TRC COS INC`, `WEINGARTEN REALTY INVESTORS`, among others), zero
 network calls, zero cache misses; SIC codes spot-checked against cached data, all correct
-for real, well-known companies. [CA][IV][KBT]
+for real, well-known companies.
+
+Phase 29: `HORIZON THERAPEUTICS PLC` traced a gap in `LEGAL_SUFFIXES` itself: OpenFIGI's
+`"PLC"` abbreviation pops as a trailing legal suffix, but SEC's own registered name for
+the same UK/Irish-incorporated entity sometimes spells it out as `"Public Ltd Co"` (SEC's
+own three-word expansion, not just `"PLC"`) — `"PUBLIC"` isn't itself a recognized legal
+suffix, so the pop loop stops there, one token short of where the abbreviated side lands.
+Added `"PUBLIC"` to `LEGAL_SUFFIXES`. Checked first: every current-listings name ending in
+`"PUBLIC"` does so as part of this exact `"PUBLIC LTD CO"` pattern (5 real names,
+`PROTHENA CORP PUBLIC LTD CO`, `CRH PUBLIC LTD CO`, `VODAFONE GROUP PUBLIC LTD CO`, among
+others) — never a genuine distinguishing final word on its own. Collision check: zero new
+ambiguous-name collisions (16 either way). Cache-only Tier E quantification: 2 names newly
+resolve (`HORIZON THERAPEUTICS PLC`, `KALERA PLC`), zero network calls, zero cache misses;
+both spot-checked against cached SIC data, correct. [CA][IV][KBT]
 """
 
 from __future__ import annotations
@@ -125,6 +138,11 @@ LEGAL_SUFFIXES = frozenset(
         "SA",
         "NV",
         "AG",
+        # Phase 29: SEC sometimes spells "PLC" out as "Public Ltd Co" rather than the
+        # abbreviation — "LTD"/"CO" already pop, "PUBLIC" needs to too so both sides
+        # land on the same base name. Never a genuine distinguishing final word on its
+        # own in the current-listings index (see module docstring).
+        "PUBLIC",
     }
 )
 NON_ALNUM = re.compile(r"[^A-Z0-9 ]+")
