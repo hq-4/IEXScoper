@@ -219,6 +219,19 @@ ROMAN_NUMERAL_CHARS = frozenset("IVXLCDM")
 # already applies everywhere else.
 JURISDICTION_SUFFIX = re.compile(r"/\s*[A-Z]+\s*/?$", re.IGNORECASE)
 
+# SEC frequently punctuates a compact abbreviation with a period after every letter
+# ("U.S. Silica", "Cosan S.A.", "Sono Group N.V.", "TXO Partners, L.P.") — left alone,
+# NON_ALNUM below would convert each internal period into a token-splitting space
+# ("S.A." -> "S A", two stray single-letter tokens), which breaks two things at once:
+# an exact match against OpenFIGI's already-unpunctuated form ("US SILICA" vs "U S
+# SILICA"), and the legal-suffix pop loop's whole-token check ("SA"/"NV"/"LP" in
+# LEGAL_SUFFIXES never matches a split "S A"/"N V"/"L P"). Collapsed to the fused form
+# ("S.A." -> "SA") before general punctuation-stripping — narrow by construction (only
+# matches letters immediately fused by periods with no space between them, so a genuine
+# multi-word phrase is never touched). 182 names in the current-listings index alone
+# carry this shape.
+DOTTED_ABBREVIATION = re.compile(r"\b(?:[A-Z]\.){2,}", re.IGNORECASE)
+
 # Bloomberg/OpenFIGI appends these to a security's `name` field to distinguish share
 # classes, warrants, ADRs, and when-issued lines — they're ticker/security metadata,
 # never part of the issuer's actual legal name, so stripping them before matching is
@@ -266,11 +279,13 @@ DESCRIPTOR_PATTERNS = (
 
 
 def normalize_name(value: str | None) -> str:
-    """Uppercase, strip a trailing SEC jurisdiction tag and punctuation, drop joiner
-    words ("AND", to match "&" already vanishing under punctuation-stripping), and drop
-    trailing legal-entity suffix tokens (repeatedly, so "XYZ HOLDINGS INC" -> "XYZ").
-    Blank/None -> ""."""
+    """Uppercase, strip a trailing SEC jurisdiction tag, fuse a dotted abbreviation
+    ("S.A." -> "SA") before general punctuation-stripping would otherwise split it,
+    drop joiner words ("AND", to match "&" already vanishing under punctuation-
+    stripping), and drop trailing legal-entity suffix tokens (repeatedly, so "XYZ
+    HOLDINGS INC" -> "XYZ"). Blank/None -> ""."""
     text = JURISDICTION_SUFFIX.sub("", str(value or "").upper())
+    text = DOTTED_ABBREVIATION.sub(lambda match: match.group(0).replace(".", ""), text)
     text = NON_ALNUM.sub(" ", text)
     tokens = [token for token in text.split() if token not in JOINER_WORDS]
     while tokens and tokens[-1] in LEGAL_SUFFIXES:

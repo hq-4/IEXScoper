@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- fix: `sec_name_cik_lookup.normalize_name` now fuses dotted abbreviations
+  (`"U.S."`/`"S.A."`/`"N.V."`/`"L.P."` -> `"US"`/`"SA"`/`"NV"`/`"LP"`) before general
+  punctuation-stripping — previously each internal period became a token-splitting
+  space, both breaking exact matches against OpenFIGI's unpunctuated form (`"US
+  SILICA"` vs `"U S SILICA"`) and silently blocking `LEGAL_SUFFIXES`' whole-token check
+  for `"SA"`/`"NV"`/`"LP"` (182 names in the current-listings index carry this shape).
+  **Collision-risk check surfaced a genuine pre-existing correctness bug this fix
+  retroactively exposed and corrected**, not just the usual "zero new collisions"
+  result: 6 new ambiguous-name groups appeared, each a real "Corp + sibling LP" pair
+  (Brookfield Infrastructure/Renewable, Cheniere Energy, Navios Maritime, Orion, Star).
+  Tracing why revealed Tier D's `_prefix_match_name` had been silently resolving 4
+  genuinely distinct real Navios Maritime registrants (Holdings, Midstream Partners,
+  Containers, Acquisition Corp — live-confirmed against `data.sec.gov` as 4 different
+  CIKs) all to the *same* CIK, because only Holdings' name (no periods) stripped
+  cleanly enough to look like the sole unique candidate. Fixing the periods bug
+  correctly exposed the ambiguity Tier D should have seen all along; a second full
+  pipeline pass let Tier E's more careful per-candidate validation correctly resolve 2
+  of the 5 affected symbols to their own distinct correct CIKs and honestly leave the
+  other 3 unresolved — net: 0 previously-correct matches lost. Cache-only quantification
+  (main yield): 30 names newly resolve (`US SILICA HOLDINGS INC`, `BUCKEYE PARTNERS LP`,
+  `WILLIAMS PARTNERS LP`, `ARDAGH GROUP SA`, `CNOVA NV`, among others), zero network
+  calls, zero cache misses, spot-checked correct. 8 new tests; 587 pass (was 581),
+  ruff/bandit clean. Real run: Tier E matched 3,153/4,314 -> 3,180/4,314; resolved-CIK
+  era rows 14,565 -> 14,592 (+27); distinct CIKs resolved 8,766 -> 8,786;
+  manual-research worklist 10,761 -> 10,734 eras, 123.9M -> 122.6M trade rows.
+  `[CA][IV][REH][CDiP][KBT]`
+
 - fix: widen `sec_name_cik_lookup.DESCRIPTOR_PATTERNS`' bare trailing share-class-letter
   pattern to tolerate whitespace around the hyphen (`"TUSIMPLE HOLDINGS INC - A"`, not
   just the tight `"...INC-A"`) — Phase 30's one residual open case, root-caused: the
